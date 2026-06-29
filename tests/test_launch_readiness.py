@@ -113,13 +113,21 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertGreaterEqual(summary["overwatch_formula_count"], 4)
         self.assertTrue(summary["formula_end_to_end_passed"])
         self.assertEqual(summary["formula_end_to_end_failure_count"], 0)
+        self.assertTrue(summary["formula_value_reconciliation_passed"])
+        self.assertEqual(summary["formula_value_reconciliation_failure_count"], 0)
+        self.assertEqual(summary["formula_validation_mode"], "fixture_static")
         self.assertTrue(summary["packet_formula_sql_passed"])
         self.assertTrue(summary["flat_packet_formula_passed"])
         self.assertTrue(summary["packet_schema_upgrade_passed"])
         self.assertEqual(summary["packet_schema_failure_count"], 0)
         self.assertTrue(summary["snowflake_formula_static_passed"])
-        self.assertTrue(summary["snowflake_formula_live_passed"])
+        self.assertTrue(summary["snowflake_formula_value_passed"])
+        self.assertEqual(summary["snowflake_formula_value_failure_count"], 0)
+        self.assertFalse(summary["snowflake_formula_live_required"])
+        self.assertFalse(summary["snowflake_formula_live_executed"])
+        self.assertFalse(summary["snowflake_formula_live_passed"])
         self.assertTrue(summary["snowflake_formula_live_skipped"])
+        self.assertIn("OVERWATCH_SNOWFLAKE_VALIDATION", summary["snowflake_formula_live_skip_reason"])
         self.assertTrue(summary["snowflake_formula_gate_passed"])
         self.assertEqual(summary["snowflake_formula_gate_failure_count"], 0)
         self.assertTrue(summary["rendered_formula_passed"])
@@ -151,8 +159,11 @@ class LaunchReadinessTests(unittest.TestCase):
             "billing_reconciliation_live",
             "cost_db_formula_authority",
             "formula_end_to_end",
+            "formula_value_reconciliation",
             "packet_schema_upgrade",
             "snowflake_formula_static_live",
+            "snowflake_formula_value",
+            "live_static_formula_status",
             "cortex_service_type_mapping",
             "cortex_cost_consistency",
             "cost_chart_workbench",
@@ -297,6 +308,12 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertTrue(summary["cost_chart_workbench_passed"])
         self.assertTrue(summary["cost_db_formula_authority_passed"])
         self.assertTrue(summary["formula_live_validation_passed"])
+        self.assertTrue(summary["formula_value_reconciliation_passed"])
+        self.assertEqual(summary["formula_validation_mode"], "fixture_static")
+        self.assertTrue(summary["snowflake_formula_value_passed"])
+        self.assertEqual(summary["snowflake_formula_value_failure_count"], 0)
+        self.assertFalse(summary["snowflake_formula_live_passed"])
+        self.assertTrue(summary["snowflake_formula_live_skipped"])
         self.assertTrue(summary["workload_formula_semantics_passed"])
         self.assertGreater(manifest["artifact_count"], 0)
         self.assertEqual(manifest["artifact_count"], hashes["hash_count"])
@@ -366,6 +383,18 @@ class LaunchReadinessTests(unittest.TestCase):
         result = readiness._release_artifact_reconciliation_results(ROOT, commit_manifest, hashes)
         self.assertFalse(result["passed"])
         self.assertIn("RELEASE_ARTIFACT_COMMIT_MISMATCH", {row["code"] for row in result["failures"]})
+
+        stale_manifest = copy.deepcopy(manifest)
+        stale_manifest["commit_sha"] = "0" * 40
+        for row in stale_manifest["files"]:
+            row["commit_sha"] = "0" * 40
+        result = readiness._release_artifact_reconciliation_results(ROOT, stale_manifest, hashes)
+        self.assertFalse(result["passed"])
+        mismatch_paths = [
+            item["path"]
+            for item in result["commit_mismatches"]
+        ]
+        self.assertIn("artifacts/release_candidate/artifact_manifest.json", mismatch_paths)
 
         raw_manifest = copy.deepcopy(manifest)
         raw_manifest["files"][0]["contains_raw_sql"] = True
@@ -552,6 +581,28 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertFalse(summary["all_passed"], summary)
         self.assertFalse(summary["product_gauntlet_passed"])
         self.assertFalse(failures["passed"], failures)
+
+    def test_query_budget_gate_fails_on_recorded_violation(self):
+        from tools.contracts import launch_readiness as readiness
+
+        payloads = self._payload_copy()
+        payloads["artifacts/full_app_validation/query_budget_results.json"] = {
+            "passed": True,
+            "failed_contexts": [],
+            "route_query_leaks": 0,
+            "evidence_clicks_over_budget": 0,
+            "marker_budget_mismatch_count": 0,
+        }
+        payloads["artifacts/full_app_validation/query_budget_violation_results.json"] = {
+            "passed": False,
+            "recorded": True,
+            "violation_count": 1,
+            "production_interrupting": False,
+        }
+        result = readiness._query_budget_gate_results(payloads)
+        self.assertFalse(result["passed"], result)
+        self.assertIn("QUERY_BUDGET_VIOLATION_RECORDED", {row["code"] for row in result["failures"]})
+        self.assertFalse(result["production_interrupting"])
 
     def test_release_notes_operator_ready_rejects_missing_fields(self):
         from tools.contracts import launch_readiness as readiness

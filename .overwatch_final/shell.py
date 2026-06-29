@@ -60,6 +60,11 @@ from utils.logging import log_section_load
 
 def _format_section_error(exc: Exception) -> str:
     """Format Snowflake or metadata errors without importing query helpers early."""
+    if isinstance(exc, AssertionError) and "actual_snowflake_executions" in str(exc):
+        return (
+            "This panel exceeded its live query budget. The violation was recorded for launch readiness; "
+            "refresh, narrow scope, or use the explicit evidence controls after the summary card renders."
+        )
     from utils.query import format_snowflake_error
 
     return format_snowflake_error(exc)

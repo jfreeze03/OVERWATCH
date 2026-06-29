@@ -35,6 +35,7 @@ from tools.contracts.formula_end_to_end_validation import (
     CORTEX_SERVICE_TYPE_GATE_REL,
     FLAT_PACKET_FORMULA_REL,
     FORMULA_GATE_REL,
+    FORMULA_VALUE_RECONCILIATION_REL,
     PACKET_SCHEMA_GATE_REL,
     PACKET_SCHEMA_UPGRADE_REL,
     evaluate_cortex_service_type_gate,
@@ -44,6 +45,7 @@ from tools.contracts.formula_end_to_end_validation import (
     SNOWFLAKE_FORMULA_GATE_REL,
     SNOWFLAKE_FORMULA_LIVE_REL,
     SNOWFLAKE_FORMULA_STATIC_REL,
+    SNOWFLAKE_FORMULA_VALUE_REL,
     write_formula_end_to_end_artifacts,
 )
 
@@ -90,8 +92,10 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     CORTEX_SERVICE_TYPE_GATE_REL,
     f"{LAUNCH_READINESS_DIR}/cost_db_formula_authority_gate_results.json",
     FORMULA_GATE_REL,
+    FORMULA_VALUE_RECONCILIATION_REL,
     PACKET_SCHEMA_GATE_REL,
     SNOWFLAKE_FORMULA_GATE_REL,
+    SNOWFLAKE_FORMULA_VALUE_REL,
     f"{LAUNCH_READINESS_DIR}/formula_live_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/metric_semantic_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/query_budget_gate_results.json",
@@ -1896,7 +1900,8 @@ def _release_candidate_artifact_manifest(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     hashes: list[dict[str, Any]] = []
-    for rel in _release_artifact_files(root):
+    release_files = sorted(set(_release_artifact_files(root)) | set(REQUIRED_RELEASE_CANDIDATE_ARTIFACTS))
+    for rel in release_files:
         path = root / rel
         category = _release_artifact_category(rel)
         self_referential = (
@@ -1939,6 +1944,7 @@ def _release_candidate_artifact_manifest(
         "generated_at": _utc_now(),
         "launch_profile": profile,
         "commit_sha": commit_sha,
+        "source_tree_sha": commit_sha,
         "artifact_count": len(rows),
         "categories": categories,
         "required_categories": sorted(RELEASE_REQUIRED_CATEGORIES),
@@ -1951,6 +1957,7 @@ def _release_candidate_artifact_manifest(
         "generated_at": _utc_now(),
         "launch_profile": profile,
         "commit_sha": commit_sha,
+        "source_tree_sha": commit_sha,
         "hash_count": len(hashes),
         "hashes": hashes,
         "raw_sql_included": False,
@@ -1976,7 +1983,14 @@ def _release_artifact_reconciliation_results(
     category_counts: dict[str, int] = {}
     failures: list[dict[str, Any]] = []
     expected_commit = str(manifest.get("commit_sha") or "")
+    source_head = _git_output("rev-parse", "HEAD")
     deleted_tokens = _deleted_artifact_reference_tokens(root)
+    if expected_commit and source_head and expected_commit != source_head:
+        commit_mismatches.append({
+            "path": f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json",
+            "expected": source_head,
+            "actual": expected_commit,
+        })
     for row in manifest_rows:
         rel = str(row.get("path") or "")
         if not rel or rel in missing_files:
@@ -2308,6 +2322,11 @@ def _release_candidate_summary_bundle(
             "artifact": FORMULA_GATE_REL,
         },
         {
+            "gate": "formula_value_reconciliation",
+            "passed": bool(launch_summary.get("formula_value_reconciliation_passed")),
+            "artifact": FORMULA_VALUE_RECONCILIATION_REL,
+        },
+        {
             "gate": "packet_schema_upgrade",
             "passed": bool(launch_summary.get("packet_schema_upgrade_passed")),
             "artifact": PACKET_SCHEMA_GATE_REL,
@@ -2315,6 +2334,20 @@ def _release_candidate_summary_bundle(
         {
             "gate": "snowflake_formula_static_live",
             "passed": bool(launch_summary.get("snowflake_formula_gate_passed")),
+            "artifact": SNOWFLAKE_FORMULA_GATE_REL,
+        },
+        {
+            "gate": "snowflake_formula_value",
+            "passed": bool(launch_summary.get("snowflake_formula_value_passed")),
+            "artifact": SNOWFLAKE_FORMULA_VALUE_REL,
+        },
+        {
+            "gate": "live_static_formula_status",
+            "passed": bool(launch_summary.get("snowflake_formula_gate_passed"))
+            and not (
+                bool(launch_summary.get("snowflake_formula_live_passed"))
+                and bool(launch_summary.get("snowflake_formula_live_skipped"))
+            ),
             "artifact": SNOWFLAKE_FORMULA_GATE_REL,
         },
         {
@@ -2396,11 +2429,19 @@ def _release_candidate_summary_bundle(
         "cost_chart_workbench_passed": bool(launch_summary.get("cost_chart_workbench_passed")),
         "cost_db_formula_authority_passed": bool(launch_summary.get("cost_db_formula_authority_passed")),
         "formula_end_to_end_passed": bool(launch_summary.get("formula_end_to_end_passed")),
+        "formula_value_reconciliation_passed": bool(launch_summary.get("formula_value_reconciliation_passed")),
+        "formula_validation_mode": str(launch_summary.get("formula_validation_mode") or ""),
         "packet_formula_sql_passed": bool(launch_summary.get("packet_formula_sql_passed")),
         "flat_packet_formula_passed": bool(launch_summary.get("flat_packet_formula_passed")),
         "packet_schema_upgrade_passed": bool(launch_summary.get("packet_schema_upgrade_passed")),
         "snowflake_formula_static_passed": bool(launch_summary.get("snowflake_formula_static_passed")),
+        "snowflake_formula_value_passed": bool(launch_summary.get("snowflake_formula_value_passed")),
+        "snowflake_formula_value_failure_count": _as_int(launch_summary.get("snowflake_formula_value_failure_count")),
+        "snowflake_formula_live_required": bool(launch_summary.get("snowflake_formula_live_required")),
+        "snowflake_formula_live_executed": bool(launch_summary.get("snowflake_formula_live_executed")),
         "snowflake_formula_live_passed": bool(launch_summary.get("snowflake_formula_live_passed")),
+        "snowflake_formula_live_skipped": bool(launch_summary.get("snowflake_formula_live_skipped")),
+        "snowflake_formula_live_skip_reason": str(launch_summary.get("snowflake_formula_live_skip_reason") or ""),
         "snowflake_formula_gate_passed": bool(launch_summary.get("snowflake_formula_gate_passed")),
         "rendered_formula_passed": bool(launch_summary.get("rendered_formula_passed")),
         "cortex_service_type_gate_passed": bool(launch_summary.get("cortex_service_type_gate_passed")),
@@ -2890,6 +2931,98 @@ def _ci_metadata() -> dict[str, Any]:
         "branch_ref": branch_ref,
         "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
     }
+
+
+def _write_release_candidate_bundle(
+    root_path: Path,
+    *,
+    profile: str,
+    launch_summary: Mapping[str, Any],
+    launch_failures: Mapping[str, Any],
+    matrix: Iterable[Mapping[str, Any]],
+    product_gauntlet: Mapping[str, Any],
+    ci_context: Mapping[str, Any],
+) -> tuple[
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    list[dict[str, Any]],
+    dict[str, Any],
+]:
+    """Write release-candidate artifacts through one deterministic bundle path."""
+
+    release_dir = root_path / RELEASE_CANDIDATE_DIR
+    release_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(release_dir / "product_gauntlet_release_results.json", product_gauntlet)
+
+    seed_reconciliation = {
+        "source": "release_candidate_artifact_reconciliation",
+        "proof_source": "runtime_click",
+        "passed": True,
+        "failure_count": 0,
+        "failures": [],
+        "artifact_count": 0,
+        "hash_count": 0,
+        "raw_sql_included": False,
+    }
+    seed_gate = _release_candidate_gate_results(seed_reconciliation, product_gauntlet)
+    rel_summary, rel_failures, rel_matrix, rel_notes = _release_candidate_summary_bundle(
+        launch_summary=launch_summary,
+        launch_failures=launch_failures,
+        matrix=matrix,
+        release_gate=seed_gate,
+        product_gauntlet=product_gauntlet,
+        reconciliation=seed_reconciliation,
+        ci_context=ci_context,
+    )
+    for name, payload in {
+        "release_candidate_summary": rel_summary,
+        "release_candidate_failures": rel_failures,
+        "release_gate_matrix": rel_matrix,
+        "release_notes": rel_notes,
+    }.items():
+        _write_json(release_dir / f"{name}.json", payload)
+    _write_json(release_dir / "artifact_reconciliation_results.json", seed_reconciliation)
+
+    release_manifest, release_hashes = _release_candidate_artifact_manifest(
+        root_path,
+        profile=profile,
+        commit_sha=str(launch_summary.get("commit_sha") or ""),
+    )
+    _write_json(release_dir / "artifact_manifest.json", release_manifest)
+    _write_json(release_dir / "artifact_hashes.json", release_hashes)
+    release_reconciliation = _release_artifact_reconciliation_results(root_path, release_manifest, release_hashes)
+    release_gate = _release_candidate_gate_results(release_reconciliation, product_gauntlet)
+    rel_summary, rel_failures, rel_matrix, rel_notes = _release_candidate_summary_bundle(
+        launch_summary=launch_summary,
+        launch_failures=launch_failures,
+        matrix=matrix,
+        release_gate=release_gate,
+        product_gauntlet=product_gauntlet,
+        reconciliation=release_reconciliation,
+        ci_context=ci_context,
+    )
+    for name, payload in {
+        "artifact_reconciliation_results": release_reconciliation,
+        "release_candidate_summary": rel_summary,
+        "release_candidate_failures": rel_failures,
+        "release_gate_matrix": rel_matrix,
+        "release_notes": rel_notes,
+    }.items():
+        _write_json(release_dir / f"{name}.json", payload)
+    return (
+        release_manifest,
+        release_hashes,
+        release_reconciliation,
+        release_gate,
+        rel_summary,
+        rel_failures,
+        rel_matrix,
+        rel_notes,
+    )
 
 
 def _rows_have_no_failures(rows: Iterable[Any]) -> bool:
@@ -4026,11 +4159,13 @@ def _billing_reconciliation_live_gate_results(profile: str, waivers: Iterable[Ma
 
 def _query_budget_gate_results(payloads: Mapping[str, Any]) -> dict[str, Any]:
     runtime = _as_mapping(payloads.get("artifacts/full_app_validation/query_budget_results.json"))
+    violation_recording = _as_mapping(payloads.get("artifacts/full_app_validation/query_budget_violation_results.json"))
     session_direct = _as_mapping(payloads.get("artifacts/full_app_validation/session_direct_sql_results.json"))
     summary_budget = _as_mapping(payloads.get("artifacts/full_app_validation/summary_board_query_budget_results.json"))
     failures: list[dict[str, Any]] = []
     for code, payload, count_keys in (
         ("QUERY_BUDGET_CONTEXT_FAILURE", runtime, ("failed_contexts",)),
+        ("QUERY_BUDGET_VIOLATION_RECORDED", violation_recording, ("violation_count",)),
         ("ROUTE_QUERY_LEAK", runtime, ("route_query_leaks",)),
         ("EVIDENCE_CLICK_OVER_BUDGET", runtime, ("evidence_clicks_over_budget",)),
         ("MARKER_BUDGET_MISMATCH", runtime, ("marker_budget_mismatch_count",)),
@@ -4045,6 +4180,8 @@ def _query_budget_gate_results(payloads: Mapping[str, Any]) -> dict[str, Any]:
             failures.append({"code": code, "count": count})
     if runtime and not bool(runtime.get("passed", True)):
         failures.append({"code": "RUNTIME_QUERY_BUDGET_NOT_PASSED"})
+    if violation_recording and not bool(violation_recording.get("passed", True)):
+        failures.append({"code": "QUERY_BUDGET_VIOLATION_ARTIFACT_NOT_PASSED"})
     if summary_budget and not bool(summary_budget.get("passed", True)):
         failures.append({"code": "SUMMARY_BOARD_QUERY_BUDGET_NOT_PASSED"})
     return {
@@ -4056,6 +4193,8 @@ def _query_budget_gate_results(payloads: Mapping[str, Any]) -> dict[str, Any]:
         "production_interrupting": False,
         "always_recorded": True,
         "runtime_query_budget_passed": bool(runtime.get("passed", True)),
+        "violation_recording_passed": bool(violation_recording.get("passed", True)),
+        "violation_count": _as_int(violation_recording.get("violation_count")),
         "summary_board_query_budget_passed": bool(summary_budget.get("passed", True)),
         "raw_sql_included": False,
     }
@@ -4159,6 +4298,14 @@ def _release_gate_matrix(
             "failure_reason": "" if formula_end_gate.get("passed") else "COST_DB formula chain does not reconcile from authority to packet SQL and rendered surfaces.",
         },
         {
+            "gate": "formula_value_reconciliation",
+            "artifact": FORMULA_VALUE_RECONCILIATION_REL,
+            "passed": bool(formula_end_gate.get("formula_value_reconciliation_passed")),
+            "failure_reason": ""
+            if formula_end_gate.get("formula_value_reconciliation_passed")
+            else "Formula values do not reconcile through packet, flat, rendered, and expected value surfaces.",
+        },
+        {
             "gate": "packet_schema_upgrade",
             "artifact": PACKET_SCHEMA_GATE_REL,
             "passed": bool(packet_schema_gate.get("passed")),
@@ -4169,6 +4316,26 @@ def _release_gate_matrix(
             "artifact": SNOWFLAKE_FORMULA_GATE_REL,
             "passed": bool(snowflake_formula_gate.get("passed")),
             "failure_reason": "" if snowflake_formula_gate.get("passed") else "Snowflake formula static/live validation failed or requested live proof is unavailable.",
+        },
+        {
+            "gate": "snowflake_formula_value",
+            "artifact": SNOWFLAKE_FORMULA_VALUE_REL,
+            "passed": bool(snowflake_formula_gate.get("snowflake_formula_value_passed")),
+            "failure_reason": ""
+            if snowflake_formula_gate.get("snowflake_formula_value_passed")
+            else "Snowflake formula value checks failed for billing, Cortex, warehouse bridge, or spend movement formulas.",
+        },
+        {
+            "gate": "live_static_formula_status",
+            "artifact": SNOWFLAKE_FORMULA_GATE_REL,
+            "passed": bool(snowflake_formula_gate.get("passed"))
+            and not (
+                bool(snowflake_formula_gate.get("snowflake_formula_live_passed"))
+                and bool(snowflake_formula_gate.get("snowflake_formula_live_skipped"))
+            ),
+            "failure_reason": ""
+            if snowflake_formula_gate.get("passed")
+            else "Formula live/static status is ambiguous or live proof is required but unavailable.",
         },
         {
             "gate": "cortex_service_type_mapping",
@@ -4448,6 +4615,7 @@ def evaluate_launch_readiness(
         "formula_end_to_end_gate_results": _as_mapping(launch_artifacts.get("formula_end_to_end_gate_results"))
         or evaluate_formula_end_to_end_gate(
             _as_mapping(payloads.get("artifacts/formula_authority/formula_chain_results.json")),
+            _as_mapping(payloads.get(FORMULA_VALUE_RECONCILIATION_REL)),
             _as_mapping(payloads.get("artifacts/formula_authority/packet_formula_results.json")),
             _as_mapping(payloads.get(FLAT_PACKET_FORMULA_REL)),
             _as_mapping(payloads.get(SNOWFLAKE_FORMULA_STATIC_REL)),
@@ -4457,6 +4625,7 @@ def evaluate_launch_readiness(
             _as_mapping(payloads.get(SNOWFLAKE_FORMULA_LIVE_REL)),
             _as_mapping(payloads.get("artifacts/snowflake_validation/cortex_service_type_live_results.json")),
             _as_mapping(payloads.get("artifacts/snowflake_validation/workload_formula_live_results.json")),
+            _as_mapping(payloads.get(SNOWFLAKE_FORMULA_VALUE_REL)),
         ),
         "packet_schema_gate_results": _as_mapping(launch_artifacts.get("packet_schema_gate_results"))
         or evaluate_packet_schema_gate(_as_mapping(payloads.get(PACKET_SCHEMA_UPGRADE_REL))),
@@ -4464,6 +4633,7 @@ def evaluate_launch_readiness(
         or evaluate_snowflake_formula_gate(
             _as_mapping(payloads.get(SNOWFLAKE_FORMULA_STATIC_REL)),
             _as_mapping(payloads.get(SNOWFLAKE_FORMULA_LIVE_REL)),
+            _as_mapping(payloads.get(SNOWFLAKE_FORMULA_VALUE_REL)),
         ),
         "cortex_service_type_gate_results": _as_mapping(launch_artifacts.get("cortex_service_type_gate_results"))
         or evaluate_cortex_service_type_gate(
@@ -4594,11 +4764,21 @@ def evaluate_launch_readiness(
         "overwatch_formula_count": _as_int(cost_db_formula_gate.get("overwatch_formula_count")),
         "formula_end_to_end_passed": bool(formula_end_gate.get("passed")),
         "formula_end_to_end_failure_count": _as_int(formula_end_gate.get("failure_count")),
+        "formula_value_reconciliation_passed": bool(formula_end_gate.get("formula_value_reconciliation_passed")),
+        "formula_value_reconciliation_failure_count": _as_int(formula_end_gate.get("formula_value_reconciliation_failure_count")),
+        "formula_validation_mode": str(formula_end_gate.get("formula_validation_mode") or ""),
         "packet_formula_sql_passed": bool(formula_end_gate.get("packet_formula_sql_passed")),
         "flat_packet_formula_passed": bool(formula_end_gate.get("flat_packet_formula_passed")),
         "snowflake_formula_static_passed": bool(formula_end_gate.get("snowflake_formula_static_passed")),
+        "snowflake_formula_value_passed": bool(formula_end_gate.get("snowflake_formula_value_passed")),
+        "snowflake_formula_value_failure_count": _as_int(formula_end_gate.get("snowflake_formula_value_failure_count")),
+        "snowflake_formula_live_required": bool(formula_end_gate.get("snowflake_formula_live_required")),
+        "snowflake_formula_live_executed": bool(formula_end_gate.get("snowflake_formula_live_executed")),
         "snowflake_formula_live_passed": bool(formula_end_gate.get("snowflake_formula_live_passed")),
         "snowflake_formula_live_skipped": bool(formula_end_gate.get("snowflake_formula_live_skipped")),
+        "snowflake_formula_live_skip_reason": str(formula_end_gate.get("snowflake_formula_live_skip_reason") or ""),
+        "snowflake_formula_live_waiver_id": str(formula_end_gate.get("snowflake_formula_live_waiver_id") or ""),
+        "snowflake_formula_live_failure_count": _as_int(formula_end_gate.get("snowflake_formula_live_failure_count")),
         "packet_schema_upgrade_passed": bool(packet_schema_gate.get("passed")),
         "packet_schema_failure_count": _as_int(packet_schema_gate.get("failure_count")),
         "snowflake_formula_gate_passed": bool(snowflake_formula_gate.get("passed")),
@@ -4761,6 +4941,7 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         formula_artifacts.get("artifacts/formula_authority/cost_db_formula_authority_summary.json"),
         formula_artifacts.get("artifacts/formula_authority/cortex_service_type_mapping.json"),
         formula_artifacts.get("artifacts/formula_authority/formula_chain_results.json"),
+        formula_artifacts.get(FORMULA_VALUE_RECONCILIATION_REL),
         formula_artifacts.get("artifacts/formula_authority/packet_formula_results.json"),
         formula_artifacts.get(FLAT_PACKET_FORMULA_REL),
         formula_artifacts.get(SNOWFLAKE_FORMULA_STATIC_REL),
@@ -4854,7 +5035,12 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         _write_json(root_path / rel, payload)
         written[rel] = payload
 
-    manifest_files = sorted([*written, f"{LAUNCH_READINESS_DIR}/artifact_manifest.json"])
+    manifest_files = sorted(
+        set(written)
+        | {f"{LAUNCH_READINESS_DIR}/artifact_manifest.json"}
+        | set(REQUIRED_LAUNCH_READINESS_ARTIFACTS)
+        | set(REQUIRED_FORMULA_AUTHORITY_ARTIFACTS)
+    )
     manifest = {
         "source": "launch_readiness",
         "proof_source": "runtime_click",
@@ -4868,79 +5054,24 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     written[manifest_rel] = manifest
 
     product_gauntlet = _product_gauntlet_release_results(root_path, payloads, launch_artifacts)
-    release_dir = root_path / RELEASE_CANDIDATE_DIR
-    release_dir.mkdir(parents=True, exist_ok=True)
-    _write_json(release_dir / "product_gauntlet_release_results.json", product_gauntlet)
-    provisional_reconciliation = {
-        "source": "release_candidate_artifact_reconciliation",
-        "proof_source": "runtime_click",
-        "passed": True,
-        "failure_count": 0,
-        "failures": [],
-        "artifact_count": 0,
-        "hash_count": 0,
-        "raw_sql_included": False,
-    }
-    provisional_gate = _release_candidate_gate_results(provisional_reconciliation, product_gauntlet)
-    rel_summary, rel_failures, rel_matrix, rel_notes = _release_candidate_summary_bundle(
-        launch_summary=launch_summary,
-        launch_failures=launch_failures,
-        matrix=matrix,
-        release_gate=provisional_gate,
-        product_gauntlet=product_gauntlet,
-        reconciliation=provisional_reconciliation,
-        ci_context=launch_artifacts["release_candidate_ci_context"],
-    )
-    _write_json(release_dir / "release_candidate_summary.json", rel_summary)
-    _write_json(release_dir / "release_candidate_failures.json", rel_failures)
-    _write_json(release_dir / "release_gate_matrix.json", rel_matrix)
-    _write_json(release_dir / "release_notes.json", rel_notes)
-    release_manifest, release_hashes = _release_candidate_artifact_manifest(
+    (
+        release_manifest,
+        release_hashes,
+        release_reconciliation,
+        release_gate,
+        rel_summary,
+        rel_failures,
+        rel_matrix,
+        rel_notes,
+    ) = _write_release_candidate_bundle(
         root_path,
         profile=profile,
-        commit_sha=str(launch_summary.get("commit_sha") or ""),
-    )
-    _write_json(release_dir / "artifact_manifest.json", release_manifest)
-    _write_json(release_dir / "artifact_hashes.json", release_hashes)
-    release_reconciliation = _release_artifact_reconciliation_results(root_path, release_manifest, release_hashes)
-    release_gate = _release_candidate_gate_results(release_reconciliation, product_gauntlet)
-    rel_summary, rel_failures, rel_matrix, rel_notes = _release_candidate_summary_bundle(
         launch_summary=launch_summary,
         launch_failures=launch_failures,
         matrix=matrix,
-        release_gate=release_gate,
         product_gauntlet=product_gauntlet,
-        reconciliation=release_reconciliation,
         ci_context=launch_artifacts["release_candidate_ci_context"],
     )
-    _write_json(release_dir / "artifact_reconciliation_results.json", release_reconciliation)
-    _write_json(release_dir / "release_candidate_summary.json", rel_summary)
-    _write_json(release_dir / "release_candidate_failures.json", rel_failures)
-    _write_json(release_dir / "release_gate_matrix.json", rel_matrix)
-    _write_json(release_dir / "release_notes.json", rel_notes)
-    release_manifest, release_hashes = _release_candidate_artifact_manifest(
-        root_path,
-        profile=profile,
-        commit_sha=str(launch_summary.get("commit_sha") or ""),
-    )
-    _write_json(release_dir / "artifact_manifest.json", release_manifest)
-    _write_json(release_dir / "artifact_hashes.json", release_hashes)
-    release_reconciliation = _release_artifact_reconciliation_results(root_path, release_manifest, release_hashes)
-    release_gate = _release_candidate_gate_results(release_reconciliation, product_gauntlet)
-    rel_summary, rel_failures, rel_matrix, rel_notes = _release_candidate_summary_bundle(
-        launch_summary=launch_summary,
-        launch_failures=launch_failures,
-        matrix=matrix,
-        release_gate=release_gate,
-        product_gauntlet=product_gauntlet,
-        reconciliation=release_reconciliation,
-        ci_context=launch_artifacts["release_candidate_ci_context"],
-    )
-    _write_json(release_dir / "artifact_reconciliation_results.json", release_reconciliation)
-    _write_json(release_dir / "release_candidate_summary.json", rel_summary)
-    _write_json(release_dir / "release_candidate_failures.json", rel_failures)
-    _write_json(release_dir / "release_gate_matrix.json", rel_matrix)
-    _write_json(release_dir / "release_notes.json", rel_notes)
     for name, payload in {
         "artifact_manifest": release_manifest,
         "artifact_hashes": release_hashes,

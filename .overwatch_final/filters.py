@@ -48,8 +48,10 @@ from runtime_state import (
     WIDGET_GLOBAL_FILTERS_CLEAR_TOPBAR,
     clear_scoped_state,
     get_state,
+    mark_widget_key_rendered,
     pop_state,
     set_state,
+    widget_key_rendered_this_run,
 )
 from utils.cache import clear_all_cache
 from utils.company_filter import (
@@ -141,6 +143,15 @@ def render_global_date_range_control(*, label: str = "Date range", label_visibil
     default_start = default_end - timedelta(days=7)
     raw_existing_date_range = get_state(GLOBAL_DATE_RANGE_INPUT)
     existing_date_range = _normalize_date_range_value(raw_existing_date_range)
+    if widget_key_rendered_this_run(GLOBAL_DATE_RANGE_INPUT):
+        if len(existing_date_range) == 2:
+            clamped_start, clamped_end, _, _ = clamp_global_date_range(
+                existing_date_range[0],
+                existing_date_range[1],
+            )
+            set_state(GLOBAL_START_DATE, clamped_start)
+            set_state(GLOBAL_END_DATE, clamped_end)
+            return
     if isinstance(raw_existing_date_range, list) and existing_date_range:
         set_state(GLOBAL_DATE_RANGE_INPUT, existing_date_range)
     if len(existing_date_range) == 2:
@@ -167,6 +178,7 @@ def render_global_date_range_control(*, label: str = "Date range", label_visibil
         key=GLOBAL_DATE_RANGE_INPUT,
         label_visibility=label_visibility,
     )
+    mark_widget_key_rendered(GLOBAL_DATE_RANGE_INPUT)
     date_range = _normalize_date_range_value(date_range)
     if len(date_range) == 1:
         return

@@ -2502,21 +2502,31 @@ class RuntimeValidationHarness:
             "daily_exports": export_scan,
             "raw_sql_included": False,
         }
+        failed_budget_contexts = [
+            context for context in all_context_events
+            if not bool(context.get("passed_query_budget", context.get("passed_budget", True)))
+        ]
+        route_query_leak_count = sum(
+            1 for row in button_results
+            if row.get("action_type") == "route" and int(row.get("actual_snowflake_executions") or 0) > 0
+        )
+        evidence_clicks_over_budget = sum(
+            1 for row in button_results
+            if row.get("action_type") == "evidence_load" and int(row.get("actual_snowflake_executions") or 0) > 1
+        )
+        query_budget_passed = (
+            not failed_budget_contexts
+            and route_query_leak_count == 0
+            and evidence_clicks_over_budget == 0
+            and not marker_budget_mismatches
+        )
         query_budget_results = {
             "source": "runtime_budget_events",
             "proof_source": "runtime_click",
-            "failed_contexts": [
-                context for context in all_context_events
-                if not bool(context.get("passed_query_budget", context.get("passed_budget", True)))
-            ],
-            "route_query_leaks": sum(
-                1 for row in button_results
-                if row.get("action_type") == "route" and int(row.get("actual_snowflake_executions") or 0) > 0
-            ),
-            "evidence_clicks_over_budget": sum(
-                1 for row in button_results
-                if row.get("action_type") == "evidence_load" and int(row.get("actual_snowflake_executions") or 0) > 1
-            ),
+            "failed_contexts": failed_budget_contexts,
+            "failed_context_count": len(failed_budget_contexts),
+            "route_query_leaks": route_query_leak_count,
+            "evidence_clicks_over_budget": evidence_clicks_over_budget,
             "marker_budget_mismatch_count": len(marker_budget_mismatches),
             "marker_budget_mismatches": marker_budget_mismatches,
             "marker_budget_runtime_contexts": sorted({
@@ -2525,7 +2535,24 @@ class RuntimeValidationHarness:
                 for context in row.get("marker_budget_runtime_contexts", [])
                 if context
             }),
-            "passed": not marker_budget_mismatches,
+            "production_interrupting": False,
+            "strict_mode_raises": True,
+            "passed": query_budget_passed,
+        }
+        query_budget_violation_results = {
+            "source": "runtime_budget_violation_recording",
+            "proof_source": "runtime_click",
+            "passed": query_budget_passed,
+            "recorded": True,
+            "production_interrupting": False,
+            "strict_mode_raises": True,
+            "violation_count": len(failed_budget_contexts) + route_query_leak_count + evidence_clicks_over_budget + len(marker_budget_mismatches),
+            "failed_contexts": failed_budget_contexts,
+            "route_query_leaks": route_query_leak_count,
+            "evidence_clicks_over_budget": evidence_clicks_over_budget,
+            "marker_budget_mismatch_count": len(marker_budget_mismatches),
+            "recommendation": "Keep production UI record-only and route fixes through launch-readiness query budget failures.",
+            "raw_sql_included": False,
         }
         session_direct_sql_results = {
             "source": "runtime_telemetry_events",
@@ -3215,6 +3242,7 @@ class RuntimeValidationHarness:
             "forbidden_daily_ui_scan.json": daily_scan,
             "forbidden_export_scan.json": export_scan,
             "query_budget_results.json": query_budget_results,
+            "query_budget_violation_results.json": query_budget_violation_results,
             "session_direct_sql_results.json": session_direct_sql_results,
             "query_search_results.json": query_search_results,
             "evidence_loader_results.json": evidence_results,

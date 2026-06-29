@@ -161,12 +161,13 @@ def _render_cost_advisor_board(
     render_priority_dataframe(
         board,
         title="Ranked cost advisor findings",
-        priority_columns=[
-            "SEVERITY", "ACTION_TYPE", "WORKFLOW_ROUTE", "CATEGORY", "ENTITY", "EXECUTION_MODE", "PRIMARY_METRIC",
-            "ESTIMATE_TYPE",
-            "EST_MONTHLY_SAVINGS_USD", "EST_MONTHLY_IMPACT_USD",
-            "TELEMETRY_SUMMARY", "SAFE_NEXT_ACTION", "VALIDATION_NEEDED", "DO_NOT_DO", "CONFIDENCE",
-        ],
+            priority_columns=[
+                "SEVERITY", "ACTION_TYPE", "WORKFLOW_ROUTE", "CATEGORY", "ENTITY", "EXECUTION_MODE", "PRIMARY_METRIC",
+                "ESTIMATE_TYPE",
+                "EST_MONTHLY_SAVINGS_USD", "VALUE_AT_RISK_USD", "EST_MONTHLY_IMPACT_USD",
+                "QUEUE_PRESSURE_SECONDS", "REMOTE_SPILL_BYTES", "LOCAL_SPILL_BYTES", "SAVINGS_ESTIMATE_STATUS",
+                "TELEMETRY_SUMMARY", "SAFE_NEXT_ACTION", "VALIDATION_NEEDED", "DO_NOT_DO", "CONFIDENCE",
+            ],
         sort_by=["SEVERITY", "EST_MONTHLY_SAVINGS_USD", "EST_MONTHLY_IMPACT_USD"],
         ascending=[True, False, False],
         raw_label="All cost advisor findings",

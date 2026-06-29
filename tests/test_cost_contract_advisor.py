@@ -141,6 +141,40 @@ class CostContractAdvisorTests(unittest.TestCase):
         self.assertIn("PRIMARY_METRIC", board.columns)
         self.assertIn("EXECUTION_MODE", board.columns)
 
+    def test_warehouse_pressure_keeps_spill_and_queue_evidence(self):
+        from sections.cost_contract_advisor import _build_cost_advisor_board
+
+        summary, board = _build_cost_advisor_board(
+            efficiency_summary=None,
+            warehouse_efficiency=pd.DataFrame({
+                "WAREHOUSE_NAME": ["COMPUTE_WH"],
+                "COST_USD": [280.0],
+                "QUEUE_SECONDS": [1250.0],
+                "REMOTE_SPILL_GB": [14.5],
+                "LOCAL_SPILL_GB": [32.0],
+                "FAILED_QUERY_WASTE_USD": [0.0],
+                "QUERY_COUNT": [44],
+                "AVG_CACHE_PCT": [70.0],
+            }),
+            clustering_cost=None,
+            reconciliation=None,
+            service_lens=None,
+            credit_price=3.0,
+            days=7,
+        )
+
+        self.assertEqual(summary["findings"], 1)
+        row = board.iloc[0]
+        self.assertEqual(row["CATEGORY"], "Warehouse pressure")
+        self.assertEqual(row["EST_MONTHLY_SAVINGS_USD"], 0.0)
+        self.assertGreater(row["VALUE_AT_RISK_USD"], 0)
+        self.assertEqual(row["QUEUE_PRESSURE_SECONDS"], 1250.0)
+        self.assertGreater(row["REMOTE_SPILL_BYTES"], 0)
+        self.assertGreater(row["LOCAL_SPILL_BYTES"], 0)
+        self.assertEqual(row["SAVINGS_ESTIMATE_STATUS"], "pressure_evidence_no_savings_formula")
+        self.assertIn("value at risk", row["PRIMARY_METRIC"])
+        self.assertNotEqual(row["PRIMARY_METRIC"], "$0/mo savings")
+
 
 if __name__ == "__main__":
     unittest.main()

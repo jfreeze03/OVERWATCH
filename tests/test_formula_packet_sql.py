@@ -95,6 +95,32 @@ class FormulaPacketSqlTests(unittest.TestCase):
         self.assertFalse(by_check["service_other_and_signed_bridge_delta_present"]["passed"], result)
         self.assertFalse(result["passed"], result)
 
+    def test_spend_movement_without_complete_window_or_pending_state_fails(self):
+        from tools.contracts.formula_end_to_end_validation import build_snowflake_formula_static_results
+
+        result = build_snowflake_formula_static_results(
+            ROOT,
+            sql_texts={
+                "setup": """
+                  ACCOUNT_BILLED_CREDITS CREDITS_BILLED
+                  WAREHOUSE_CREDITS CREDITS_USED_COMPUTE CREDITS_USED_CLOUD_SERVICES
+                  FACT_CORTEX_DAILY CORTEX_AI_CREDITS CREDIT_PRICE_USD
+                  SERVICE_OTHER_CREDITS
+                  ACCOUNT_BILLED_CREDITS - WAREHOUSE_CREDITS AS BILLING_BRIDGE_DELTA_CREDITS
+                  SPEND_MOVEMENT_PCT PRIOR_COST_USD
+                """,
+                "tables": "",
+                "validation": "",
+                "monolith_setup": "",
+                "monolith_validation": "",
+                "drop": "",
+            },
+        )
+
+        by_check = {row["check_name"]: row for row in result["checks"]}
+        self.assertFalse(by_check["spend_movement_comparable_window"]["passed"], result)
+        self.assertFalse(result["passed"], result)
+
 
 if __name__ == "__main__":
     unittest.main()

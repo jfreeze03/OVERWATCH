@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +26,7 @@ class FormulaEndToEndValidationTests(unittest.TestCase):
             FORMULA_CHAIN_REL,
             FORMULA_GATE_REL,
             FORMULA_LIVE_REL,
+            FORMULA_VALUE_RECONCILIATION_REL,
             PACKET_SCHEMA_GATE_REL,
             PACKET_SCHEMA_UPGRADE_REL,
             PACKET_FORMULA_REL,
@@ -32,11 +34,13 @@ class FormulaEndToEndValidationTests(unittest.TestCase):
             SNOWFLAKE_FORMULA_GATE_REL,
             SNOWFLAKE_FORMULA_LIVE_REL,
             SNOWFLAKE_FORMULA_STATIC_REL,
+            SNOWFLAKE_FORMULA_VALUE_REL,
             WORKLOAD_FORMULA_LIVE_REL,
         )
 
         for rel in (
             FORMULA_CHAIN_REL,
+            FORMULA_VALUE_RECONCILIATION_REL,
             PACKET_FORMULA_REL,
             FLAT_PACKET_FORMULA_REL,
             SNOWFLAKE_FORMULA_STATIC_REL,
@@ -45,6 +49,7 @@ class FormulaEndToEndValidationTests(unittest.TestCase):
             COST_WORKBENCH_CHART_REL,
             FORMULA_LIVE_REL,
             SNOWFLAKE_FORMULA_LIVE_REL,
+            SNOWFLAKE_FORMULA_VALUE_REL,
             CORTEX_SERVICE_TYPE_LIVE_REL,
             WORKLOAD_FORMULA_LIVE_REL,
             FORMULA_GATE_REL,
@@ -129,6 +134,148 @@ class FormulaEndToEndValidationTests(unittest.TestCase):
             ):
                 self.assertIn(key, by_field[field])
 
+    def test_formula_value_reconciliation_is_value_level(self):
+        from tools.contracts.formula_end_to_end_validation import REQUIRED_PACKET_FIELDS
+
+        value = self.artifacts["artifacts/formula_authority/formula_value_reconciliation_results.json"]
+
+        self.assertTrue(value["passed"], value)
+        self.assertEqual(value["formula_validation_mode"], "fixture_static")
+        self.assertTrue(value["live_skipped"])
+        self.assertFalse(value["live_executed"])
+        by_field = {row["decision_packet_field"]: row for row in value["rows"]}
+        self.assertEqual(set(REQUIRED_PACKET_FIELDS), set(by_field))
+        for field, row in by_field.items():
+            self.assertIn("source_rows_present", row, field)
+            self.assertIn("source_confirmed_zero", row, field)
+            self.assertIn("packet_matches_flat", row, field)
+            self.assertIn("flat_matches_rendered", row, field)
+            self.assertTrue(row["packet_matches_flat"], row)
+            self.assertTrue(row["flat_matches_rendered"], row)
+            self.assertTrue(row["selected_credit_column"], row)
+            self.assertTrue(row["selected_credit_price"], row)
+            self.assertTrue(row["passed"], row)
+
+    def test_formula_value_reconciliation_rejects_missing_source_zero(self):
+        from tools.contracts.formula_end_to_end_validation import build_formula_value_reconciliation_results
+
+        chain = {
+            "passed": True,
+            "failure_count": 0,
+            "rows": [
+                {
+                    "formula_id": "account_billed_total",
+                    "decision_packet_field": "ACCOUNT_BILLED_COST_USD",
+                    "flat_packet_field": "ACCOUNT_BILLED_COST_USD",
+                    "selected_credit_column": "CREDITS_BILLED",
+                    "selected_credit_price": "CREDIT_PRICE_USD",
+                    "source_rows_present": False,
+                    "source_confirmed_zero": False,
+                    "packet_value": 0,
+                    "flat_value": 0,
+                    "rendered_value": 0,
+                    "fixture_expected_value": None,
+                    "live_expected_value": None,
+                    "tolerance": 0.01,
+                    "raw_sql_included": False,
+                }
+            ],
+        }
+
+        result = build_formula_value_reconciliation_results(chain, launch_profile="internal_fixture")
+
+        self.assertFalse(result["passed"], result)
+        self.assertIn("source rows are missing", result["rows"][0]["failure_reason"])
+
+    def test_formula_value_reconciliation_rejects_null_packet_with_source_rows(self):
+        from tools.contracts.formula_end_to_end_validation import build_formula_value_reconciliation_results
+
+        chain = {
+            "passed": True,
+            "failure_count": 0,
+            "rows": [
+                {
+                    "formula_id": "account_billed_total",
+                    "decision_packet_field": "ACCOUNT_BILLED_COST_USD",
+                    "flat_packet_field": "ACCOUNT_BILLED_COST_USD",
+                    "selected_credit_column": "CREDITS_BILLED",
+                    "selected_credit_price": "CREDIT_PRICE_USD",
+                    "source_rows_present": True,
+                    "source_confirmed_zero": False,
+                    "packet_value": None,
+                    "flat_value": None,
+                    "rendered_value": None,
+                    "fixture_expected_value": 36.8,
+                    "live_expected_value": None,
+                    "tolerance": 0.01,
+                    "raw_sql_included": False,
+                }
+            ],
+        }
+
+        result = build_formula_value_reconciliation_results(chain, launch_profile="internal_fixture")
+
+        self.assertFalse(result["passed"], result)
+        self.assertIn("FORMULA_VALUE_RECONCILIATION_FAILED", {row["code"] for row in result["failures"]})
+        self.assertIn("packet value is null", result["rows"][0]["failure_reason"])
+
+    def test_snowflake_formula_value_results_reconcile_fixture_math(self):
+        value = self.artifacts["artifacts/snowflake_validation/snowflake_formula_value_results.json"]
+
+        self.assertTrue(value["passed"], value)
+        self.assertEqual(value["failure_count"], 0, value)
+        by_check = {row["check_name"]: row for row in value["checks"]}
+        for check_name in (
+            "account_billed_cost_formula",
+            "warehouse_cost_formula",
+            "cortex_cost_formula",
+            "bridge_delta_signed_formula",
+            "service_other_floor_formula",
+            "billing_bridge_status_formula",
+        ):
+            self.assertIn(check_name, by_check)
+            self.assertTrue(by_check[check_name]["passed"], by_check[check_name])
+
+    def test_snowflake_formula_value_rejects_bridge_delta_mismatch(self):
+        from tools.contracts.formula_end_to_end_validation import build_snowflake_formula_value_results
+
+        def row(field: str, value: object) -> dict[str, object]:
+            return {
+                "decision_packet_field": field,
+                "packet_value": value,
+                "flat_value": value,
+                "rendered_value": value,
+                "source_rows_present": True,
+                "source_confirmed_zero": False,
+                "passed": True,
+            }
+
+        formula_values = {
+            "passed": True,
+            "rows": [
+                row("ACCOUNT_BILLED_CREDITS", 10),
+                row("ACCOUNT_BILLED_COST_USD", 36.8),
+                row("WAREHOUSE_CREDITS", 6),
+                row("WAREHOUSE_COST_ESTIMATE_USD", 22.08),
+                row("WAREHOUSE_COST_USD", 22.08),
+                row("CORTEX_AI_CREDITS", 2),
+                row("CORTEX_AI_COST_USD", 7.36),
+                row("SERVICE_OTHER_CREDITS", 4),
+                row("SERVICE_OTHER_COST_USD", 14.72),
+                row("BILLING_BRIDGE_DELTA_CREDITS", 99),
+                row("BILLING_BRIDGE_DELTA_USD", 14.72),
+                row("BILLING_BRIDGE_STATUS", "warehouse_lower_than_billed"),
+                row("BILLING_WINDOW_COMPLETE", True),
+                row("SPEND_MOVEMENT_PCT", 12.5),
+            ],
+        }
+
+        result = build_snowflake_formula_value_results(formula_values)
+
+        self.assertFalse(result["passed"], result)
+        failed = {row["check_name"] for row in result["checks"] if not row["passed"]}
+        self.assertIn("bridge_delta_signed_formula", failed)
+
     def test_rendered_formula_uses_same_packet_fields_for_cost_and_executive(self):
         rendered = self.artifacts["artifacts/full_app_validation/rendered_formula_results.json"]
 
@@ -165,8 +312,44 @@ class FormulaEndToEndValidationTests(unittest.TestCase):
         self.assertTrue(gate["flat_packet_formula_passed"])
         self.assertTrue(gate["snowflake_formula_static_passed"])
         self.assertTrue(gate["packet_schema_upgrade_passed"])
-        self.assertTrue(gate["snowflake_formula_live_passed"])
+        self.assertTrue(gate["formula_value_reconciliation_passed"])
+        self.assertEqual(gate["formula_validation_mode"], "fixture_static")
+        self.assertFalse(gate["snowflake_formula_live_required"])
+        self.assertFalse(gate["snowflake_formula_live_executed"])
+        self.assertFalse(gate["snowflake_formula_live_passed"])
         self.assertTrue(gate["snowflake_formula_live_skipped"])
+
+    def test_live_formula_status_passes_only_when_live_rows_execute(self):
+        from tools.contracts.formula_end_to_end_validation import build_formula_live_validation_results
+
+        with patch.dict("os.environ", {"OVERWATCH_SNOWFLAKE_VALIDATION": "1"}, clear=False):
+            result = build_formula_live_validation_results(ROOT, live_rows=[{"formula_id": "account_billed_cost", "passed": True}])
+
+        self.assertTrue(result["passed"], result)
+        self.assertEqual(result["formula_validation_mode"], "live")
+        self.assertTrue(result["snowflake_formula_live_required"])
+        self.assertTrue(result["snowflake_formula_live_executed"])
+        self.assertTrue(result["snowflake_formula_live_passed"])
+        self.assertFalse(result["snowflake_formula_live_skipped"])
+
+    def test_ambiguous_live_skipped_and_passed_combination_fails(self):
+        from tools.contracts.formula_end_to_end_validation import evaluate_formula_end_to_end_gate
+
+        passed = {"passed": True, "failure_count": 0}
+        live = {
+            "passed": True,
+            "formula_validation_mode": "fixture_static",
+            "snowflake_formula_live_required": False,
+            "snowflake_formula_live_executed": False,
+            "snowflake_formula_live_passed": True,
+            "snowflake_formula_live_skipped": True,
+            "failure_count": 0,
+        }
+
+        result = evaluate_formula_end_to_end_gate(passed, passed, passed, passed, passed, passed, passed, live)
+
+        self.assertFalse(result["passed"], result)
+        self.assertIn("AMBIGUOUS_FORMULA_LIVE_STATUS", {row["code"] for row in result["failures"]})
 
     def test_formula_artifacts_do_not_store_raw_sql_bodies(self):
         for rel, payload in self.artifacts.items():

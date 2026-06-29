@@ -15,6 +15,7 @@ FORMULA_GAP_REL = f"{FORMULA_AUTHORITY_DIR}/formula_gap_results.json"
 COST_DB_AUTHORITY_SUMMARY_REL = f"{FORMULA_AUTHORITY_DIR}/cost_db_formula_authority_summary.json"
 CORTEX_SERVICE_TYPE_MAPPING_REL = f"{FORMULA_AUTHORITY_DIR}/cortex_service_type_mapping.json"
 FORMULA_CHAIN_REL = f"{FORMULA_AUTHORITY_DIR}/formula_chain_results.json"
+FORMULA_VALUE_RECONCILIATION_REL = f"{FORMULA_AUTHORITY_DIR}/formula_value_reconciliation_results.json"
 PACKET_FORMULA_REL = f"{FORMULA_AUTHORITY_DIR}/packet_formula_results.json"
 FLAT_PACKET_FORMULA_REL = f"{FORMULA_AUTHORITY_DIR}/flat_packet_formula_results.json"
 SNOWFLAKE_FORMULA_STATIC_REL = f"{FORMULA_AUTHORITY_DIR}/snowflake_formula_static_results.json"
@@ -24,6 +25,7 @@ REQUIRED_FORMULA_AUTHORITY_ARTIFACTS = {
     CORTEX_SERVICE_TYPE_MAPPING_REL,
     FLAT_PACKET_FORMULA_REL,
     FORMULA_CHAIN_REL,
+    FORMULA_VALUE_RECONCILIATION_REL,
     OVERWATCH_MAPPING_REL,
     PACKET_FORMULA_REL,
     FORMULA_GAP_REL,
@@ -58,6 +60,7 @@ def write_cost_db_formula_authority_artifacts(root: Path | str = ".") -> dict[st
     from utils.cortex_service_types import cortex_service_type_mapping_results
     from tools.contracts.formula_end_to_end_validation import (
         build_formula_chain_results,
+        build_formula_value_reconciliation_results,
         build_snowflake_formula_static_results,
         evaluate_flat_packet_formula_sql,
         evaluate_packet_formula_sql,
@@ -69,6 +72,7 @@ def write_cost_db_formula_authority_artifacts(root: Path | str = ".") -> dict[st
     authority_summary = cost_formula_authority_results()
     cortex_mapping = cortex_service_type_mapping_results()
     formula_chain = build_formula_chain_results(root_path)
+    formula_value_reconciliation = build_formula_value_reconciliation_results(formula_chain)
     packet_formula = evaluate_packet_formula_sql(root_path)
     flat_packet_formula = evaluate_flat_packet_formula_sql(root_path)
     snowflake_formula_static = build_snowflake_formula_static_results(root_path)
@@ -78,6 +82,7 @@ def write_cost_db_formula_authority_artifacts(root: Path | str = ".") -> dict[st
         CORTEX_SERVICE_TYPE_MAPPING_REL: cortex_mapping,
         FLAT_PACKET_FORMULA_REL: flat_packet_formula,
         FORMULA_CHAIN_REL: formula_chain,
+        FORMULA_VALUE_RECONCILIATION_REL: formula_value_reconciliation,
         OVERWATCH_MAPPING_REL: overwatch_rows,
         PACKET_FORMULA_REL: packet_formula,
         FORMULA_GAP_REL: gap_results,
@@ -95,6 +100,7 @@ def evaluate_cost_db_formula_authority(
     authority_summary: Any = None,
     cortex_service_type_mapping: Any = None,
     formula_chain_results: Any = None,
+    formula_value_reconciliation_results: Any = None,
     packet_formula_results: Any = None,
     flat_packet_formula_results: Any = None,
     snowflake_formula_static_results: Any = None,
@@ -105,6 +111,7 @@ def evaluate_cost_db_formula_authority(
     summary = dict(_as_mapping(authority_summary))
     cortex_mapping = dict(_as_mapping(cortex_service_type_mapping))
     formula_chain = dict(_as_mapping(formula_chain_results))
+    formula_value_reconciliation = dict(_as_mapping(formula_value_reconciliation_results))
     packet_formula = dict(_as_mapping(packet_formula_results))
     flat_packet_formula = dict(_as_mapping(flat_packet_formula_results))
     snowflake_formula_static = dict(_as_mapping(snowflake_formula_static_results))
@@ -124,6 +131,13 @@ def evaluate_cost_db_formula_authority(
             failures.append({"code": "CORTEX_SERVICE_ALLOWLIST_MISSING"})
     if formula_chain and not bool(formula_chain.get("passed")):
         failures.append({"code": "FORMULA_CHAIN_RESULTS_FAILED", "failure_count": int(formula_chain.get("failure_count") or 0)})
+    if formula_value_reconciliation and not bool(formula_value_reconciliation.get("passed")):
+        failures.append(
+            {
+                "code": "FORMULA_VALUE_RECONCILIATION_FAILED",
+                "failure_count": int(formula_value_reconciliation.get("failure_count") or 0),
+            }
+        )
     if packet_formula and not bool(packet_formula.get("passed")):
         failures.append({"code": "PACKET_FORMULA_SQL_FAILED", "failure_count": int(packet_formula.get("failure_count") or 0)})
     if flat_packet_formula and not bool(flat_packet_formula.get("passed")):
@@ -187,6 +201,7 @@ def evaluate_cost_db_formula_authority(
         "authority_summary_passed": bool(summary.get("passed", True)),
         "cortex_service_type_mapping_passed": not bool(cortex_mapping.get("broad_ai_substring_match_enabled")),
         "formula_chain_passed": bool(formula_chain.get("passed", True)),
+        "formula_value_reconciliation_passed": bool(formula_value_reconciliation.get("passed", True)),
         "packet_formula_sql_passed": bool(packet_formula.get("passed", True)),
         "flat_packet_formula_passed": bool(flat_packet_formula.get("passed", True)),
         "snowflake_formula_static_passed": bool(snowflake_formula_static.get("passed", True)),
@@ -204,6 +219,7 @@ def main() -> None:
         artifacts.get(COST_DB_AUTHORITY_SUMMARY_REL),
         artifacts.get(CORTEX_SERVICE_TYPE_MAPPING_REL),
         artifacts.get(FORMULA_CHAIN_REL),
+        artifacts.get(FORMULA_VALUE_RECONCILIATION_REL),
         artifacts.get(PACKET_FORMULA_REL),
         artifacts.get(FLAT_PACKET_FORMULA_REL),
         artifacts.get(SNOWFLAKE_FORMULA_STATIC_REL),
@@ -223,6 +239,7 @@ __all__ = [
     "FLAT_PACKET_FORMULA_REL",
     "FORMULA_AUTHORITY_DIR",
     "FORMULA_CHAIN_REL",
+    "FORMULA_VALUE_RECONCILIATION_REL",
     "FORMULA_GAP_REL",
     "OVERWATCH_MAPPING_REL",
     "PACKET_FORMULA_REL",

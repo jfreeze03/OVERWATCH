@@ -239,9 +239,23 @@ def _cost_advisor_add_row(
     do_not_do: str,
     confidence: str,
     source: str,
+    value_at_risk_usd: float | None = None,
+    queue_pressure_seconds: float = 0.0,
+    local_spill_bytes: float = 0.0,
+    remote_spill_bytes: float = 0.0,
+    savings_estimate_status: str = "",
+    impact_formula: str = "",
+    impact_reason: str = "",
 ) -> None:
     impact = round(safe_float(impact_usd), 2)
     savings = round(max(0.0, safe_float(savings_usd)), 2)
+    value_at_risk = round(abs(safe_float(value_at_risk_usd if value_at_risk_usd is not None else impact)), 2)
+    pressure_present = safe_float(queue_pressure_seconds) > 0 or safe_float(local_spill_bytes) > 0 or safe_float(remote_spill_bytes) > 0
+    status = savings_estimate_status.strip() if savings_estimate_status else (
+        "estimated_savings_available" if savings > 0 else (
+            "pressure_evidence_no_savings_formula" if pressure_present else "impact_investigation_only"
+        )
+    )
     priority = _cost_advisor_priority(max(impact, savings), finding_type=finding)
     rows.append({
         "PRIORITY": priority,
@@ -252,6 +266,13 @@ def _cost_advisor_add_row(
         "ESTIMATE_TYPE": estimate_type,
         "EST_MONTHLY_IMPACT_USD": impact,
         "EST_MONTHLY_SAVINGS_USD": savings,
+        "VALUE_AT_RISK_USD": value_at_risk,
+        "QUEUE_PRESSURE_SECONDS": round(safe_float(queue_pressure_seconds), 2),
+        "LOCAL_SPILL_BYTES": round(safe_float(local_spill_bytes), 2),
+        "REMOTE_SPILL_BYTES": round(safe_float(remote_spill_bytes), 2),
+        "SAVINGS_ESTIMATE_STATUS": status,
+        "IMPACT_FORMULA": impact_formula,
+        "IMPACT_REASON": impact_reason or evidence,
         "EVIDENCE": evidence,
         "TELEMETRY_SUMMARY": evidence,
         "SAFE_NEXT_ACTION": safe_next_action,
@@ -296,7 +317,11 @@ def _decorate_cost_advisor_board(board: pd.DataFrame) -> pd.DataFrame:
         lambda row: (
             f"${safe_float(row.get('EST_MONTHLY_SAVINGS_USD')):,.0f}/mo savings"
             if safe_float(row.get("EST_MONTHLY_SAVINGS_USD")) > 0
-            else f"${abs(safe_float(row.get('EST_MONTHLY_IMPACT_USD'))):,.0f}/mo value at risk"
+            else (
+                f"${safe_float(row.get('VALUE_AT_RISK_USD', row.get('EST_MONTHLY_IMPACT_USD'))):,.0f}/mo value at risk"
+                if safe_float(row.get("VALUE_AT_RISK_USD", row.get("EST_MONTHLY_IMPACT_USD"))) > 0
+                else "Pressure evidence - savings formula unavailable"
+            )
         ),
         axis=1,
     )
@@ -361,7 +386,7 @@ def _build_cost_advisor_board(
         if wh_col:
             for col in (
                 "COST_USD", "QUEUE_SECONDS", "REMOTE_SPILL_GB", "FAILED_QUERY_WASTE_USD",
-                "QUERY_COUNT", "AVG_CACHE_PCT",
+                "QUERY_COUNT", "AVG_CACHE_PCT", "LOCAL_SPILL_GB",
             ):
                 if col not in work.columns:
                     work[col] = 0.0
@@ -371,13 +396,16 @@ def _build_cost_advisor_board(
                 monthly_cost = window_cost * window_factor
                 queue_seconds = safe_float(row.get("QUEUE_SECONDS"))
                 remote_spill_gb = safe_float(row.get("REMOTE_SPILL_GB"))
+                local_spill_gb = safe_float(row.get("LOCAL_SPILL_GB"))
                 failed_waste = safe_float(row.get("FAILED_QUERY_WASTE_USD"))
                 query_count = safe_int(row.get("QUERY_COUNT"))
                 avg_cache = safe_float(row.get("AVG_CACHE_PCT"))
-                if remote_spill_gb >= 10 or queue_seconds >= 600:
+                if remote_spill_gb >= 10 or local_spill_gb >= 25 or queue_seconds >= 600:
                     pressure = []
                     if remote_spill_gb >= 10:
                         pressure.append(f"{remote_spill_gb:,.1f} GB remote spill")
+                    if local_spill_gb >= 25:
+                        pressure.append(f"{local_spill_gb:,.1f} GB local spill")
                     if queue_seconds >= 600:
                         pressure.append(f"{queue_seconds:,.0f}s queue time")
                     _cost_advisor_add_row(
@@ -388,6 +416,13 @@ def _build_cost_advisor_board(
                         estimate_type="Value at risk",
                         impact_usd=monthly_cost,
                         savings_usd=0.0,
+                        value_at_risk_usd=monthly_cost,
+                        queue_pressure_seconds=queue_seconds,
+                        local_spill_bytes=local_spill_gb * 1024.0 * 1024.0 * 1024.0,
+                        remote_spill_bytes=remote_spill_gb * 1024.0 * 1024.0 * 1024.0,
+                        savings_estimate_status="pressure_evidence_no_savings_formula",
+                        impact_formula="loaded_window_cost_usd * (30 / loaded_days)",
+                        impact_reason="Queue or spill pressure is operational value at risk; savings requires query-profile proof.",
                         evidence=(
                             f"{wh}: {', '.join(pressure)} with ${window_cost:,.0f} warehouse cost "
                             f"in the {days}-day window."

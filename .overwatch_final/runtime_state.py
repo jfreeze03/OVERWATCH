@@ -43,6 +43,7 @@ GLOBAL_SCHEMA_CHOICE_SCOPE = "_global_schema_choice_scope"
 GLOBAL_FILTER_CHOICE_SCOPE = "_global_filter_choice_scope"
 GLOBAL_DATE_CLAMP_NOTICE_KEY = "_global_date_clamp_notice_key"
 GLOBAL_DATE_CLAMP_PENDING_WARNING = "_global_date_clamp_pending_warning"
+WIDGET_KEYS_RENDERED_THIS_RUN = "_overwatch_widget_keys_rendered_this_run"
 PREV_ACTIVE_COMPANY = "_prev_active_company"
 CURRENT_ROLE = "_overwatch_current_role"
 CURRENT_ROLE_SOURCE = "_overwatch_current_role_source"
@@ -170,6 +171,28 @@ def pop_state(key: str, default: Any = None) -> Any:
     return st.session_state.pop(key, default)
 
 
+def reset_widget_render_tracking() -> None:
+    """Start a fresh widget-render tracking window for the current script run."""
+    st.session_state[WIDGET_KEYS_RENDERED_THIS_RUN] = []
+
+
+def widget_key_rendered_this_run(key: str) -> bool:
+    """Return whether a Streamlit widget key has already been instantiated this run."""
+    rendered = st.session_state.get(WIDGET_KEYS_RENDERED_THIS_RUN, [])
+    return str(key) in {str(item) for item in rendered if item is not None}
+
+
+def mark_widget_key_rendered(key: str) -> None:
+    """Record that a widget key has been instantiated in this script run."""
+    rendered = st.session_state.setdefault(WIDGET_KEYS_RENDERED_THIS_RUN, [])
+    if not isinstance(rendered, list):
+        rendered = []
+        st.session_state[WIDGET_KEYS_RENDERED_THIS_RUN] = rendered
+    key_text = str(key)
+    if key_text not in {str(item) for item in rendered if item is not None}:
+        rendered.append(key_text)
+
+
 def ensure_default_state(key: str, value: Any) -> Any:
     """Ensure a default state value and return the effective value."""
     return st.session_state.setdefault(key, value)
@@ -183,6 +206,7 @@ def clear_scoped_state(keys: list[str] | tuple[str, ...]) -> None:
 
 def ensure_startup_state() -> None:
     """Seed shell defaults before any widgets render."""
+    reset_widget_render_tracking()
     ensure_default_state(ACTIVE_COMPANY, DEFAULT_COMPANY)
     ensure_default_state(LOGGING_ENABLED, False)
     ensure_default_state(QUERY_LOGGING_ENABLED, False)

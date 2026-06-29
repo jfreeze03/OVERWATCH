@@ -79,6 +79,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             "artifacts/full_app_validation/forbidden_daily_ui_scan.json",
             "artifacts/full_app_validation/forbidden_export_scan.json",
             "artifacts/full_app_validation/query_budget_results.json",
+            "artifacts/full_app_validation/query_budget_violation_results.json",
             "artifacts/full_app_validation/session_direct_sql_results.json",
             "artifacts/full_app_validation/query_search_results.json",
             "artifacts/full_app_validation/evidence_loader_results.json",
@@ -96,6 +97,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         buttons = json.loads((ROOT / "artifacts/full_app_validation/button_results.json").read_text())
         exports = json.loads((ROOT / "artifacts/full_app_validation/export_results.json").read_text())
         query_search = json.loads((ROOT / "artifacts/full_app_validation/query_search_results.json").read_text())
+        query_budget_violation = json.loads((ROOT / "artifacts/full_app_validation/query_budget_violation_results.json").read_text())
         evidence = json.loads((ROOT / "artifacts/full_app_validation/evidence_loader_results.json").read_text())
         evidence_matrix = json.loads((ROOT / "artifacts/full_app_validation/evidence_loader_call_matrix.json").read_text())
         live = json.loads((ROOT / "artifacts/full_app_validation/live_feature_results.json").read_text())
@@ -154,6 +156,10 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertIn("case_payload_scan", forbidden_ui["daily_exports"])
         self.assertEqual(forbidden_ui["daily_button_labels"]["blocked_count"], 0, forbidden_ui)
         self.assertEqual(forbidden_ui["daily_exports"]["case_payload_scan"]["blocked_count"], 0, forbidden_ui)
+        self.assertTrue(query_budget_violation["recorded"], query_budget_violation)
+        self.assertFalse(query_budget_violation["production_interrupting"], query_budget_violation)
+        self.assertTrue(query_budget_violation["strict_mode_raises"], query_budget_violation)
+        self.assertEqual(query_budget_violation["violation_count"], 0, query_budget_violation)
 
         rendered_pairs = {(row["section"], row["workflow"]) for row in views}
         for section, workflows in SECTION_WORKFLOW_CONTRACT.items():

@@ -234,6 +234,64 @@ class GuardrailTests(unittest.TestCase):
             st.session_state.clear()
             st.session_state.update(previous)
 
+    def test_global_date_range_duplicate_render_is_idempotent(self):
+        import filters
+        from runtime_state import (
+            GLOBAL_DATE_RANGE_INPUT,
+            GLOBAL_END_DATE,
+            GLOBAL_START_DATE,
+            reset_widget_render_tracking,
+        )
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            reset_widget_render_tracking()
+            st.session_state[GLOBAL_START_DATE] = date(2026, 6, 21)
+            st.session_state[GLOBAL_END_DATE] = date(2026, 6, 28)
+            st.session_state[GLOBAL_DATE_RANGE_INPUT] = [date(2026, 6, 21), date(2026, 6, 28)]
+
+            with patch.object(filters.st, "date_input", return_value=(date(2026, 6, 21), date(2026, 6, 28))) as widget:
+                filters.render_global_date_range_control(label="Window")
+                filters.render_global_date_range_control(label="Window")
+
+            self.assertEqual(widget.call_count, 1)
+            self.assertEqual(st.session_state[GLOBAL_START_DATE], date(2026, 6, 21))
+            self.assertEqual(st.session_state[GLOBAL_END_DATE], date(2026, 6, 28))
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
+    def test_theme_picker_avoids_session_state_widget_key_conflict(self):
+        import theme
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["theme_picker_radio"] = "terminal"
+
+            with patch.object(theme.st, "selectbox", return_value="terminal") as selectbox:
+                theme.render_theme_picker()
+
+            _, kwargs = selectbox.call_args
+            self.assertNotIn("key", kwargs)
+            self.assertEqual(st.session_state.get("theme_picker_radio"), "terminal")
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
+    def test_query_budget_assertion_is_sanitized_for_daily_ui(self):
+        import shell
+
+        message = shell._format_section_error(
+            AssertionError("actual_snowflake_executions 7 exceeded budget 1; SELECT * FROM secret")
+        )
+
+        self.assertIn("live query budget", message)
+        self.assertNotIn("actual_snowflake_executions", message)
+        self.assertNotIn("SELECT", message)
+        self.assertNotIn("Traceback", message)
+
     def test_query_guardrail_messages_are_hash_deduped(self):
         previous = dict(st.session_state)
         try:

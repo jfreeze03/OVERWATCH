@@ -3199,16 +3199,22 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
     from tools.contracts.formula_end_to_end_validation import (
         build_packet_schema_upgrade_results,
         build_cortex_service_type_live_results,
+        build_formula_chain_results,
         build_formula_live_validation_results,
+        build_formula_value_reconciliation_results,
         build_snowflake_formula_live_results,
+        build_snowflake_formula_value_results,
         build_workload_formula_live_results,
         evaluate_packet_formula_sql,
     )
 
     packet_formula = evaluate_packet_formula_sql(root_path)
     packet_schema_upgrade = build_packet_schema_upgrade_results(root_path)
+    formula_chain = build_formula_chain_results(root_path)
+    formula_value_reconciliation = build_formula_value_reconciliation_results(formula_chain)
     formula_live = build_formula_live_validation_results(root_path)
     snowflake_formula_live = build_snowflake_formula_live_results(root_path)
+    snowflake_formula_value = build_snowflake_formula_value_results(formula_value_reconciliation)
     cortex_service_type_live = build_cortex_service_type_live_results(root_path)
     workload_formula_live = build_workload_formula_live_results(root_path)
     live_execution_manifest = _live_execution_manifest_results(
@@ -3370,6 +3376,7 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "packet_schema_upgrade": packet_schema_upgrade,
         "formula_live_validation": formula_live,
         "snowflake_formula_live": snowflake_formula_live,
+        "snowflake_formula_value": snowflake_formula_value,
         "cortex_service_type_live": cortex_service_type_live,
         "workload_formula_live": workload_formula_live,
         "live_validation_environment": live_environment,
@@ -3431,8 +3438,14 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "packet_formula_sql_passed": bool(packet_formula.get("passed")),
         "packet_schema_upgrade_passed": bool(packet_schema_upgrade.get("passed")),
         "formula_live_validation_passed": bool(formula_live.get("passed")),
-        "snowflake_formula_live_passed": bool(snowflake_formula_live.get("passed")),
-        "snowflake_formula_live_skipped": bool(snowflake_formula_live.get("skipped")),
+        "formula_validation_mode": snowflake_formula_live.get("formula_validation_mode"),
+        "snowflake_formula_live_required": bool(snowflake_formula_live.get("snowflake_formula_live_required")),
+        "snowflake_formula_live_executed": bool(snowflake_formula_live.get("snowflake_formula_live_executed")),
+        "snowflake_formula_live_passed": bool(snowflake_formula_live.get("snowflake_formula_live_passed")),
+        "snowflake_formula_live_skipped": bool(snowflake_formula_live.get("snowflake_formula_live_skipped")),
+        "snowflake_formula_live_skip_reason": snowflake_formula_live.get("snowflake_formula_live_skip_reason"),
+        "snowflake_formula_value_passed": bool(snowflake_formula_value.get("passed")),
+        "snowflake_formula_value_failure_count": int(snowflake_formula_value.get("failure_count") or 0),
         "cortex_service_type_live_passed": bool(cortex_service_type_live.get("passed")),
         "workload_formula_live_passed": bool(workload_formula_live.get("passed")),
         "hard_failure_count": len(hard_failures),
@@ -3481,6 +3494,7 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "packet_schema_upgrade_results": packet_schema_upgrade,
         "formula_live_validation_results": formula_live,
         "snowflake_formula_live_results": snowflake_formula_live,
+        "snowflake_formula_value_results": snowflake_formula_value,
         "cortex_service_type_live_results": cortex_service_type_live,
         "workload_formula_live_results": workload_formula_live,
     }

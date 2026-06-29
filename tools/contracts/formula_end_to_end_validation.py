@@ -17,6 +17,7 @@ SNOWFLAKE_VALIDATION_DIR = "artifacts/snowflake_validation"
 LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
 
 FORMULA_CHAIN_REL = f"{FORMULA_AUTHORITY_DIR}/formula_chain_results.json"
+FORMULA_VALUE_RECONCILIATION_REL = f"{FORMULA_AUTHORITY_DIR}/formula_value_reconciliation_results.json"
 PACKET_FORMULA_REL = f"{FORMULA_AUTHORITY_DIR}/packet_formula_results.json"
 FLAT_PACKET_FORMULA_REL = f"{FORMULA_AUTHORITY_DIR}/flat_packet_formula_results.json"
 SNOWFLAKE_FORMULA_STATIC_REL = f"{FORMULA_AUTHORITY_DIR}/snowflake_formula_static_results.json"
@@ -24,6 +25,7 @@ RENDERED_FORMULA_REL = f"{FULL_APP_VALIDATION_DIR}/rendered_formula_results.json
 COST_WORKBENCH_CHART_REL = f"{FULL_APP_VALIDATION_DIR}/cost_workbench_chart_results.json"
 FORMULA_LIVE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/formula_live_validation_results.json"
 SNOWFLAKE_FORMULA_LIVE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_formula_live_results.json"
+SNOWFLAKE_FORMULA_VALUE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_formula_value_results.json"
 CORTEX_SERVICE_TYPE_LIVE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/cortex_service_type_live_results.json"
 WORKLOAD_FORMULA_LIVE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/workload_formula_live_results.json"
 PACKET_SCHEMA_UPGRADE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/packet_schema_upgrade_results.json"
@@ -114,6 +116,10 @@ _SQL_FILES = {
     "drop": "snowflake/OVERWATCH_MART_DROP.sql",
 }
 
+_LIVE_PROOF_SKIP_REASON = (
+    "Live formula proof skipped because OVERWATCH_SNOWFLAKE_VALIDATION/OVERWATCH_BILLING_RECONCILIATION_PROOF is not enabled."
+)
+
 
 def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -149,6 +155,24 @@ def _safe_contains(text: str, token: str) -> bool:
 
 def _token_count(text: str, token: str) -> int:
     return len(re.findall(rf"\b{re.escape(token)}\b", str(text or ""), flags=re.IGNORECASE))
+
+
+def _formula_live_enabled() -> bool:
+    return os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION") == "1" or os.environ.get("OVERWATCH_BILLING_RECONCILIATION_PROOF") == "1"
+
+
+def _formula_validation_mode() -> str:
+    if _formula_live_enabled():
+        return "live"
+    return "fixture_static"
+
+
+def _value_equal(left: Any, right: Any, tolerance: float) -> bool:
+    if left is None or right is None:
+        return left is right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return abs(float(left) - float(right)) <= float(tolerance)
+    return left == right
 
 
 def evaluate_packet_formula_sql(
@@ -462,6 +486,7 @@ def build_formula_chain_results(root: Path | str = ".") -> dict[str, Any]:
             "rendered_metric_key": rendered_metric_key,
             "selected_credit_column": selected_credit_column,
             "selected_credit_price": "CREDIT_PRICE_USD",
+            "source_rows_present": fixture_expected is not None,
             "packet_value": fixture_expected,
             "flat_value": fixture_expected,
             "rendered_value": fixture_expected,
@@ -502,7 +527,328 @@ def build_formula_chain_results(root: Path | str = ".") -> dict[str, Any]:
     }
 
 
-def build_rendered_formula_results(root: Path | str = ".") -> dict[str, Any]:
+def build_formula_value_reconciliation_results(
+    formula_chain: Mapping[str, Any] | None = None,
+    *,
+    launch_profile: str | None = None,
+) -> dict[str, Any]:
+    """Reconcile COST_DB formula values through packet, flat, and rendered surfaces."""
+
+    profile = str(launch_profile or os.environ.get("OVERWATCH_LAUNCH_PROFILE") or "internal_fixture")
+    live_enabled = _formula_live_enabled()
+    live_required = profile in {"internal_live", "prod_candidate"} or live_enabled
+    mode = "live" if live_enabled else "fixture_static"
+    chain = formula_chain or build_formula_chain_results(Path.cwd())
+    rows: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    for chain_row in chain.get("rows", []):
+        row = dict(chain_row)
+        field = str(row.get("decision_packet_field") or row.get("flat_packet_field") or "")
+        tolerance = float(row.get("tolerance") or 0)
+        packet_value = row.get("packet_value")
+        flat_value = row.get("flat_value")
+        rendered_value = row.get("rendered_value")
+        fixture_expected = row.get("fixture_expected_value")
+        live_expected = row.get("live_expected_value")
+        source_rows_present = bool(row.get("source_rows_present"))
+        source_confirmed_zero = bool(row.get("source_confirmed_zero"))
+        selected_credit_column = str(row.get("selected_credit_column") or "")
+        selected_credit_price = str(row.get("selected_credit_price") or "")
+        row_failures: list[str] = []
+        if not field:
+            row_failures.append("formula field missing")
+        if not selected_credit_column:
+            row_failures.append("selected credit column missing")
+        if not selected_credit_price:
+            row_failures.append("selected credit price missing")
+        if source_rows_present and packet_value is None:
+            row_failures.append("packet value is null while source rows are present")
+        if source_rows_present and packet_value == 0 and not source_confirmed_zero:
+            row_failures.append("packet value is default zero without source_confirmed_zero")
+        if not source_rows_present and packet_value == 0 and not source_confirmed_zero:
+            row_failures.append("numeric zero rendered while source rows are missing")
+        if not _value_equal(packet_value, flat_value, tolerance):
+            row_failures.append("flat value differs from packet value")
+        if not _value_equal(flat_value, rendered_value, tolerance):
+            row_failures.append("rendered value differs from flat value")
+        if live_enabled:
+            if live_expected is None:
+                row_failures.append("live expected value missing while live validation is enabled")
+            elif not _value_equal(packet_value, live_expected, tolerance):
+                row_failures.append("live expected value differs from packet value")
+        elif not _value_equal(packet_value, fixture_expected, tolerance):
+            row_failures.append("fixture expected value differs from packet value")
+        if live_required and not live_enabled:
+            row_failures.append("fixture-only formula value proof used while launch profile requires live proof")
+        row.update(
+            {
+                "formula_validation_mode": mode,
+                "launch_profile": profile,
+                "source_rows_present": source_rows_present,
+                "source_confirmed_zero": source_confirmed_zero,
+                "packet_matches_flat": _value_equal(packet_value, flat_value, tolerance),
+                "flat_matches_rendered": _value_equal(flat_value, rendered_value, tolerance),
+                "packet_matches_fixture_expected": _value_equal(packet_value, fixture_expected, tolerance),
+                "packet_matches_live_expected": None
+                if live_expected is None
+                else _value_equal(packet_value, live_expected, tolerance),
+                "live_required": live_required,
+                "live_executed": live_enabled,
+                "passed": not row_failures,
+                "failure_reason": "; ".join(row_failures),
+                "raw_sql_included": False,
+            }
+        )
+        rows.append(row)
+        if row_failures:
+            failures.append(
+                {
+                    "code": "FORMULA_VALUE_RECONCILIATION_FAILED",
+                    "formula_id": row.get("formula_id"),
+                    "packet_field": field,
+                    "failure_reason": "; ".join(row_failures),
+                }
+            )
+    if not bool(chain.get("passed")):
+        failures.append({"code": "FORMULA_CHAIN_FAILED", "failure_count": int(chain.get("failure_count") or 0)})
+    return {
+        "source": "formula_value_reconciliation",
+        "generated_at": _utc_now(),
+        "formula_validation_mode": mode,
+        "launch_profile": profile,
+        "live_required": live_required,
+        "live_executed": live_enabled,
+        "live_skipped": not live_enabled,
+        "live_skip_reason": "" if live_enabled else _LIVE_PROOF_SKIP_REASON,
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "formula_count": len(rows),
+        "rows": rows,
+        "raw_sql_included": False,
+    }
+
+
+def _value_by_field(formula_value_reconciliation: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        str(row.get("decision_packet_field") or row.get("flat_packet_field") or ""): row.get("packet_value")
+        for row in formula_value_reconciliation.get("rows", [])
+        if isinstance(row, Mapping)
+    }
+
+
+def _row_by_field(formula_value_reconciliation: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    return {
+        str(row.get("decision_packet_field") or row.get("flat_packet_field") or ""): row
+        for row in formula_value_reconciliation.get("rows", [])
+        if isinstance(row, Mapping)
+    }
+
+
+def _as_float(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_snowflake_formula_value_results(
+    formula_value_reconciliation: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    value = formula_value_reconciliation or build_formula_value_reconciliation_results()
+    values = _value_by_field(value)
+    rows_by_field = _row_by_field(value)
+    checks: list[dict[str, Any]] = []
+
+    account_credits = _as_float(values.get("ACCOUNT_BILLED_CREDITS"))
+    account_cost = _as_float(values.get("ACCOUNT_BILLED_COST_USD"))
+    warehouse_credits = _as_float(values.get("WAREHOUSE_CREDITS"))
+    warehouse_cost = _as_float(values.get("WAREHOUSE_COST_USD"))
+    warehouse_cost_estimate = _as_float(values.get("WAREHOUSE_COST_ESTIMATE_USD"))
+    cortex_credits = _as_float(values.get("CORTEX_AI_CREDITS"))
+    cortex_cost = _as_float(values.get("CORTEX_AI_COST_USD"))
+    service_other_credits = _as_float(values.get("SERVICE_OTHER_CREDITS"))
+    service_other_cost = _as_float(values.get("SERVICE_OTHER_COST_USD"))
+    bridge_delta_credits = _as_float(values.get("BILLING_BRIDGE_DELTA_CREDITS"))
+    bridge_delta_usd = _as_float(values.get("BILLING_BRIDGE_DELTA_USD"))
+    billing_status = str(values.get("BILLING_BRIDGE_STATUS") or "")
+    billing_complete = values.get("BILLING_WINDOW_COMPLETE")
+
+    credit_price: float | None = None
+    if account_credits is not None and account_credits != 0 and account_cost is not None:
+        credit_price = account_cost / account_credits
+    elif warehouse_credits is not None and warehouse_credits != 0 and warehouse_cost is not None:
+        credit_price = warehouse_cost / warehouse_credits
+    elif cortex_credits is not None and cortex_credits != 0 and cortex_cost is not None:
+        credit_price = cortex_cost / cortex_credits
+
+    def add_check(name: str, passed: bool, actual: Any, expected: Any, fields: list[str], recommendation: str) -> None:
+        checks.append(
+            {
+                "check_name": name,
+                "passed": bool(passed),
+                "actual": actual,
+                "expected": expected,
+                "fields": fields,
+                "failure_reason": "" if passed else recommendation,
+                "recommendation": recommendation,
+                "raw_sql_included": False,
+            }
+        )
+
+    tolerance = 0.01
+    add_check(
+        "account_billed_cost_formula",
+        credit_price is not None and account_credits is not None and account_cost is not None and abs(account_cost - account_credits * credit_price) <= tolerance,
+        account_cost,
+        None if credit_price is None or account_credits is None else round(account_credits * credit_price, 6),
+        ["ACCOUNT_BILLED_CREDITS", "ACCOUNT_BILLED_COST_USD"],
+        "Account billed cost must equal billed credits times selected credit price when no true currency source is present.",
+    )
+    add_check(
+        "warehouse_cost_formula",
+        credit_price is not None
+        and warehouse_credits is not None
+        and warehouse_cost is not None
+        and warehouse_cost_estimate is not None
+        and abs(warehouse_cost - warehouse_credits * credit_price) <= tolerance
+        and abs(warehouse_cost_estimate - warehouse_credits * credit_price) <= tolerance,
+        {"WAREHOUSE_COST_USD": warehouse_cost, "WAREHOUSE_COST_ESTIMATE_USD": warehouse_cost_estimate},
+        None if credit_price is None or warehouse_credits is None else round(warehouse_credits * credit_price, 6),
+        ["WAREHOUSE_CREDITS", "WAREHOUSE_COST_USD", "WAREHOUSE_COST_ESTIMATE_USD"],
+        "Warehouse bridge cost must equal warehouse credits times selected credit price.",
+    )
+    add_check(
+        "cortex_cost_formula",
+        credit_price is not None and cortex_credits is not None and cortex_cost is not None and abs(cortex_cost - cortex_credits * credit_price) <= tolerance,
+        cortex_cost,
+        None if credit_price is None or cortex_credits is None else round(cortex_credits * credit_price, 6),
+        ["CORTEX_AI_CREDITS", "CORTEX_AI_COST_USD"],
+        "Cortex cost must use the same selected credit price as Cost and Executive summaries.",
+    )
+    expected_delta = None if account_credits is None or warehouse_credits is None else account_credits - warehouse_credits
+    add_check(
+        "bridge_delta_signed_formula",
+        expected_delta is not None and bridge_delta_credits is not None and abs(bridge_delta_credits - expected_delta) <= tolerance,
+        bridge_delta_credits,
+        expected_delta,
+        ["ACCOUNT_BILLED_CREDITS", "WAREHOUSE_CREDITS", "BILLING_BRIDGE_DELTA_CREDITS"],
+        "Signed bridge delta must equal account billed credits minus warehouse bridge credits.",
+    )
+    add_check(
+        "bridge_delta_usd_formula",
+        expected_delta is not None
+        and credit_price is not None
+        and bridge_delta_usd is not None
+        and abs(bridge_delta_usd - expected_delta * credit_price) <= tolerance,
+        bridge_delta_usd,
+        None if expected_delta is None or credit_price is None else round(expected_delta * credit_price, 6),
+        ["BILLING_BRIDGE_DELTA_CREDITS", "BILLING_BRIDGE_DELTA_USD"],
+        "Bridge delta USD must preserve the signed bridge delta times selected credit price.",
+    )
+    expected_service_other = None if expected_delta is None else max(expected_delta, 0)
+    add_check(
+        "service_other_floor_formula",
+        expected_service_other is not None
+        and service_other_credits is not None
+        and abs(service_other_credits - expected_service_other) <= tolerance,
+        service_other_credits,
+        expected_service_other,
+        ["SERVICE_OTHER_CREDITS", "BILLING_BRIDGE_DELTA_CREDITS"],
+        "Service/Other credits may floor at zero, while signed bridge delta remains preserved.",
+    )
+    add_check(
+        "service_other_cost_formula",
+        expected_service_other is not None
+        and credit_price is not None
+        and service_other_cost is not None
+        and abs(service_other_cost - expected_service_other * credit_price) <= tolerance,
+        service_other_cost,
+        None if expected_service_other is None or credit_price is None else round(expected_service_other * credit_price, 6),
+        ["SERVICE_OTHER_CREDITS", "SERVICE_OTHER_COST_USD"],
+        "Service/Other cost must equal service/other credits times selected credit price.",
+    )
+    expected_status = "pending"
+    if expected_delta is not None:
+        if abs(expected_delta) <= tolerance:
+            expected_status = "matched"
+        elif expected_delta > 0:
+            expected_status = "warehouse_lower_than_billed"
+        else:
+            expected_status = "warehouse_higher_than_billed"
+    add_check(
+        "billing_bridge_status_formula",
+        billing_status == expected_status,
+        billing_status,
+        expected_status,
+        ["BILLING_BRIDGE_STATUS", "BILLING_RECONCILIATION_STATUS"],
+        "Billing bridge status must reflect the signed bridge delta state.",
+    )
+    source_value_failures = [
+        field
+        for field, row in rows_by_field.items()
+        if bool(row.get("source_rows_present"))
+        and (row.get("packet_value") is None or (row.get("packet_value") == 0 and not bool(row.get("source_confirmed_zero"))))
+    ]
+    add_check(
+        "source_rows_present_values_non_null",
+        not source_value_failures,
+        source_value_failures,
+        [],
+        list(rows_by_field),
+        "Formula fields with source rows must not publish null/default-zero values.",
+    )
+    missing_source_zero_failures = [
+        field
+        for field, row in rows_by_field.items()
+        if not bool(row.get("source_rows_present")) and row.get("packet_value") == 0 and not bool(row.get("source_confirmed_zero"))
+    ]
+    add_check(
+        "source_missing_zero_is_pending",
+        not missing_source_zero_failures,
+        missing_source_zero_failures,
+        [],
+        list(rows_by_field),
+        "Missing source rows must render pending/unavailable, not numeric zero.",
+    )
+    add_check(
+        "spend_movement_comparable_window_or_pending",
+        bool(billing_complete) or str(rows_by_field.get("SPEND_MOVEMENT_PCT", {}).get("unavailable_state") or "").lower() in {"pending", "partial"},
+        {"BILLING_WINDOW_COMPLETE": billing_complete, "SPEND_MOVEMENT_PCT": values.get("SPEND_MOVEMENT_PCT")},
+        "complete window or pending/partial state",
+        ["SPEND_MOVEMENT_PCT", "BILLING_WINDOW_COMPLETE"],
+        "Spend movement must use comparable complete windows or be marked pending/partial.",
+    )
+
+    failures = [
+        {
+            "code": "SNOWFLAKE_FORMULA_VALUE_CHECK_FAILED",
+            "check_name": row["check_name"],
+            "failure_reason": row["failure_reason"],
+        }
+        for row in checks
+        if not bool(row.get("passed"))
+    ]
+    return {
+        "source": "snowflake_formula_value_validation",
+        "generated_at": _utc_now(),
+        "formula_validation_mode": str(value.get("formula_validation_mode") or _formula_validation_mode()),
+        "selected_credit_price": credit_price,
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "checks": checks,
+        "raw_sql_included": False,
+    }
+
+
+def build_rendered_formula_results(
+    root: Path | str = ".",
+    *,
+    formula_value_reconciliation: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     root_path = Path(root)
     _ensure_app_path(root_path)
     from sections.metric_semantic_registry import all_metric_semantics
@@ -545,6 +891,28 @@ def build_rendered_formula_results(root: Path | str = ".") -> dict[str, Any]:
         row["raw_sql_included"] = False
         if not row["passed"]:
             failures.append({"code": "RENDERED_FORMULA_FIELD_MISMATCH", "check_name": row["check_name"]})
+    formula_values = formula_value_reconciliation or build_formula_value_reconciliation_results(build_formula_chain_results(root_path))
+    value_checks: list[dict[str, Any]] = []
+    for row in formula_values.get("rows", []):
+        if not str(row.get("rendered_section") or ""):
+            continue
+        tolerance = float(row.get("tolerance") or 0)
+        passed = _value_equal(row.get("flat_value"), row.get("rendered_value"), tolerance)
+        value_check = {
+            "check_name": f"rendered_value_matches_flat_{row.get('decision_packet_field')}",
+            "section": row.get("rendered_section"),
+            "metric_key": row.get("rendered_metric_key"),
+            "packet_field": row.get("decision_packet_field"),
+            "flat_value": row.get("flat_value"),
+            "rendered_value": row.get("rendered_value"),
+            "tolerance": tolerance,
+            "passed": passed,
+            "failure_reason": "" if passed else "Rendered summary value differs from flat packet value.",
+            "raw_sql_included": False,
+        }
+        value_checks.append(value_check)
+        if not passed:
+            failures.append({"code": "RENDERED_FORMULA_VALUE_MISMATCH", "packet_field": row.get("decision_packet_field")})
     return {
         "source": "rendered_formula_static_contract",
         "generated_at": _utc_now(),
@@ -552,32 +920,105 @@ def build_rendered_formula_results(root: Path | str = ".") -> dict[str, Any]:
         "failure_count": len(failures),
         "failures": failures,
         "checks": checks,
+        "value_checks": value_checks,
         "raw_sql_included": False,
     }
 
 
-def build_formula_live_validation_results(root: Path | str = ".") -> dict[str, Any]:
-    live_enabled = os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION") == "1" or os.environ.get("OVERWATCH_BILLING_RECONCILIATION_PROOF") == "1"
+def build_formula_live_validation_results(
+    root: Path | str = ".",
+    *,
+    live_rows: list[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    live_enabled = _formula_live_enabled()
     if not live_enabled:
         return {
             "source": "formula_live_validation",
             "generated_at": _utc_now(),
             "mode": "fixture_static",
+            "formula_validation_mode": "fixture_static",
             "status": "skipped",
             "passed": True,
             "skipped": True,
-            "skip_reason": "Live formula proof skipped because OVERWATCH_SNOWFLAKE_VALIDATION/OVERWATCH_BILLING_RECONCILIATION_PROOF is not enabled.",
+            "skip_reason": _LIVE_PROOF_SKIP_REASON,
+            "live_required": False,
+            "live_executed": False,
+            "live_passed": False,
+            "live_skipped": True,
+            "live_skip_reason": _LIVE_PROOF_SKIP_REASON,
+            "live_waiver_id": "",
+            "live_failure_count": 0,
+            "snowflake_formula_live_required": False,
+            "snowflake_formula_live_executed": False,
+            "snowflake_formula_live_passed": False,
+            "snowflake_formula_live_skipped": True,
+            "snowflake_formula_live_skip_reason": _LIVE_PROOF_SKIP_REASON,
+            "snowflake_formula_live_waiver_id": "",
+            "snowflake_formula_live_failure_count": 0,
             "failure_count": 0,
             "failures": [],
+            "raw_sql_included": False,
+        }
+    if live_rows is not None:
+        rows = [dict(row) for row in live_rows]
+        failures = [
+            {
+                "code": "LIVE_FORMULA_ROW_FAILED",
+                "formula_id": row.get("formula_id"),
+                "failure_reason": row.get("failure_reason") or "Live formula row failed.",
+            }
+            for row in rows
+            if not bool(row.get("passed"))
+        ]
+        return {
+            "source": "formula_live_validation",
+            "generated_at": _utc_now(),
+            "mode": "live",
+            "formula_validation_mode": "live",
+            "status": "passed" if not failures else "failed",
+            "passed": not failures,
+            "skipped": False,
+            "live_required": True,
+            "live_executed": True,
+            "live_passed": not failures,
+            "live_skipped": False,
+            "live_skip_reason": "",
+            "live_waiver_id": "",
+            "live_failure_count": len(failures),
+            "snowflake_formula_live_required": True,
+            "snowflake_formula_live_executed": True,
+            "snowflake_formula_live_passed": not failures,
+            "snowflake_formula_live_skipped": False,
+            "snowflake_formula_live_skip_reason": "",
+            "snowflake_formula_live_waiver_id": "",
+            "snowflake_formula_live_failure_count": len(failures),
+            "failure_count": len(failures),
+            "failures": failures,
+            "rows": rows,
             "raw_sql_included": False,
         }
     return {
         "source": "formula_live_validation",
         "generated_at": _utc_now(),
         "mode": "live",
+        "formula_validation_mode": "live",
         "status": "failed",
         "passed": False,
         "skipped": False,
+        "live_required": True,
+        "live_executed": True,
+        "live_passed": False,
+        "live_skipped": False,
+        "live_skip_reason": "",
+        "live_waiver_id": "",
+        "live_failure_count": 1,
+        "snowflake_formula_live_required": True,
+        "snowflake_formula_live_executed": True,
+        "snowflake_formula_live_passed": False,
+        "snowflake_formula_live_skipped": False,
+        "snowflake_formula_live_skip_reason": "",
+        "snowflake_formula_live_waiver_id": "",
+        "snowflake_formula_live_failure_count": 1,
         "failure_count": 1,
         "failures": [{"code": "LIVE_FORMULA_VALIDATION_SESSION_NOT_AVAILABLE", "recommendation": "Run with configured validation database/schema/warehouse session helpers."}],
         "raw_sql_included": False,
@@ -590,6 +1031,14 @@ def build_snowflake_formula_live_results(root: Path | str = ".") -> dict[str, An
         **live,
         "source": "snowflake_formula_live_validation",
         "packet_field_count": len(REQUIRED_PACKET_FIELDS),
+        "formula_validation_mode": live.get("formula_validation_mode"),
+        "snowflake_formula_live_required": bool(live.get("live_required")),
+        "snowflake_formula_live_executed": bool(live.get("live_executed")),
+        "snowflake_formula_live_passed": bool(live.get("live_passed")),
+        "snowflake_formula_live_skipped": bool(live.get("live_skipped")),
+        "snowflake_formula_live_skip_reason": str(live.get("live_skip_reason") or live.get("skip_reason") or ""),
+        "snowflake_formula_live_waiver_id": str(live.get("live_waiver_id") or ""),
+        "snowflake_formula_live_failure_count": int(live.get("live_failure_count") or live.get("failure_count") or 0),
         "recommendation": (
             "Run with OVERWATCH_SNOWFLAKE_VALIDATION=1 and configured validation database/schema/warehouse."
             if live.get("skipped")
@@ -694,6 +1143,7 @@ def build_workload_formula_live_results(root: Path | str = ".") -> dict[str, Any
 
 def evaluate_formula_end_to_end_gate(
     formula_chain: Mapping[str, Any],
+    formula_value_reconciliation: Mapping[str, Any],
     packet_formula: Mapping[str, Any],
     flat_packet_formula: Mapping[str, Any],
     snowflake_formula_static: Mapping[str, Any],
@@ -703,14 +1153,17 @@ def evaluate_formula_end_to_end_gate(
     snowflake_formula_live: Mapping[str, Any] | None = None,
     cortex_live: Mapping[str, Any] | None = None,
     workload_live: Mapping[str, Any] | None = None,
+    snowflake_formula_value: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     inputs = {
         "formula_chain": formula_chain,
+        "formula_value_reconciliation": formula_value_reconciliation,
         "packet_formula": packet_formula,
         "flat_packet_formula": flat_packet_formula,
         "snowflake_formula_static": snowflake_formula_static,
         "packet_schema_upgrade": packet_schema_upgrade,
         "rendered_formula": rendered_formula,
+        "snowflake_formula_value": snowflake_formula_value or {"passed": True},
         "formula_live": formula_live or {"passed": True},
         "snowflake_formula_live": snowflake_formula_live or formula_live or {"passed": True},
         "cortex_live": cortex_live or {"passed": True},
@@ -721,6 +1174,15 @@ def evaluate_formula_end_to_end_gate(
         for name, payload in inputs.items()
         if not bool(payload.get("passed"))
     ]
+    live_payload = snowflake_formula_live or formula_live or {}
+    live_skipped = bool(live_payload.get("snowflake_formula_live_skipped", live_payload.get("live_skipped", live_payload.get("skipped", False))))
+    live_passed = bool(live_payload.get("snowflake_formula_live_passed", live_payload.get("live_passed", False)))
+    live_required = bool(live_payload.get("snowflake_formula_live_required", live_payload.get("live_required", False)))
+    live_executed = bool(live_payload.get("snowflake_formula_live_executed", live_payload.get("live_executed", False)))
+    if live_skipped and live_passed:
+        failures.append({"code": "AMBIGUOUS_FORMULA_LIVE_STATUS", "failure_count": 1})
+    if live_required and not live_passed:
+        failures.append({"code": "FORMULA_LIVE_REQUIRED_NOT_PASSED", "failure_count": int(live_payload.get("failure_count") or 1)})
     return {
         "source": "formula_end_to_end_gate",
         "generated_at": _utc_now(),
@@ -728,14 +1190,34 @@ def evaluate_formula_end_to_end_gate(
         "failure_count": len(failures),
         "failures": failures,
         "formula_chain_passed": bool(formula_chain.get("passed")),
+        "formula_value_reconciliation_passed": bool(formula_value_reconciliation.get("passed")),
+        "formula_value_reconciliation_failure_count": int(formula_value_reconciliation.get("failure_count") or 0),
+        "formula_validation_mode": str(live_payload.get("formula_validation_mode") or formula_value_reconciliation.get("formula_validation_mode") or "fixture_static"),
         "packet_formula_sql_passed": bool(packet_formula.get("passed")),
         "flat_packet_formula_passed": bool(flat_packet_formula.get("passed")),
         "snowflake_formula_static_passed": bool(snowflake_formula_static.get("passed")),
+        "snowflake_formula_value_passed": bool((snowflake_formula_value or {}).get("passed", True)),
+        "snowflake_formula_value_failure_count": int((snowflake_formula_value or {}).get("failure_count") or 0),
         "packet_schema_upgrade_passed": bool(packet_schema_upgrade.get("passed")),
         "rendered_formula_passed": bool(rendered_formula.get("passed")),
         "formula_live_validation_passed": bool((formula_live or {}).get("passed", True)),
-        "snowflake_formula_live_passed": bool((snowflake_formula_live or formula_live or {}).get("passed", True)),
-        "snowflake_formula_live_skipped": bool((snowflake_formula_live or formula_live or {}).get("skipped", False)),
+        "snowflake_formula_live_required": live_required,
+        "snowflake_formula_live_executed": live_executed,
+        "snowflake_formula_live_passed": live_passed,
+        "snowflake_formula_live_skipped": live_skipped,
+        "snowflake_formula_live_skip_reason": str(
+            live_payload.get("snowflake_formula_live_skip_reason")
+            or live_payload.get("live_skip_reason")
+            or live_payload.get("skip_reason")
+            or ""
+        ),
+        "snowflake_formula_live_waiver_id": str(live_payload.get("snowflake_formula_live_waiver_id") or live_payload.get("live_waiver_id") or ""),
+        "snowflake_formula_live_failure_count": int(
+            live_payload.get("snowflake_formula_live_failure_count")
+            or live_payload.get("live_failure_count")
+            or live_payload.get("failure_count")
+            or 0
+        ),
         "cortex_service_type_live_passed": bool((cortex_live or {}).get("passed", True)),
         "workload_formula_live_passed": bool((workload_live or {}).get("passed", True)),
         "raw_sql_included": False,
@@ -765,6 +1247,7 @@ def evaluate_packet_schema_gate(packet_schema_upgrade: Mapping[str, Any]) -> dic
 def evaluate_snowflake_formula_gate(
     snowflake_formula_static: Mapping[str, Any],
     snowflake_formula_live: Mapping[str, Any],
+    snowflake_formula_value: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
     if not bool(snowflake_formula_static.get("passed")):
@@ -781,6 +1264,20 @@ def evaluate_snowflake_formula_gate(
                 "failure_count": int(snowflake_formula_live.get("failure_count") or 0),
             }
         )
+    if snowflake_formula_value is not None and not bool(snowflake_formula_value.get("passed")):
+        failures.append(
+            {
+                "code": "SNOWFLAKE_FORMULA_VALUE_FAILED",
+                "failure_count": int(snowflake_formula_value.get("failure_count") or 0),
+            }
+        )
+    live_skipped = bool(snowflake_formula_live.get("snowflake_formula_live_skipped", snowflake_formula_live.get("skipped")))
+    live_passed = bool(snowflake_formula_live.get("snowflake_formula_live_passed", snowflake_formula_live.get("live_passed", False)))
+    live_required = bool(snowflake_formula_live.get("snowflake_formula_live_required", snowflake_formula_live.get("live_required", False)))
+    if live_skipped and live_passed:
+        failures.append({"code": "AMBIGUOUS_FORMULA_LIVE_STATUS"})
+    if live_required and not live_passed:
+        failures.append({"code": "SNOWFLAKE_FORMULA_LIVE_REQUIRED_NOT_PASSED"})
     return {
         "source": "snowflake_formula_gate",
         "generated_at": _utc_now(),
@@ -788,8 +1285,24 @@ def evaluate_snowflake_formula_gate(
         "failure_count": len(failures),
         "failures": failures,
         "snowflake_formula_static_passed": bool(snowflake_formula_static.get("passed")),
-        "snowflake_formula_live_passed": bool(snowflake_formula_live.get("passed")),
-        "snowflake_formula_live_skipped": bool(snowflake_formula_live.get("skipped")),
+        "snowflake_formula_value_passed": bool((snowflake_formula_value or {}).get("passed", True)),
+        "snowflake_formula_value_failure_count": int((snowflake_formula_value or {}).get("failure_count") or 0),
+        "formula_validation_mode": str(snowflake_formula_live.get("formula_validation_mode") or "fixture_static"),
+        "snowflake_formula_live_required": live_required,
+        "snowflake_formula_live_executed": bool(snowflake_formula_live.get("snowflake_formula_live_executed", snowflake_formula_live.get("live_executed", False))),
+        "snowflake_formula_live_passed": live_passed,
+        "snowflake_formula_live_skipped": live_skipped,
+        "snowflake_formula_live_skip_reason": str(
+            snowflake_formula_live.get("snowflake_formula_live_skip_reason")
+            or snowflake_formula_live.get("skip_reason")
+            or ""
+        ),
+        "snowflake_formula_live_waiver_id": str(snowflake_formula_live.get("snowflake_formula_live_waiver_id") or ""),
+        "snowflake_formula_live_failure_count": int(
+            snowflake_formula_live.get("snowflake_formula_live_failure_count")
+            or snowflake_formula_live.get("failure_count")
+            or 0
+        ),
         "raw_sql_included": False,
     }
 
@@ -825,7 +1338,9 @@ def write_formula_end_to_end_artifacts(root: Path | str = ".") -> dict[str, Any]
     packet_schema_upgrade = build_packet_schema_upgrade_results(root_path)
     snowflake_formula_static = build_snowflake_formula_static_results(root_path)
     formula_chain = build_formula_chain_results(root_path)
-    rendered_formula = build_rendered_formula_results(root_path)
+    formula_value_reconciliation = build_formula_value_reconciliation_results(formula_chain)
+    snowflake_formula_value = build_snowflake_formula_value_results(formula_value_reconciliation)
+    rendered_formula = build_rendered_formula_results(root_path, formula_value_reconciliation=formula_value_reconciliation)
     charts = cost_db_chart_pattern_results()
     formula_live = build_formula_live_validation_results(root_path)
     snowflake_formula_live = build_snowflake_formula_live_results(root_path)
@@ -834,6 +1349,7 @@ def write_formula_end_to_end_artifacts(root: Path | str = ".") -> dict[str, Any]
     cortex_mapping = cortex_service_type_mapping_results()
     formula_gate = evaluate_formula_end_to_end_gate(
         formula_chain,
+        formula_value_reconciliation,
         packet_formula,
         flat_packet_formula,
         snowflake_formula_static,
@@ -843,15 +1359,18 @@ def write_formula_end_to_end_artifacts(root: Path | str = ".") -> dict[str, Any]
         snowflake_formula_live,
         cortex_live,
         workload_live,
+        snowflake_formula_value,
     )
     packet_schema_gate = evaluate_packet_schema_gate(packet_schema_upgrade)
-    snowflake_formula_gate = evaluate_snowflake_formula_gate(snowflake_formula_static, snowflake_formula_live)
+    snowflake_formula_gate = evaluate_snowflake_formula_gate(snowflake_formula_static, snowflake_formula_live, snowflake_formula_value)
     cortex_gate = evaluate_cortex_service_type_gate(cortex_mapping, cortex_live)
     artifacts = {
         FORMULA_CHAIN_REL: formula_chain,
+        FORMULA_VALUE_RECONCILIATION_REL: formula_value_reconciliation,
         PACKET_FORMULA_REL: packet_formula,
         FLAT_PACKET_FORMULA_REL: flat_packet_formula,
         SNOWFLAKE_FORMULA_STATIC_REL: snowflake_formula_static,
+        SNOWFLAKE_FORMULA_VALUE_REL: snowflake_formula_value,
         PACKET_SCHEMA_UPGRADE_REL: packet_schema_upgrade,
         RENDERED_FORMULA_REL: rendered_formula,
         COST_WORKBENCH_CHART_REL: charts,
@@ -889,6 +1408,7 @@ __all__ = [
     "FORMULA_CHAIN_REL",
     "FORMULA_GATE_REL",
     "FORMULA_LIVE_REL",
+    "FORMULA_VALUE_RECONCILIATION_REL",
     "PACKET_SCHEMA_GATE_REL",
     "PACKET_SCHEMA_UPGRADE_REL",
     "PACKET_FORMULA_REL",
@@ -897,13 +1417,16 @@ __all__ = [
     "SNOWFLAKE_FORMULA_GATE_REL",
     "SNOWFLAKE_FORMULA_LIVE_REL",
     "SNOWFLAKE_FORMULA_STATIC_REL",
+    "SNOWFLAKE_FORMULA_VALUE_REL",
     "WORKLOAD_FORMULA_LIVE_REL",
     "build_formula_chain_results",
     "build_formula_live_validation_results",
+    "build_formula_value_reconciliation_results",
     "build_packet_schema_upgrade_results",
     "build_rendered_formula_results",
     "build_snowflake_formula_live_results",
     "build_snowflake_formula_static_results",
+    "build_snowflake_formula_value_results",
     "build_workload_formula_live_results",
     "evaluate_cortex_service_type_gate",
     "evaluate_flat_packet_formula_sql",

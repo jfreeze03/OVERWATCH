@@ -56,6 +56,17 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "daily_safe_billing_labels",
         "summarize_billing_reconciliation",
     ),
+    "cost_formula_authority": (
+        "COST_DB_SOURCE_URL",
+        "NUMERIC_NORMALIZATION_COLUMNS",
+        "cost_db_formula_mapping",
+        "cost_formula_authority_results",
+        "credits_to_usd",
+        "evaluate_formula_gaps",
+        "normalize_numeric_columns",
+        "overwatch_formula_mapping",
+        "warehouse_bridge_credits",
+    ),
     "scorecards": (
         "clamp_score", "score_label", "bad_ratio_score", "trend_score",
         "weighted_score", "burn_trend_label", "executive_health_score",

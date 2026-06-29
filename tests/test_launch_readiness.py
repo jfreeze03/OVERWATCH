@@ -103,6 +103,13 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertTrue(summary["billing_reconciliation_live_passed"])
         self.assertTrue(summary["billing_reconciliation_live_skipped"])
         self.assertFalse(summary["billing_reconciliation_live_required"])
+        self.assertTrue(summary["cost_db_formula_authority_passed"])
+        self.assertEqual(summary["cost_db_formula_authority_failure_count"], 0)
+        self.assertGreaterEqual(summary["cost_db_formula_count"], 6)
+        self.assertGreaterEqual(summary["overwatch_formula_count"], 4)
+        self.assertTrue(summary["metric_semantic_registry_passed"])
+        self.assertEqual(summary["metric_semantic_registry_failure_count"], 0)
+        self.assertGreater(summary["metric_semantic_registry_row_count"], 0)
         self.assertTrue(summary["query_budget_gate_passed"])
         self.assertEqual(summary["query_budget_gate_failure_count"], 0)
         self.assertGreaterEqual(summary["required_artifact_count"], len(REQUIRED_LAUNCH_READINESS_ARTIFACTS))
@@ -118,6 +125,8 @@ class LaunchReadinessTests(unittest.TestCase):
             "summary_board_first_paint",
             "billing_reconciliation",
             "billing_reconciliation_live",
+            "cost_db_formula_authority",
+            "metric_semantic_registry",
             "query_budget_recording",
             "runtime_validation",
             "required_artifacts",
@@ -194,6 +203,13 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(raw_recheck["live_validation_status"], "static_skipped")
         self.assertTrue(snowflake_failures["passed"], snowflake_failures)
         self.assertEqual(snowflake_failures["failure_count"], 0, snowflake_failures)
+
+        formula_gate = self._read_json("artifacts/launch_readiness/cost_db_formula_authority_gate_results.json")
+        metric_gate = self._read_json("artifacts/launch_readiness/metric_semantic_gate_results.json")
+        self.assertTrue(formula_gate["passed"], formula_gate)
+        self.assertEqual(formula_gate["failure_count"], 0, formula_gate)
+        self.assertTrue(metric_gate["passed"], metric_gate)
+        self.assertEqual(metric_gate["failure_count"], 0, metric_gate)
 
         self.assertTrue(REQUIRED_LAUNCH_READINESS_ARTIFACTS.issubset(set(manifest["files"])))
         for rel in REQUIRED_LAUNCH_READINESS_ARTIFACTS:

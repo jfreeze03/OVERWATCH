@@ -18,6 +18,157 @@ from sections.cost_contract_dataframes import (
 )
 from sections.shell_helpers import render_escaped_bold_text
 from utils.workflows import render_mode_selector, render_priority_dataframe
+from utils.cost_formula_authority import credits_to_usd, normalize_numeric_columns, warehouse_bridge_credits
+
+
+def _date_column(frame: pd.DataFrame) -> str:
+    for column in ("USAGE_DATE", "START_TIME", "USAGE_MONTH", "WEEK_START"):
+        if column in frame.columns:
+            return column
+    return "USAGE_DATE"
+
+
+def _cost_db_warehouse_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    data = normalize_numeric_columns(frame)
+    if data.empty:
+        return data
+    if "WAREHOUSE_ID" in data.columns:
+        ids = pd.to_numeric(data["WAREHOUSE_ID"], errors="coerce").fillna(0)
+        data = data.loc[ids > 0]
+    if "WAREHOUSE_NAME" in data.columns:
+        names = data["WAREHOUSE_NAME"].fillna("").astype(str).str.strip()
+        data = data.loc[names != ""].copy()
+        data["WAREHOUSE_NAME"] = names.loc[names != ""]
+    return data
+
+
+def _numeric_column(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series([0.0] * len(frame), index=frame.index, dtype=float)
+    return pd.to_numeric(frame[column], errors="coerce").fillna(0.0)
+
+
+def build_account_billed_cost_trend_rows(account_rows: pd.DataFrame, credit_price: float) -> pd.DataFrame:
+    """COST_DB line-trend pattern for account billed cost over time."""
+
+    data = normalize_numeric_columns(account_rows)
+    if data.empty:
+        return pd.DataFrame(columns=["USAGE_DATE", "ACCOUNT_BILLED_CREDITS", "ACCOUNT_BILLED_COST_USD"])
+    date_col = _date_column(data)
+    if date_col not in data.columns:
+        return pd.DataFrame(columns=["USAGE_DATE", "ACCOUNT_BILLED_CREDITS", "ACCOUNT_BILLED_COST_USD"])
+    data["USAGE_DATE"] = pd.to_datetime(data[date_col], errors="coerce").dt.date
+    credit_col = "CREDITS_BILLED" if "CREDITS_BILLED" in data.columns else "TOTAL_CREDITS"
+    rows = data.dropna(subset=["USAGE_DATE"]).groupby("USAGE_DATE", as_index=False)[credit_col].sum()
+    rows = rows.rename(columns={credit_col: "ACCOUNT_BILLED_CREDITS"})
+    rows["ACCOUNT_BILLED_COST_USD"] = rows["ACCOUNT_BILLED_CREDITS"].map(lambda value: credits_to_usd(value, credit_price))
+    return rows.sort_values("USAGE_DATE", kind="mergesort").reset_index(drop=True)
+
+
+def build_service_type_distribution_rows(service_rows: pd.DataFrame, credit_price: float, *, top_n: int = 10) -> pd.DataFrame:
+    """COST_DB pie/distribution pattern for service-type spend."""
+
+    data = normalize_numeric_columns(service_rows)
+    if data.empty or "SERVICE_TYPE" not in data.columns:
+        return pd.DataFrame(columns=["SERVICE_TYPE", "TOTAL_CREDITS", "COST_USD"])
+    credit_col = "CREDITS_BILLED" if "CREDITS_BILLED" in data.columns else "TOTAL_CREDITS"
+    rows = data.groupby("SERVICE_TYPE", as_index=False)[credit_col].sum().rename(columns={credit_col: "TOTAL_CREDITS"})
+    rows["COST_USD"] = rows["TOTAL_CREDITS"].map(lambda value: credits_to_usd(value, credit_price))
+    return rows.sort_values("TOTAL_CREDITS", ascending=False, kind="mergesort").head(max(1, int(top_n or 10))).reset_index(drop=True)
+
+
+def build_warehouse_bridge_top_rows(warehouse_rows: pd.DataFrame, credit_price: float, *, top_n: int = 12) -> pd.DataFrame:
+    """COST_DB top-N horizontal bar pattern for warehouse bridge credits."""
+
+    data = _cost_db_warehouse_rows(warehouse_rows)
+    if data.empty or "WAREHOUSE_NAME" not in data.columns:
+        return pd.DataFrame(columns=["WAREHOUSE_NAME", "WAREHOUSE_CREDITS", "WAREHOUSE_COST_USD"])
+    data["WAREHOUSE_CREDITS"] = data.get("WAREHOUSE_CREDITS", data.get("TOTAL_CREDITS", 0.0))
+    if not pd.to_numeric(data["WAREHOUSE_CREDITS"], errors="coerce").fillna(0).any():
+        data["WAREHOUSE_CREDITS"] = pd.to_numeric(data.get("CREDITS_USED_COMPUTE", 0), errors="coerce").fillna(0) + pd.to_numeric(
+            data.get("CREDITS_USED_CLOUD_SERVICES", 0),
+            errors="coerce",
+        ).fillna(0)
+    rows = data.groupby("WAREHOUSE_NAME", as_index=False)["WAREHOUSE_CREDITS"].sum()
+    rows["WAREHOUSE_COST_USD"] = rows["WAREHOUSE_CREDITS"].map(lambda value: credits_to_usd(value, credit_price))
+    return rows.sort_values("WAREHOUSE_CREDITS", ascending=False, kind="mergesort").head(max(1, int(top_n or 12))).reset_index(drop=True)
+
+
+def build_weekly_warehouse_cost_rows(warehouse_rows: pd.DataFrame, credit_price: float) -> pd.DataFrame:
+    """COST_DB weekly stacked warehouse cost pattern."""
+
+    data = _cost_db_warehouse_rows(warehouse_rows)
+    if data.empty or "WAREHOUSE_NAME" not in data.columns:
+        return pd.DataFrame(columns=["WEEK_START", "WAREHOUSE_NAME", "WAREHOUSE_CREDITS", "WAREHOUSE_COST_USD"])
+    date_col = _date_column(data)
+    if date_col not in data.columns:
+        return pd.DataFrame(columns=["WEEK_START", "WAREHOUSE_NAME", "WAREHOUSE_CREDITS", "WAREHOUSE_COST_USD"])
+    data["WEEK_START"] = pd.to_datetime(data[date_col], errors="coerce").dt.to_period("W").apply(lambda period: period.start_time.date() if pd.notna(period) else pd.NaT)
+    data["WAREHOUSE_CREDITS"] = _numeric_column(data, "WAREHOUSE_CREDITS")
+    if not data["WAREHOUSE_CREDITS"].any():
+        data["WAREHOUSE_CREDITS"] = _numeric_column(data, "CREDITS_USED_COMPUTE") + _numeric_column(data, "CREDITS_USED_CLOUD_SERVICES")
+    rows = data.dropna(subset=["WEEK_START"]).groupby(["WEEK_START", "WAREHOUSE_NAME"], as_index=False)["WAREHOUSE_CREDITS"].sum()
+    rows["WAREHOUSE_COST_USD"] = rows["WAREHOUSE_CREDITS"].map(lambda value: credits_to_usd(value, credit_price))
+    return rows.sort_values(["WEEK_START", "WAREHOUSE_COST_USD"], ascending=[True, False], kind="mergesort").reset_index(drop=True)
+
+
+def build_hourly_usage_pattern_rows(warehouse_rows: pd.DataFrame, credit_price: float) -> pd.DataFrame:
+    """COST_DB hourly/day-of-week usage bar pattern."""
+
+    data = _cost_db_warehouse_rows(warehouse_rows)
+    if data.empty or "START_TIME" not in data.columns:
+        return pd.DataFrame(columns=["HOUR", "DAY_OF_WEEK", "TOTAL_CREDITS", "COST_USD"])
+    ts = pd.to_datetime(data["START_TIME"], errors="coerce")
+    data = data.loc[ts.notna()].copy()
+    data["HOUR"] = ts.loc[ts.notna()].dt.hour
+    data["DAY_OF_WEEK"] = ts.loc[ts.notna()].dt.day_name()
+    data["TOTAL_CREDITS"] = _numeric_column(data, "TOTAL_CREDITS")
+    if not data["TOTAL_CREDITS"].any():
+        data["TOTAL_CREDITS"] = _numeric_column(data, "CREDITS_USED_COMPUTE") + _numeric_column(data, "CREDITS_USED_CLOUD_SERVICES")
+    rows = data.groupby(["HOUR", "DAY_OF_WEEK"], as_index=False)["TOTAL_CREDITS"].sum()
+    rows["COST_USD"] = rows["TOTAL_CREDITS"].map(lambda value: credits_to_usd(value, credit_price))
+    return rows.sort_values(["DAY_OF_WEEK", "HOUR"], kind="mergesort").reset_index(drop=True)
+
+
+def build_cortex_ai_daily_spend_rows(service_rows: pd.DataFrame, credit_price: float) -> pd.DataFrame:
+    """COST_DB service analyzer trend pattern for Cortex AI spend."""
+
+    data = normalize_numeric_columns(service_rows)
+    if data.empty or "SERVICE_TYPE" not in data.columns:
+        return pd.DataFrame(columns=["USAGE_DATE", "CORTEX_AI_CREDITS", "CORTEX_AI_COST_USD"])
+    mask = data["SERVICE_TYPE"].fillna("").astype(str).str.upper().str.contains("CORTEX", regex=False) | data[
+        "SERVICE_TYPE"
+    ].fillna("").astype(str).str.upper().str.contains("AI", regex=False)
+    data = data.loc[mask].copy()
+    if data.empty:
+        return pd.DataFrame(columns=["USAGE_DATE", "CORTEX_AI_CREDITS", "CORTEX_AI_COST_USD"])
+    date_col = _date_column(data)
+    data["USAGE_DATE"] = pd.to_datetime(data[date_col], errors="coerce").dt.date
+    credit_col = "CREDITS_BILLED" if "CREDITS_BILLED" in data.columns else "TOTAL_CREDITS"
+    rows = data.dropna(subset=["USAGE_DATE"]).groupby("USAGE_DATE", as_index=False)[credit_col].sum()
+    rows = rows.rename(columns={credit_col: "CORTEX_AI_CREDITS"})
+    rows["CORTEX_AI_COST_USD"] = rows["CORTEX_AI_CREDITS"].map(lambda value: credits_to_usd(value, credit_price))
+    return rows.sort_values("USAGE_DATE", kind="mergesort").reset_index(drop=True)
+
+
+def cost_db_chart_pattern_results() -> dict[str, object]:
+    patterns = {
+        "account_billed_cost_over_time": "line_trend",
+        "service_type_distribution": "pie_distribution",
+        "warehouse_bridge_by_warehouse": "top_n_horizontal_bar",
+        "weekly_warehouse_cost": "weekly_stacked_bar",
+        "hourly_day_usage": "hourly_day_bars",
+        "cortex_ai_daily_spend": "line_or_bar",
+    }
+    return {
+        "source": "cost_db_chart_patterns",
+        "passed": True,
+        "patterns": patterns,
+        "chart_count": len(patterns),
+        "autoloads_on_first_paint": False,
+        "warehouse_bridge_formula": f"{warehouse_bridge_credits.__name__}: compute + cloud services",
+        "raw_sql_included": False,
+    }
 
 
 def _altair():

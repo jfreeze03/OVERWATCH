@@ -155,6 +155,34 @@ class MetricSemanticRegistryTests(unittest.TestCase):
         self.assertEqual(by_key["total_spend"].value, "Billing reconciliation pending")
         self.assertEqual(by_key["cortex_spend"].value, "$7.6K")
 
+    def test_cost_credit_metrics_have_cost_db_mapping_and_unavailable_policy(self):
+        from sections.metric_semantic_registry import all_metric_semantics
+
+        missing = [
+            (row.section, row.metric_key)
+            for row in all_metric_semantics()
+            if row.value_unit in {"usd", "credits"}
+            and (
+                not row.cost_db_mapping
+                or ("pending" not in row.unavailable_policy.lower() and "unavailable" not in row.unavailable_policy.lower())
+            )
+        ]
+
+        self.assertEqual(missing, [])
+
+    def test_metric_semantic_artifact_includes_authority_fields(self):
+        from sections.metric_semantic_registry import all_metric_semantics
+
+        rows = [row.to_artifact() for row in all_metric_semantics()]
+        cost_rows = [row for row in rows if row["value_unit"] in {"usd", "credits"}]
+
+        self.assertTrue(cost_rows)
+        self.assertTrue(all(row["packet_field"] for row in rows))
+        self.assertTrue(all(row["zero_policy"] for row in rows))
+        self.assertTrue(all(row["unavailable_policy"] for row in rows))
+        self.assertTrue(all(row["live_validation_source"] for row in rows))
+        self.assertTrue(all(row["cost_db_mapping"] for row in cost_rows))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -32,6 +32,10 @@ class MetricSemantic:
     owner: str = "OVERWATCH launch readiness"
     launch_validation_query_or_fixture: str = "summary_packet_fixture"
     proxy_metric: bool = False
+    zero_policy: str = "zero is valid only when source confirms zero"
+    unavailable_policy: str = "render compact unavailable state"
+    live_validation_source: str = "fixture_static"
+    cost_db_mapping: str = ""
 
     def to_artifact(self) -> dict[str, Any]:
         return asdict(self)
@@ -75,6 +79,10 @@ def _sem(
     fallback_behavior: str = "compact unavailable state",
     launch_validation_query_or_fixture: str = "summary_packet_fixture",
     proxy_metric: bool = False,
+    zero_policy: str = "zero is valid only when source confirms zero",
+    unavailable_policy: str = "render compact unavailable state",
+    live_validation_source: str = "fixture_static",
+    cost_db_mapping: str = "",
 ) -> MetricSemantic:
     return MetricSemantic(
         section=section,
@@ -94,6 +102,10 @@ def _sem(
         fallback_behavior=fallback_behavior,
         launch_validation_query_or_fixture=launch_validation_query_or_fixture,
         proxy_metric=proxy_metric,
+        zero_policy=zero_policy,
+        unavailable_policy=unavailable_policy,
+        live_validation_source=live_validation_source,
+        cost_db_mapping=cost_db_mapping,
     )
 
 
@@ -110,6 +122,10 @@ _ROWS: tuple[MetricSemantic, ...] = (
         metric_format="compact_currency",
         expected_max_reason="Account spend scales by customer and selected window.",
         packet_field="ACCOUNT_BILLED_COST_USD",
+        zero_policy="zero requires completed account billing rows proving zero spend",
+        unavailable_policy="Billing reconciliation pending",
+        live_validation_source="billing_reconciliation_live_or_fixture",
+        cost_db_mapping="account_billed_total",
     ),
     _sem(
         "Executive Landing",
@@ -147,6 +163,10 @@ _ROWS: tuple[MetricSemantic, ...] = (
         metric_format="compact_currency",
         expected_max_reason="Cortex spend scales by account and selected window.",
         packet_field="CORTEX_AI_COST_USD",
+        zero_policy="zero requires completed Cortex service rows proving zero spend",
+        unavailable_policy="Cortex spend unavailable until billing reconciliation loads",
+        live_validation_source="billing_reconciliation_live_or_fixture",
+        cost_db_mapping="cortex_ai",
     ),
     _sem(
         "DBA Control Room",
@@ -195,6 +215,11 @@ _ROWS: tuple[MetricSemantic, ...] = (
         value_unit="usd",
         metric_format="compact_currency",
         expected_max_reason="Cost scales by account and selected scope.",
+        packet_field="WAREHOUSE_COST_USD",
+        zero_policy="zero requires completed bridge rows proving zero cost",
+        unavailable_policy="Cost bridge unavailable until billing reconciliation loads",
+        live_validation_source="billing_reconciliation_live_or_fixture",
+        cost_db_mapping="warehouse_bridge",
     ),
     _sem(
         "Alert Center",
@@ -256,6 +281,10 @@ _ROWS: tuple[MetricSemantic, ...] = (
         metric_format="compact_currency",
         expected_max_reason="Account spend scales by customer and selected window.",
         packet_field="ACCOUNT_BILLED_COST_USD",
+        zero_policy="zero requires completed account billing rows proving zero spend",
+        unavailable_policy="Billing reconciliation pending",
+        live_validation_source="billing_reconciliation_live_or_fixture",
+        cost_db_mapping="account_billed_total",
     ),
     _sem(
         "Cost & Contract",
@@ -282,6 +311,10 @@ _ROWS: tuple[MetricSemantic, ...] = (
         metric_format="compact_currency",
         expected_max_reason="Cortex spend scales by account and selected window.",
         packet_field="CORTEX_AI_COST_USD",
+        zero_policy="zero requires completed Cortex service rows proving zero spend",
+        unavailable_policy="Cortex spend unavailable until billing reconciliation loads",
+        live_validation_source="billing_reconciliation_live_or_fixture",
+        cost_db_mapping="cortex_ai",
     ),
     _sem(
         "Cost & Contract",
@@ -294,6 +327,11 @@ _ROWS: tuple[MetricSemantic, ...] = (
         value_unit="usd",
         metric_format="compact_currency",
         expected_max_reason="Forecast scales by account and selected window.",
+        packet_field="FORECAST_RUN_RATE_USD",
+        zero_policy="zero requires completed account billing rows and forecast input proving zero run-rate",
+        unavailable_policy="Forecast pending until billing reconciliation and run-rate inputs load",
+        live_validation_source="billing_reconciliation_live_or_fixture",
+        cost_db_mapping="account_billed_total",
     ),
     _sem(
         "Workload Operations",
@@ -452,11 +490,18 @@ def validate_metric_semantics(section: str, metrics: Sequence[object]) -> list[d
                 failures.append("missing_source_silently_zero")
             if semantic.proxy_metric and "proxy" not in f"{semantic.label} {semantic.description}".lower():
                 failures.append("proxy_metric_missing_label")
+            if semantic.value_unit in {"usd", "credits"} and not semantic.cost_db_mapping:
+                failures.append("cost_metric_missing_cost_db_mapping")
+            if semantic.value_unit in {"usd", "credits"} and "unavailable" not in semantic.unavailable_policy.lower() and "pending" not in semantic.unavailable_policy.lower():
+                failures.append("cost_metric_missing_unavailable_policy")
         rows.append(
             {
                 "section": section,
                 "metric_key": metric_key,
                 "registered": semantic is not None,
+                "packet_field": semantic.packet_field if semantic else "",
+                "source_family": semantic.source_family if semantic else "",
+                "source_object": semantic.source_object if semantic else "",
                 "value_unit": semantic.value_unit if semantic else unit,
                 "metric_format": semantic.metric_format if semantic else fmt,
                 "observed_format": fmt,
@@ -465,6 +510,10 @@ def validate_metric_semantics(section: str, metrics: Sequence[object]) -> list[d
                 "expected_min": semantic.expected_min if semantic else None,
                 "expected_max": semantic.expected_max if semantic else None,
                 "expected_max_reason": semantic.expected_max_reason if semantic else "",
+                "zero_policy": semantic.zero_policy if semantic else "",
+                "unavailable_policy": semantic.unavailable_policy if semantic else "",
+                "live_validation_source": semantic.live_validation_source if semantic else "",
+                "cost_db_mapping": semantic.cost_db_mapping if semantic else "",
                 "passed": not failures,
                 "failures": failures,
                 "recommendation": "" if not failures else "Align packet metric formula, unit, and renderer semantics before launch.",
@@ -478,6 +527,9 @@ def validate_metric_semantics(section: str, metrics: Sequence[object]) -> list[d
                     "section": section,
                     "metric_key": metric_key,
                     "registered": semantic is not None,
+                    "packet_field": semantic.packet_field if semantic else "",
+                    "source_family": semantic.source_family if semantic else "",
+                    "source_object": semantic.source_object if semantic else "",
                     "value_unit": semantic.value_unit if semantic else "",
                     "metric_format": semantic.metric_format if semantic else "",
                     "observed_format": "",
@@ -486,6 +538,10 @@ def validate_metric_semantics(section: str, metrics: Sequence[object]) -> list[d
                     "expected_min": semantic.expected_min if semantic else None,
                     "expected_max": semantic.expected_max if semantic else None,
                     "expected_max_reason": semantic.expected_max_reason if semantic else "",
+                    "zero_policy": semantic.zero_policy if semantic else "",
+                    "unavailable_policy": semantic.unavailable_policy if semantic else "",
+                    "live_validation_source": semantic.live_validation_source if semantic else "",
+                    "cost_db_mapping": semantic.cost_db_mapping if semantic else "",
                     "passed": False,
                     "failures": ["primary_metric_missing"],
                     "recommendation": "Packet must expose every primary metric or render an explicit unavailable state.",

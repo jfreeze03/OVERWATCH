@@ -46,6 +46,7 @@ REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
     "artifacts/full_app_validation/summary_board_query_budget_results.json",
     "artifacts/full_app_validation/summary_board_error_inventory.json",
     "artifacts/full_app_validation/summary_board_failure_diagnostics.json",
+    "artifacts/full_app_validation/metric_semantic_results.json",
     "artifacts/full_app_validation/forbidden_ui_token_scan.json",
     "artifacts/full_app_validation/forbidden_source_token_scan.json",
     "artifacts/full_app_validation/forbidden_daily_ui_scan.json",
@@ -102,6 +103,56 @@ def _write_summary_board_contract_artifacts(root: Path) -> dict[str, Any]:
     from sections.summary_board_contract import write_summary_board_artifacts
 
     return write_summary_board_artifacts(root)
+
+
+def _write_metric_semantic_artifact(root: Path) -> dict[str, Any]:
+    app_root = root / ".overwatch_final"
+    app_root_text = str(app_root)
+    if app_root_text not in sys.path:
+        sys.path.insert(0, app_root_text)
+    from sections.metric_semantic_registry import all_metric_semantics
+
+    registry = [row.to_artifact() for row in all_metric_semantics()]
+    failures: list[dict[str, Any]] = []
+    required_fields = (
+        "section",
+        "metric_key",
+        "packet_field",
+        "source_family",
+        "source_object",
+        "value_unit",
+        "metric_format",
+        "aggregation",
+        "zero_policy",
+        "unavailable_policy",
+        "live_validation_source",
+    )
+    for row in registry:
+        missing = [field for field in required_fields if not str(row.get(field) or "")]
+        if row.get("value_unit") in {"usd", "credits"} and not str(row.get("cost_db_mapping") or ""):
+            missing.append("cost_db_mapping")
+        if missing:
+            failures.append(
+                {
+                    "section": row.get("section"),
+                    "metric_key": row.get("metric_key"),
+                    "missing_fields": sorted(set(missing)),
+                    "recommendation": "Complete the metric semantic registry before launch.",
+                }
+            )
+    payload = {
+        "source": "metric_semantic_registry",
+        "proof_source": "packet_formula_registry",
+        "passed": not failures,
+        "registry_row_count": len(registry),
+        "failure_count": len(failures),
+        "failures": failures,
+        "registry": registry,
+        "raw_sql_included": False,
+    }
+    rel = "artifacts/full_app_validation/metric_semantic_results.json"
+    _write_json(root / rel, payload)
+    return {rel: payload}
 
 
 def write_static_contract_artifacts(root: Path | str = ".") -> dict[str, Any]:
@@ -854,6 +905,14 @@ def evaluate_full_app_gauntlet(
     summary_board = payloads.get("artifacts/full_app_validation/summary_board_query_budget_results.json", {})
     if isinstance(summary_board, Mapping) and not bool(summary_board.get("passed", False)):
         _append_failure(failures, "summary_board_first_paint", "Summary board first-paint packet-only artifact did not pass.")
+    metric_semantic = payloads.get("artifacts/full_app_validation/metric_semantic_results.json", {})
+    if isinstance(metric_semantic, Mapping) and not bool(metric_semantic.get("passed", False)):
+        _append_failure(
+            failures,
+            "metric_semantic_registry",
+            "Metric semantic registry artifact has missing formula/unit/source metadata.",
+            count=_as_int(metric_semantic.get("failure_count")),
+        )
     session_direct = payloads.get("artifacts/full_app_validation/session_direct_sql_results.json", {})
     if isinstance(session_direct, Mapping) and not bool(session_direct.get("passed", False)):
         _append_failure(failures, "session_direct_sql_results", "Session/direct-SQL artifact did not pass.")
@@ -958,14 +1017,21 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
     inventory_artifacts = write_full_app_contract_inventory_artifacts(root_path)
     validation_artifacts = write_full_app_validation_artifacts(root_path)
     summary_board_artifacts = _write_summary_board_contract_artifacts(root_path)
+    metric_semantic_artifact = _write_metric_semantic_artifact(root_path)
     static_artifacts = write_static_contract_artifacts(root_path)
     artifacts = {
         **cleanup_artifacts,
         **inventory_artifacts,
         **validation_artifacts,
         **summary_board_artifacts,
+        **metric_semantic_artifact,
         **static_artifacts,
     }
+    _ensure_manifest_entries(
+        root_path,
+        "artifacts/full_app_validation/artifact_manifest.json",
+        {"artifacts/full_app_validation/metric_semantic_results.json"},
+    )
     recomputed = recompute_full_app_invariants(artifacts, root=root_path)
     recomputed_rel = "artifacts/full_app_validation/gauntlet_recomputed_invariants.json"
     reconciliation_rel = "artifacts/full_app_validation/gauntlet_artifact_reconciliation.json"
@@ -983,6 +1049,7 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             "artifacts/full_app_validation/summary_board_query_budget_results.json",
             "artifacts/full_app_validation/summary_board_error_inventory.json",
             "artifacts/full_app_validation/summary_board_failure_diagnostics.json",
+            "artifacts/full_app_validation/metric_semantic_results.json",
             "artifacts/direct_sql_static_scan.json",
             "artifacts/session_open_static_scan.json",
             "artifacts/sql_performance_lint_findings.json",

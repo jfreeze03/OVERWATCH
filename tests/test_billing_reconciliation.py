@@ -62,6 +62,42 @@ class BillingReconciliationTests(unittest.TestCase):
         self.assertFalse(summary["WAREHOUSE_BRIDGE_IS_PRIMARY_TOTAL"])
         self.assertEqual(summary["BILLING_RECONCILIATION_STATUS"], "passed")
 
+    def test_warehouse_bridge_sql_matches_cost_db_formula(self):
+        from utils.billing_reconciliation import build_warehouse_billing_bridge_sql
+
+        sql = build_warehouse_billing_bridge_sql(
+            8,
+            company="ALFA",
+            credit_price=3.68,
+            start_date="2026-06-21",
+            end_date="2026-06-28",
+        ).upper()
+
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY", sql)
+        self.assertIn("CREDITS_USED_COMPUTE", sql)
+        self.assertIn("CREDITS_USED_CLOUD_SERVICES", sql)
+        self.assertIn("COALESCE(WAREHOUSE_ID, 0) > 0", sql)
+        self.assertIn("NULLIF(TRIM(WAREHOUSE_NAME), '') IS NOT NULL", sql)
+        self.assertIn("WAREHOUSE_BRIDGE_BREAKDOWN", sql)
+        self.assertNotIn("SUM(COALESCE(CREDITS_USED, 0)) AS WAREHOUSE_CREDITS", sql)
+
+    def test_warehouse_bridge_dataframe_fallback_uses_compute_plus_cloud(self):
+        from utils.billing_reconciliation import summarize_billing_reconciliation
+
+        account_rows = pd.DataFrame({"USAGE_DATE": ["2026-06-21"], "CREDITS_BILLED": [10.0]})
+        warehouse_rows = pd.DataFrame(
+            {
+                "CREDITS_USED_COMPUTE": ["2.5", "3.0"],
+                "CREDITS_USED_CLOUD_SERVICES": ["0.5", "1.0"],
+            }
+        )
+
+        summary = summarize_billing_reconciliation(account_rows, warehouse_rows, credit_price=3.68)
+
+        self.assertEqual(summary["WAREHOUSE_CREDITS"], 7.0)
+        self.assertEqual(summary["WAREHOUSE_COST_USD"], 25.76)
+        self.assertEqual(summary["SERVICE_OTHER_CREDITS"], 3.0)
+
     def test_daily_labels_do_not_expose_raw_objects(self):
         from utils.billing_reconciliation import daily_safe_billing_labels
 

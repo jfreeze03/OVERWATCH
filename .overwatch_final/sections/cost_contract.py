@@ -66,6 +66,13 @@ from sections.cost_contract_charts import (
     _render_service_cost_movement_chart,
     _render_spend_trend_chart,
     _render_warehouse_ranking_chart,
+    build_account_billed_cost_trend_rows,
+    build_cortex_ai_daily_spend_rows,
+    build_hourly_usage_pattern_rows,
+    build_service_type_distribution_rows,
+    build_warehouse_bridge_top_rows,
+    build_weekly_warehouse_cost_rows,
+    cost_db_chart_pattern_results,
 )
 from sections.cost_contract_overview import (
     _cost_executive_decision_stack,
@@ -184,7 +191,6 @@ from sections.cost_contract_overview_floor import _render_cost_watch_floor
 get_active_environment = _lazy_util("get_active_environment")
 def get_active_company() -> str:
     return str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
-
 
 set_cost_overview_renderer(_render_cost_watch_floor)
 

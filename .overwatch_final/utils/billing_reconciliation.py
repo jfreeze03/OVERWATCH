@@ -186,13 +186,17 @@ def build_warehouse_billing_bridge_sql(
             DATE(start_time) AS usage_date,
             warehouse_name,
             {scope_label} AS company_scope,
-            SUM(COALESCE(credits_used, 0)) AS warehouse_credits,
-            SUM(COALESCE(credits_used, 0)) * {price:.6f} AS warehouse_cost_usd,
+            SUM(COALESCE(credits_used_compute, 0) + COALESCE(credits_used_cloud_services, 0)) AS warehouse_credits,
+            SUM(COALESCE(credits_used_compute, 0) + COALESCE(credits_used_cloud_services, 0)) * {price:.6f} AS warehouse_cost_usd,
+            SUM(COALESCE(credits_used_compute, 0)) AS compute_credits,
+            SUM(COALESCE(credits_used_cloud_services, 0)) AS cloud_services_credits,
             COUNT(*) AS metering_rows,
             'warehouse_bridge_breakdown' AS reconciliation_role
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
         WHERE {window_filter}
           AND ({company_filter_sql})
+          AND COALESCE(warehouse_id, 0) > 0
+          AND NULLIF(TRIM(warehouse_name), '') IS NOT NULL
         GROUP BY DATE(start_time), warehouse_name
         ORDER BY usage_date, warehouse_credits DESC, warehouse_name
     """
@@ -290,6 +294,11 @@ def summarize_billing_reconciliation(
     if cortex_cost == 0.0 and cortex_credits:
         cortex_cost = round(cortex_credits * price, 2)
     warehouse_credits = _numeric_sum(warehouse_bridge, "WAREHOUSE_CREDITS", "DAILY_CREDITS")
+    if warehouse_credits == 0.0 and warehouse_bridge is not None and not warehouse_bridge.empty:
+        warehouse_credits = _numeric_sum(warehouse_bridge, "CREDITS_USED_COMPUTE") + _numeric_sum(
+            warehouse_bridge,
+            "CREDITS_USED_CLOUD_SERVICES",
+        )
     warehouse_cost = _numeric_sum(warehouse_bridge, "WAREHOUSE_COST_USD", "DAILY_SPEND_USD")
     if warehouse_cost == 0.0 and warehouse_credits:
         warehouse_cost = round(warehouse_credits * price, 2)

@@ -26,6 +26,11 @@ from tools.contracts.full_app_gauntlet import (
 )
 from tools.contracts.encoding_hygiene import write_encoding_hygiene_artifacts
 from tools.contracts.snowflake_execution_validation import write_snowflake_validation_artifacts
+from tools.contracts.cost_db_formula_authority import (
+    REQUIRED_FORMULA_AUTHORITY_ARTIFACTS,
+    evaluate_cost_db_formula_authority,
+    write_cost_db_formula_authority_artifacts,
+)
 
 
 LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
@@ -65,6 +70,8 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/summary_board_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/billing_reconciliation_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/billing_reconciliation_live_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/cost_db_formula_authority_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/metric_semantic_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/query_budget_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/snowflake_raw_validation_recheck.json",
     f"{LAUNCH_READINESS_DIR}/snowflake_validation_failures.json",
@@ -88,9 +95,19 @@ REQUIRED_RELEASE_CANDIDATE_ARTIFACTS = {
     f"{RELEASE_CANDIDATE_DIR}/release_notes.json",
 }
 
+
+def _required_release_artifact_count() -> int:
+    return (
+        len(REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS)
+        + len(REQUIRED_LAUNCH_READINESS_ARTIFACTS)
+        + len(REQUIRED_RELEASE_CANDIDATE_ARTIFACTS)
+        + len(REQUIRED_FORMULA_AUTHORITY_ARTIFACTS)
+    )
+
 CI_UPLOAD_PATHS = {
     "artifacts/release_candidate/**",
     "artifacts/launch_readiness/**",
+    "artifacts/formula_authority/**",
     "artifacts/encoding_hygiene_results.json",
     "artifacts/full_app_validation/**",
     "artifacts/full_app_inventory/**",
@@ -113,6 +130,7 @@ RELEASE_ARTIFACT_ROOTS = (
     "artifacts/full_app_validation",
     "artifacts/full_app_inventory",
     "artifacts/snowflake_validation",
+    "artifacts/formula_authority",
     "artifacts/cleanup",
     "artifacts/generated_button_artifacts",
     "artifacts/decision_workspace_html_snapshots",
@@ -136,6 +154,7 @@ RELEASE_REQUIRED_CATEGORIES = {
     "full_app_validation",
     "full_app_inventory",
     "snowflake_validation",
+    "formula_authority",
     "encoding_hygiene",
     "cleanup",
     "query_performance",
@@ -449,6 +468,8 @@ def _raw_sql_or_secret_value(value: Any) -> bool:
 def _release_artifact_category(rel: str) -> str:
     if rel.startswith("artifacts/release_candidate/"):
         return "release_candidate"
+    if rel.startswith("artifacts/formula_authority/"):
+        return "formula_authority"
     if rel.startswith("artifacts/launch_readiness/"):
         return "launch_readiness"
     if rel.startswith("artifacts/full_app_validation/"):
@@ -560,7 +581,9 @@ def _workflow_upload_review(root: Path) -> dict[str, Any]:
         "python -m unittest tests.test_full_app_gauntlet",
         "python -m unittest tests.test_launch_readiness",
         "python -m unittest tests.test_encoding_hygiene",
+        "python -m unittest tests.test_cost_db_formula_authority tests.test_cost_formula_authority",
         "python -m tools.contracts.encoding_hygiene",
+        "python -m tools.contracts.cost_db_formula_authority",
         "python -m unittest discover -s tests",
         "python -m ruff check .overwatch_final tests tools",
         "python -m mypy",
@@ -700,6 +723,7 @@ def _ci_artifact_reality_results(
         set(missing_payloads)
         | set(_as_list(artifact_review.get("missing_required_gauntlet_artifacts")))
         | set(_as_list(artifact_review.get("missing_required_launch_artifacts")))
+        | set(_as_list(artifact_review.get("missing_required_formula_authority_artifacts")))
     )
     stale_artifacts = _as_list(artifact_review.get("stale_artifacts"))
     missing_upload_paths = _as_list(upload_review.get("missing_upload_paths"))
@@ -758,7 +782,7 @@ def _ci_artifact_reality_results(
         "branch_ref": ci_run_review.get("branch_ref") or "",
         "run_attempt": ci_run_review.get("run_attempt") or "",
         "uploaded_artifact_names": uploaded_artifact_names,
-        "required_artifact_count": len(REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS) + len(REQUIRED_LAUNCH_READINESS_ARTIFACTS) + len(REQUIRED_RELEASE_CANDIDATE_ARTIFACTS),
+        "required_artifact_count": _required_release_artifact_count(),
         "missing_artifacts": missing_required_artifacts,
         "missing_artifact_count": len(missing_required_artifacts),
         "stale_artifacts": stale_artifacts,
@@ -1809,6 +1833,10 @@ def _docs_readiness_results(root: Path) -> dict[str, Any]:
 
 def _artifact_review_results(root: Path, payloads: Mapping[str, Any], missing_payloads: Iterable[str]) -> dict[str, Any]:
     missing = sorted(set(missing_payloads))
+    missing_formula = sorted(
+        rel for rel in REQUIRED_FORMULA_AUTHORITY_ARTIFACTS
+        if not (root / rel).exists()
+    )
     launch_files = sorted(
         str(path.relative_to(root)).replace("\\", "/")
         for path in (root / LAUNCH_READINESS_DIR).rglob("*")
@@ -1817,7 +1845,7 @@ def _artifact_review_results(root: Path, payloads: Mapping[str, Any], missing_pa
     gauntlet_reconciliation = _as_mapping(payloads.get("artifacts/full_app_validation/gauntlet_artifact_reconciliation.json"))
     stale_count = _as_int(gauntlet_reconciliation.get("unlisted_file_count"))
     stale_artifacts = [str(path) for path in _as_list(gauntlet_reconciliation.get("unlisted_files"))]
-    passed = not missing and stale_count == 0
+    passed = not missing and not missing_formula and stale_count == 0
     return {
         "source": "launch_readiness_artifact_review",
         "proof_source": "inventory_only",
@@ -1825,6 +1853,9 @@ def _artifact_review_results(root: Path, payloads: Mapping[str, Any], missing_pa
         "required_gauntlet_artifact_count": len(REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS),
         "missing_required_gauntlet_artifacts": missing,
         "missing_required_gauntlet_artifact_count": len(missing),
+        "required_formula_authority_artifact_count": len(REQUIRED_FORMULA_AUTHORITY_ARTIFACTS),
+        "missing_required_formula_authority_artifacts": missing_formula,
+        "missing_required_formula_authority_artifact_count": len(missing_formula),
         "stale_artifact_count": stale_count,
         "stale_artifacts": stale_artifacts,
         "launch_artifact_count": len(launch_files),
@@ -2242,6 +2273,16 @@ def _release_candidate_summary_bundle(
             "passed": bool(launch_summary.get("encoding_hygiene_passed")),
             "artifact": "artifacts/encoding_hygiene_results.json",
         },
+        {
+            "gate": "cost_db_formula_authority",
+            "passed": bool(launch_summary.get("cost_db_formula_authority_passed")),
+            "artifact": f"{LAUNCH_READINESS_DIR}/cost_db_formula_authority_gate_results.json",
+        },
+        {
+            "gate": "metric_semantic_registry",
+            "passed": bool(launch_summary.get("metric_semantic_registry_passed")),
+            "artifact": f"{LAUNCH_READINESS_DIR}/metric_semantic_gate_results.json",
+        },
     ]
     release_matrix.extend(
         {
@@ -2307,6 +2348,8 @@ def _release_candidate_summary_bundle(
         "summary_board_first_paint_passed": bool(launch_summary.get("summary_board_first_paint_passed")),
         "billing_reconciliation_passed": bool(launch_summary.get("billing_reconciliation_passed")),
         "billing_reconciliation_live_passed": bool(launch_summary.get("billing_reconciliation_live_passed")),
+        "cost_db_formula_authority_passed": bool(launch_summary.get("cost_db_formula_authority_passed")),
+        "metric_semantic_registry_passed": bool(launch_summary.get("metric_semantic_registry_passed")),
         "query_budget_gate_passed": bool(launch_summary.get("query_budget_gate_passed")),
         "encoding_hygiene_passed": bool(launch_summary.get("encoding_hygiene_passed")),
         "cleanup_passed": _gate_passed(matrix_rows, "cleanup_closure"),
@@ -2368,8 +2411,10 @@ def _release_notes_payload(
             "python -m mypy",
             "python -m compileall .overwatch_final tools tests",
             "python -m unittest tests.test_snowflake_execution_validation",
+            "python -m unittest tests.test_cost_db_formula_authority tests.test_cost_formula_authority",
             "python -m unittest tests.test_launch_readiness",
             "python -m tools.contracts.encoding_hygiene",
+            "python -m tools.contracts.cost_db_formula_authority",
             "python -m unittest discover -s tests",
         ],
         "hard_blockers": list(hard_failures),
@@ -3733,6 +3778,24 @@ def _summary_board_gate_results(payloads: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _metric_semantic_gate_results(payloads: Mapping[str, Any]) -> dict[str, Any]:
+    artifact = _as_mapping(payloads.get("artifacts/full_app_validation/metric_semantic_results.json"))
+    failures: list[dict[str, Any]] = []
+    if not artifact:
+        failures.append({"code": "METRIC_SEMANTIC_ARTIFACT_MISSING"})
+    elif not bool(artifact.get("passed")):
+        failures.extend(_as_list(artifact.get("failures")) or [{"code": "METRIC_SEMANTIC_ARTIFACT_FAILED"}])
+    return {
+        "source": "launch_readiness_metric_semantic_gate",
+        "proof_source": "packet_formula_registry",
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "registry_row_count": _as_int(artifact.get("registry_row_count")),
+        "raw_sql_included": False,
+    }
+
+
 def _billing_reconciliation_gate_results(root: Path) -> dict[str, Any]:
     _ensure_app_root_on_path(root)
     import pandas as pd
@@ -3916,6 +3979,8 @@ def _release_gate_matrix(
     summary_board_gate = _as_mapping(launch_artifacts.get("summary_board_gate_results"))
     billing_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_gate_results"))
     billing_live_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_live_gate_results"))
+    cost_db_formula_gate = _as_mapping(launch_artifacts.get("cost_db_formula_authority_gate_results"))
+    metric_semantic_gate = _as_mapping(launch_artifacts.get("metric_semantic_gate_results"))
     query_budget_gate = _as_mapping(launch_artifacts.get("query_budget_gate_results"))
     rows = [
         {
@@ -3959,6 +4024,18 @@ def _release_gate_matrix(
             "artifact": f"{LAUNCH_READINESS_DIR}/billing_reconciliation_live_gate_results.json",
             "passed": bool(billing_live_gate.get("passed")),
             "failure_reason": "" if billing_live_gate.get("passed") else "Live billing reconciliation is required for this launch profile or needs a signed waiver.",
+        },
+        {
+            "gate": "cost_db_formula_authority",
+            "artifact": f"{LAUNCH_READINESS_DIR}/cost_db_formula_authority_gate_results.json",
+            "passed": bool(cost_db_formula_gate.get("passed")),
+            "failure_reason": "" if cost_db_formula_gate.get("passed") else "COST_DB formula authority mapping has gaps or unmapped OVERWATCH cost formulas.",
+        },
+        {
+            "gate": "metric_semantic_registry",
+            "artifact": f"{LAUNCH_READINESS_DIR}/metric_semantic_gate_results.json",
+            "passed": bool(metric_semantic_gate.get("passed")),
+            "failure_reason": "" if metric_semantic_gate.get("passed") else "Metric semantic registry is missing unit/source/formula metadata.",
         },
         {
             "gate": "query_budget_recording",
@@ -4235,6 +4312,8 @@ def evaluate_launch_readiness(
     summary_board_gate = _as_mapping(launch_artifacts.get("summary_board_gate_results"))
     billing_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_gate_results"))
     billing_live_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_live_gate_results"))
+    cost_db_formula_gate = _as_mapping(launch_artifacts.get("cost_db_formula_authority_gate_results"))
+    metric_semantic_gate = _as_mapping(launch_artifacts.get("metric_semantic_gate_results"))
     query_budget_gate = _as_mapping(launch_artifacts.get("query_budget_gate_results"))
     launch_summary = {
         "source": "launch_readiness",
@@ -4249,7 +4328,7 @@ def evaluate_launch_readiness(
         "check_count": len(matrix),
         "pass_count": sum(1 for row in matrix if row.get("passed")),
         "fail_count": sum(1 for row in matrix if not row.get("passed")),
-        "required_artifact_count": len(REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS) + len(REQUIRED_LAUNCH_READINESS_ARTIFACTS) + len(REQUIRED_RELEASE_CANDIDATE_ARTIFACTS),
+        "required_artifact_count": _required_release_artifact_count(),
         "uploaded_artifact_names": _as_list(artifact_upload_review.get("uploaded_artifact_names")) or ["decision-workspace-proof"],
         "workflow_run_id": ci_meta["workflow_run_id"],
         "workflow_url": ci_meta["workflow_url"],
@@ -4277,6 +4356,13 @@ def evaluate_launch_readiness(
         "billing_reconciliation_live_passed": bool(billing_live_gate.get("passed")),
         "billing_reconciliation_live_skipped": bool(billing_live_gate.get("skipped")),
         "billing_reconciliation_live_required": bool(billing_live_gate.get("live_required")),
+        "cost_db_formula_authority_passed": bool(cost_db_formula_gate.get("passed")),
+        "cost_db_formula_authority_failure_count": _as_int(cost_db_formula_gate.get("failure_count")),
+        "cost_db_formula_count": _as_int(cost_db_formula_gate.get("cost_db_formula_count")),
+        "overwatch_formula_count": _as_int(cost_db_formula_gate.get("overwatch_formula_count")),
+        "metric_semantic_registry_passed": bool(metric_semantic_gate.get("passed")),
+        "metric_semantic_registry_failure_count": _as_int(metric_semantic_gate.get("failure_count")),
+        "metric_semantic_registry_row_count": _as_int(metric_semantic_gate.get("registry_row_count")),
         "query_budget_gate_passed": bool(query_budget_gate.get("passed")),
         "query_budget_gate_failure_count": _as_int(query_budget_gate.get("failure_count")),
         "browser_or_snapshot_passed": _gate_passed(matrix, "browser_or_rendered_snapshot"),
@@ -4372,6 +4458,8 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     gauntlet_artifacts = write_full_app_gauntlet_artifacts(root_path)
     payloads, missing_payloads = _load_payloads(root_path, REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS)
     payloads.update(gauntlet_artifacts)
+    formula_artifacts = write_cost_db_formula_authority_artifacts(root_path)
+    payloads.update(formula_artifacts)
 
     launch_artifacts: dict[str, Any] = {}
     launch_artifacts["launch_waivers"] = {
@@ -4412,6 +4500,11 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["docs_readiness_results"] = _docs_readiness_results(root_path)
     launch_artifacts["secrets_scan_results"] = _secrets_scan_results(root_path)
     launch_artifacts["artifact_review_results"] = _artifact_review_results(root_path, payloads, missing_payloads)
+    launch_artifacts["cost_db_formula_authority_gate_results"] = evaluate_cost_db_formula_authority(
+        formula_artifacts.get("artifacts/formula_authority/cost_db_formula_mapping.json"),
+        formula_artifacts.get("artifacts/formula_authority/overwatch_formula_mapping.json"),
+        formula_artifacts.get("artifacts/formula_authority/formula_gap_results.json"),
+    )
     launch_artifacts["release_candidate_gate_results"] = {
         "source": "release_candidate_gate",
         "proof_source": "runtime_click",
@@ -4450,6 +4543,7 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["summary_board_gate_results"] = _summary_board_gate_results(payloads)
     launch_artifacts["billing_reconciliation_gate_results"] = _billing_reconciliation_gate_results(root_path)
     launch_artifacts["billing_reconciliation_live_gate_results"] = _billing_reconciliation_live_gate_results(profile, waivers)
+    launch_artifacts["metric_semantic_gate_results"] = _metric_semantic_gate_results(payloads)
     launch_artifacts["query_budget_gate_results"] = _query_budget_gate_results(payloads)
     raw_results, raw_failures = _raw_invariant_artifacts(root_path, payloads)
     launch_artifacts["raw_invariant_results"] = raw_results

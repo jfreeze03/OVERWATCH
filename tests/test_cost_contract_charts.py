@@ -29,6 +29,9 @@ class CostContractChartTests(unittest.TestCase):
         self.assertIs(cost_contract._render_cost_chart_with_data_toggle, cost_contract_charts._render_cost_chart_with_data_toggle)
         self.assertIs(cost_contract._render_spend_trend_chart, cost_contract_charts._render_spend_trend_chart)
         self.assertIs(cost_contract._render_cost_advisor_category_chart, cost_contract_charts._render_cost_advisor_category_chart)
+        self.assertIs(cost_contract.build_account_billed_cost_trend_rows, cost_contract_charts.build_account_billed_cost_trend_rows)
+        self.assertIs(cost_contract.build_warehouse_bridge_top_rows, cost_contract_charts.build_warehouse_bridge_top_rows)
+        self.assertIs(cost_contract.cost_db_chart_pattern_results, cost_contract_charts.cost_db_chart_pattern_results)
 
     def test_cost_chart_palette_returns_carbon_fallback_and_terminal_palette(self):
         from sections import cost_contract_charts
@@ -167,6 +170,70 @@ class CostContractChartTests(unittest.TestCase):
         self.assertNotIn("\nimport altair as alt", chart_text.split("def _altair", 1)[0])
         self.assertIn("def _altair", chart_text)
         self.assertIn("alt = _altair()", chart_text)
+
+    def test_cost_db_chart_pattern_results_are_lazy(self):
+        from sections import cost_contract_charts
+
+        results = cost_contract_charts.cost_db_chart_pattern_results()
+
+        self.assertTrue(results["passed"], results)
+        self.assertFalse(results["autoloads_on_first_paint"])
+        self.assertEqual(results["chart_count"], 6)
+        self.assertIn("weekly_stacked_bar", results["patterns"].values())
+
+    def test_account_billed_cost_trend_uses_credit_price(self):
+        from sections import cost_contract_charts
+
+        rows = cost_contract_charts.build_account_billed_cost_trend_rows(
+            pd.DataFrame(
+                {
+                    "USAGE_DATE": ["2026-06-21", "2026-06-21", "2026-06-22"],
+                    "CREDITS_BILLED": ["1.5", "2.5", "1.0"],
+                }
+            ),
+            3.68,
+        )
+
+        self.assertEqual(rows["ACCOUNT_BILLED_CREDITS"].tolist(), [4.0, 1.0])
+        self.assertEqual(rows["ACCOUNT_BILLED_COST_USD"].tolist(), [14.72, 3.68])
+
+    def test_service_distribution_and_cortex_rows_use_same_price(self):
+        from sections import cost_contract_charts
+
+        service_rows = pd.DataFrame(
+            {
+                "USAGE_DATE": ["2026-06-21", "2026-06-21", "2026-06-22"],
+                "SERVICE_TYPE": ["WAREHOUSE_METERING", "CORTEX_AI", "CORTEX_AI"],
+                "CREDITS_BILLED": ["1", "2", "3"],
+            }
+        )
+        distribution = cost_contract_charts.build_service_type_distribution_rows(service_rows, 3.68)
+        cortex = cost_contract_charts.build_cortex_ai_daily_spend_rows(service_rows, 3.68)
+
+        self.assertEqual(float(distribution.loc[distribution["SERVICE_TYPE"] == "CORTEX_AI", "COST_USD"].iloc[0]), 18.4)
+        self.assertEqual(cortex["CORTEX_AI_COST_USD"].tolist(), [7.36, 11.04])
+
+    def test_warehouse_top_and_weekly_rows_match_compute_plus_cloud(self):
+        from sections import cost_contract_charts
+
+        warehouse_rows = pd.DataFrame(
+            {
+                "START_TIME": ["2026-06-21 01:00:00", "2026-06-22 02:00:00", "2026-06-22 03:00:00"],
+                "WAREHOUSE_ID": [1, 0, 2],
+                "WAREHOUSE_NAME": ["COMPUTE_WH", "PSEUDO", "LOAD_WH"],
+                "CREDITS_USED_COMPUTE": ["2", "100", "3"],
+                "CREDITS_USED_CLOUD_SERVICES": ["0.5", "10", "1"],
+            }
+        )
+
+        top = cost_contract_charts.build_warehouse_bridge_top_rows(warehouse_rows, 3.68)
+        weekly = cost_contract_charts.build_weekly_warehouse_cost_rows(warehouse_rows, 3.68)
+        hourly = cost_contract_charts.build_hourly_usage_pattern_rows(warehouse_rows, 3.68)
+
+        self.assertEqual(top["WAREHOUSE_NAME"].tolist(), ["LOAD_WH", "COMPUTE_WH"])
+        self.assertEqual(top["WAREHOUSE_CREDITS"].tolist(), [4.0, 2.5])
+        self.assertEqual(round(float(weekly["WAREHOUSE_COST_USD"].sum()), 2), 23.92)
+        self.assertIn("HOUR", hourly.columns)
 
 
 if __name__ == "__main__":

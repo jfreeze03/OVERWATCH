@@ -42,6 +42,7 @@ def _load_json(root: Path, rel: str) -> Any:
 def _load_payloads(root: Path) -> dict[str, Any]:
     rels = (
         "artifacts/full_app_validation/view_results.json",
+        "artifacts/full_app_validation/rendered_fragments.json",
         "artifacts/full_app_validation/button_click_results.json",
         "artifacts/full_app_validation/settings_action_results.json",
         "artifacts/full_app_validation/live_feature_results.json",
@@ -68,6 +69,7 @@ def build_action_click_results(payloads: Mapping[str, Any]) -> tuple[dict[str, A
                         "workflow": row.get("workflow") or "",
                         "label": action.get("label") or "",
                         "stable_key": action.get("stable_key") or action.get("key") or action.get("label") or "",
+                        "action_area": action.get("action_area") or "rendered_action",
                     }
                 )
     click_keys = {
@@ -88,6 +90,7 @@ def build_action_click_results(payloads: Mapping[str, Any]) -> tuple[dict[str, A
             actions.append(
                 {
                     "area": "rendered_action",
+                    "action_area": str(rendered_action.get("action_area") or "rendered_action"),
                     "section": rendered_action.get("section", ""),
                     "workflow": rendered_action.get("workflow", ""),
                     "action_key": stable_key or label or "rendered_action",

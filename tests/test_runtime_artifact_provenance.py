@@ -117,6 +117,46 @@ class RuntimeArtifactProvenanceTests(unittest.TestCase):
 
         self.assertTrue(result["passed"], result)
 
+    def test_deterministic_render_rows_keep_surface_identity(self):
+        from tools.contracts.runtime_artifact_provenance import build_runtime_artifact_provenance
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            root = Path(tmp)
+            artifact = root / "artifacts/full_app_validation/deterministic_streamlit_render_results.json"
+            artifact.parent.mkdir(parents=True)
+            commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+            artifact.write_text(
+                json.dumps(
+                    {
+                        "rows": [
+                            {
+                                "producer": "deterministic_streamlit_render",
+                                "generated_at": "2026-06-29T00:00:00Z",
+                                "source": "deterministic_streamlit_rendered",
+                                "provenance_origin": "producer",
+                                "producer_signature": "sig",
+                                "fixture_mode": False,
+                                "launch_profile": "internal_live",
+                                "commit_sha": commit,
+                                "section": "Executive Landing",
+                                "workflow": "Overview",
+                                "raw_sql_included": False,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = build_runtime_artifact_provenance(
+                root,
+                launch_profile="internal_live",
+                required_rels=("artifacts/full_app_validation/deterministic_streamlit_render_results.json",),
+            )
+
+        self.assertTrue(result["passed"], result)
+        self.assertEqual(result["rows"][0]["section"], "Executive Landing")
+        self.assertEqual(result["rows"][0]["workflow"], "Overview")
+
     def test_internal_live_fixture_source_requires_waiver(self):
         from tools.contracts.runtime_artifact_provenance import build_runtime_artifact_provenance
 

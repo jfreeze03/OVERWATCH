@@ -24,6 +24,20 @@ ACTION_TYPES = {
     "fallback",
 }
 
+ACTION_AREA_BY_TYPE = {
+    "route": "route_action",
+    "refresh_packet": "route_action",
+    "evidence_load": "evidence_action",
+    "advanced_load": "live_feature",
+    "admin_load": "setup_health_admin",
+    "local_state": "sidebar_panel_toggle",
+    "export": "export_download",
+    "add_to_case": "export_download",
+    "setup_health": "setup_health_admin",
+    "account_usage_fallback": "live_feature",
+    "fallback": "route_action",
+}
+
 MARKER_BUDGET_RUNTIME_CONTEXTS: dict[str, str] = {
     "admin_setup": "admin_setup",
     "advanced_diagnostics": "advanced_diagnostics",
@@ -41,6 +55,7 @@ class ButtonActionContract:
     exact_key: str = ""
     label_pattern: str = ""
     action_type: str = "fallback"
+    action_area: str = ""
     expected_target_section: str = ""
     expected_target_workflow: str = ""
     expected_lens_state: dict[str, Any] = field(default_factory=dict)
@@ -66,7 +81,23 @@ class ButtonActionContract:
     skip_reason: str = ""
 
     def to_artifact(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload["action_area"] = self.action_area or _default_action_area(self)
+        return payload
+
+
+def _default_action_area(contract: ButtonActionContract) -> str:
+    if contract.exact_key.startswith("nav_btn_"):
+        return "sidebar_navigation"
+    if contract.exact_key.startswith("sidebar_panel_"):
+        return "sidebar_panel_toggle"
+    if contract.section == "Settings" and contract.action_type in {"local_state", "setup_health"}:
+        return "settings_control" if contract.action_type == "local_state" else "setup_health_admin"
+    if contract.section == "Settings/Admin Setup Health":
+        return "setup_health_admin"
+    if contract.section == "Cost & Contract" and contract.action_type == "evidence_load":
+        return "cost_workbench"
+    return ACTION_AREA_BY_TYPE.get(contract.action_type, "route_action")
 
 
 def _rx(pattern: str) -> Pattern[str]:
@@ -691,8 +722,7 @@ def iter_button_action_contracts() -> Iterable[ButtonActionContract]:
         ("SECURITY", "Security Monitoring"),
     ):
         yield ButtonActionContract(
-            section="Settings",
-            workflow="Default",
+            section="*",
             exact_key=f"nav_btn_{group}_{section}",
             label_pattern=rf"\b{re.escape(section)}\b",
             action_type="route",
@@ -714,8 +744,7 @@ def iter_button_action_contracts() -> Iterable[ButtonActionContract]:
         ("sidebar_panel_settings", "Settings"),
     ):
         yield ButtonActionContract(
-            section="Settings",
-            workflow="Default",
+            section="*",
             exact_key=panel_key,
             label_pattern=rf"\b{re.escape(label)}\b",
             action_type="local_state",
@@ -727,6 +756,21 @@ def iter_button_action_contracts() -> Iterable[ButtonActionContract]:
             expected_snowflake_execution_count=0,
             expected_rerun=False,
         )
+    yield ButtonActionContract(
+        section="Advanced Scope",
+        workflow="Active filters",
+        exact_key="global_filters_clear",
+        label_pattern=r"\bClear filters\b",
+        action_type="local_state",
+        action_area="settings_control",
+        expected_state_updates={"advanced_scope_filters": "cleared"},
+        expected_query_count=0,
+        expected_session_open_count=0,
+        expected_direct_sql_count=0,
+        expected_metadata_probe_count=0,
+        expected_snowflake_execution_count=0,
+        expected_rerun=True,
+    )
     yield from _active_detail_action_contracts()
     yield ButtonActionContract(
         section="*",

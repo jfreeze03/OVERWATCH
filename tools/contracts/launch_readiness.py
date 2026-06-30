@@ -113,6 +113,11 @@ from tools.contracts.rendered_ui_leak_scan import (
     RENDERED_UI_LEAK_RESULTS_REL,
     evaluate_rendered_ui_leak_gate,
 )
+from tools.contracts.render_provenance_reconciliation import (
+    RENDER_PROVENANCE_RECONCILIATION_GATE_REL,
+    RENDER_PROVENANCE_RECONCILIATION_REL,
+    evaluate_render_provenance_reconciliation_gate,
+)
 from tools.contracts.runtime_artifact_provenance import (
     RUNTIME_ARTIFACT_PROVENANCE_GATE_REL,
     RUNTIME_ARTIFACT_PROVENANCE_REL,
@@ -181,6 +186,7 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     BROWSER_SMOKE_GATE_REL,
     BROWSER_RENDER_GATE_REL,
     RUNTIME_ARTIFACT_PROVENANCE_GATE_REL,
+    RENDER_PROVENANCE_RECONCILIATION_GATE_REL,
     RENDERED_UI_LEAK_GATE_REL,
     SETTINGS_GATE_REL,
     FIRST_PAINT_GATE_REL,
@@ -2527,6 +2533,11 @@ def _release_candidate_summary_bundle(
             "passed": bool(launch_summary.get("date_widget_regression_passed")),
             "artifact": f"{LAUNCH_READINESS_DIR}/date_widget_regression_results.json",
         },
+        {
+            "gate": "render_provenance_reconciliation",
+            "passed": bool(launch_summary.get("render_provenance_reconciliation_passed")),
+            "artifact": RENDER_PROVENANCE_RECONCILIATION_GATE_REL,
+        },
     ]
     release_matrix.extend(
         {
@@ -2587,6 +2598,12 @@ def _release_candidate_summary_bundle(
         "ci_artifact_reality_passed": bool(launch_summary.get("ci_artifact_reality_passed")),
         "full_app_gauntlet_passed": bool(launch_summary.get("gauntlet_passed")),
         "full_app_launch_gauntlet_passed": bool(launch_summary.get("full_app_launch_gauntlet_passed")),
+        "render_provenance_reconciliation_passed": bool(
+            launch_summary.get("render_provenance_reconciliation_passed")
+        ),
+        "render_provenance_reconciliation_failure_count": _as_int(
+            launch_summary.get("render_provenance_reconciliation_failure_count")
+        ),
         "rendered_ui_leak_scan_passed": bool(launch_summary.get("rendered_ui_leak_scan_passed")),
         "diagnostic_leak_count": _as_int(launch_summary.get("diagnostic_leak_count")),
         "internal_wording_leak_count": _as_int(launch_summary.get("internal_wording_leak_count")),
@@ -4526,6 +4543,7 @@ def _release_gate_matrix(
     browser_smoke_gate = _as_mapping(launch_artifacts.get("browser_smoke_gate_results"))
     browser_render_gate = _as_mapping(launch_artifacts.get("browser_render_gate_results"))
     runtime_provenance_gate = _as_mapping(launch_artifacts.get("runtime_artifact_provenance_gate_results"))
+    render_provenance_gate = _as_mapping(launch_artifacts.get("render_provenance_reconciliation_gate_results"))
     rendered_ui_leak_gate = _as_mapping(launch_artifacts.get("rendered_ui_leak_gate_results"))
     settings_gate = _as_mapping(launch_artifacts.get("settings_gate_results"))
     first_paint_gate = _as_mapping(launch_artifacts.get("first_paint_gate_results"))
@@ -4606,6 +4624,14 @@ def _release_gate_matrix(
             "artifact": RUNTIME_ARTIFACT_PROVENANCE_GATE_REL,
             "passed": bool(runtime_provenance_gate.get("passed")),
             "failure_reason": "" if runtime_provenance_gate.get("passed") else "Runtime artifacts are missing producer/source/profile/commit provenance or contain unsafe rows.",
+        },
+        {
+            "gate": "render_provenance_reconciliation",
+            "artifact": RENDER_PROVENANCE_RECONCILIATION_GATE_REL,
+            "passed": bool(render_provenance_gate.get("passed")),
+            "failure_reason": ""
+            if render_provenance_gate.get("passed")
+            else "Runtime, deterministic, browser/snapshot, leak-scan, and provenance render proof do not reconcile.",
         },
         {
             "gate": "rendered_ui_leak_scan",
@@ -5117,6 +5143,16 @@ def evaluate_launch_readiness(
         or evaluate_deterministic_render_gate(payloads.get(DETERMINISTIC_RENDER_RESULTS_REL)),
         "browser_smoke_gate_results": _as_mapping(launch_artifacts.get("browser_smoke_gate_results"))
         or evaluate_browser_smoke_gate(payloads.get(BROWSER_SMOKE_RESULTS_REL)),
+        "browser_render_gate_results": _as_mapping(launch_artifacts.get("browser_render_gate_results"))
+        or evaluate_browser_render_gate(payloads.get(BROWSER_RENDER_RESULTS_REL)),
+        "runtime_artifact_provenance_gate_results": _as_mapping(
+            launch_artifacts.get("runtime_artifact_provenance_gate_results")
+        )
+        or evaluate_runtime_artifact_provenance_gate(payloads.get(RUNTIME_ARTIFACT_PROVENANCE_REL)),
+        "render_provenance_reconciliation_gate_results": _as_mapping(
+            launch_artifacts.get("render_provenance_reconciliation_gate_results")
+        )
+        or evaluate_render_provenance_reconciliation_gate(payloads.get(RENDER_PROVENANCE_RECONCILIATION_REL)),
         "rendered_ui_leak_gate_results": _as_mapping(launch_artifacts.get("rendered_ui_leak_gate_results"))
         or evaluate_rendered_ui_leak_gate(_as_mapping(payloads.get(RENDERED_UI_LEAK_RESULTS_REL))),
         "settings_gate_results": _as_mapping(launch_artifacts.get("settings_gate_results"))
@@ -5230,6 +5266,7 @@ def evaluate_launch_readiness(
     browser_smoke_gate = _as_mapping(launch_artifacts.get("browser_smoke_gate_results"))
     browser_render_gate = _as_mapping(launch_artifacts.get("browser_render_gate_results"))
     runtime_provenance_gate = _as_mapping(launch_artifacts.get("runtime_artifact_provenance_gate_results"))
+    render_provenance_gate = _as_mapping(launch_artifacts.get("render_provenance_reconciliation_gate_results"))
     rendered_ui_leak_gate = _as_mapping(launch_artifacts.get("rendered_ui_leak_gate_results"))
     settings_gate = _as_mapping(launch_artifacts.get("settings_gate_results"))
     first_paint_gate = _as_mapping(launch_artifacts.get("first_paint_gate_results"))
@@ -5320,6 +5357,9 @@ def evaluate_launch_readiness(
         "runtime_artifact_provenance_passed": bool(runtime_provenance_gate.get("passed")),
         "runtime_artifact_provenance_failure_count": _as_int(runtime_provenance_gate.get("failure_count")),
         "runtime_artifact_provenance_row_count": _as_int(runtime_provenance_gate.get("row_count")),
+        "render_provenance_reconciliation_passed": bool(render_provenance_gate.get("passed")),
+        "render_provenance_reconciliation_failure_count": _as_int(render_provenance_gate.get("failure_count")),
+        "render_provenance_reconciliation_surface_count": _as_int(render_provenance_gate.get("surface_count")),
         "rendered_ui_leak_scan_passed": bool(rendered_ui_leak_gate.get("passed")),
         "diagnostic_leak_count": _as_int(source_leak_gate.get("diagnostic_leak_count"))
         or _as_int(rendered_ui_leak_gate.get("failure_count")),
@@ -5695,6 +5735,9 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     )
     launch_artifacts["runtime_artifact_provenance_gate_results"] = evaluate_runtime_artifact_provenance_gate(
         payloads.get(RUNTIME_ARTIFACT_PROVENANCE_REL)
+    )
+    launch_artifacts["render_provenance_reconciliation_gate_results"] = evaluate_render_provenance_reconciliation_gate(
+        payloads.get(RENDER_PROVENANCE_RECONCILIATION_REL)
     )
     launch_artifacts["rendered_ui_leak_gate_results"] = evaluate_rendered_ui_leak_gate(
         _as_mapping(payloads.get(RENDERED_UI_LEAK_RESULTS_REL))

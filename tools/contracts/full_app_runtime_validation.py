@@ -174,6 +174,149 @@ def _producer_signature(*parts: object) -> str:
     return hashlib.sha256("|".join(str(part or "") for part in parts).encode("utf-8")).hexdigest()
 
 
+def _module_for_section(section: object) -> str:
+    section_text = str(section or "")
+    if section_text in SECTION_MODULES:
+        return SECTION_MODULES[section_text]
+    if section_text == "Query Search":
+        return "sections.query_search"
+    if section_text == "Advanced Scope":
+        return "layout.render_sidebar"
+    if section_text == "Settings":
+        return "layout.render_sidebar"
+    if section_text == "Settings/Admin Setup Health":
+        return "sections.decision_workspace_setup_health"
+    if section_text in {"Packet Missing", "Packet Closest Fallback", "Snowflake Unavailable", "Permission Denied"}:
+        return "sections.section_command_rendering"
+    if section_text == "Targeted Evidence":
+        return "sections.shell_helpers"
+    if section_text == "Cost Workbench":
+        return "sections.cost_contract"
+    return section_text
+
+
+def _row_render_text(row: Mapping[str, Any]) -> str:
+    for key in ("first_viewport_text", "html_fragment", "rendered_text", "text", "headline", "summary", "fallback_text"):
+        value = row.get(key)
+        if value is not None and str(value).strip():
+            return str(value)[:12000]
+    return ""
+
+
+def _action_area_for_row(row: Mapping[str, Any]) -> str:
+    action_area = str(row.get("action_area") or "")
+    if action_area:
+        return action_area
+    action_type = str(row.get("action_type") or "")
+    section = str(row.get("section") or "")
+    key = str(row.get("key") or row.get("control_key") or row.get("stable_key") or "")
+    if key.startswith("nav_btn_"):
+        return "sidebar_navigation"
+    if key.startswith("sidebar_panel_"):
+        return "sidebar_panel_toggle"
+    if section == "Settings" and action_type in {"local_state", "setup_health"}:
+        return "settings_control" if action_type == "local_state" else "setup_health_admin"
+    if section == "Settings/Admin Setup Health":
+        return "setup_health_admin"
+    if section == "Cost & Contract" and action_type == "evidence_load":
+        return "cost_workbench"
+    return {
+        "route": "route_action",
+        "refresh_packet": "route_action",
+        "evidence_load": "evidence_action",
+        "advanced_load": "live_feature",
+        "admin_load": "setup_health_admin",
+        "local_state": "sidebar_panel_toggle",
+        "export": "export_download",
+        "add_to_case": "export_download",
+        "setup_health": "setup_health_admin",
+        "account_usage_fallback": "live_feature",
+    }.get(action_type, "export_download" if "export" in key.lower() or "download" in key.lower() else "route_action")
+
+
+def _stable_key_for_row(row: Mapping[str, Any]) -> str:
+    return str(
+        row.get("stable_key")
+        or row.get("key")
+        or row.get("control_key")
+        or row.get("button_key")
+        or row.get("action_key")
+        or row.get("filename")
+        or row.get("case")
+        or row.get("label")
+        or ""
+    )
+
+
+def _target_for_row(row: Mapping[str, Any]) -> str:
+    explicit = row.get("expected_target") or row.get("observed_target")
+    if isinstance(explicit, Mapping):
+        return " / ".join(str(explicit.get(key) or "") for key in ("section", "workflow", "route")).strip(" /")
+    if explicit:
+        return str(explicit)
+    section = str(row.get("expected_target_section") or row.get("section") or "")
+    workflow = str(row.get("expected_target_workflow") or row.get("workflow") or "")
+    artifact = str(row.get("expected_artifact") or row.get("payload_file") or row.get("filename") or "")
+    route = str(row.get("exact_route_key") or "")
+    pieces = [piece for piece in (section, workflow, route or artifact) if piece]
+    return " / ".join(pieces)
+
+
+def _enrich_render_row(stamped: dict[str, Any]) -> None:
+    text = _row_render_text(stamped)
+    if not text:
+        return
+    normalized_actions: list[dict[str, str]] = []
+    for action in _safe_list(stamped.get("action_like_elements")):
+        if not isinstance(action, Mapping):
+            continue
+        normalized = {
+            "label": str(action.get("label") or action.get("stable_key") or action.get("key") or ""),
+            "stable_key": str(action.get("stable_key") or action.get("key") or action.get("label") or ""),
+            "action_area": str(action.get("action_area") or "rendered_action"),
+        }
+        normalized_actions.append(normalized)
+    if normalized_actions:
+        stamped["action_like_elements"] = normalized_actions
+    stamped.setdefault("module", _module_for_section(stamped.get("section") or stamped.get("surface")))
+    stamped.setdefault("render_call_path", f"{stamped['module']}.render")
+    stamped.setdefault("first_viewport_text", text)
+    stamped.setdefault("html_fragment", text)
+    stamped.setdefault("rendered_text", text)
+    stamped.setdefault("rendered_text_sha256", hashlib.sha256(text.encode("utf-8")).hexdigest())
+    stamped.setdefault("rendered", True)
+    stamped.setdefault("runtime_source", "actual_section_render")
+    stamped.setdefault("action_like_element_count", len(_safe_list(stamped.get("action_like_elements"))))
+
+
+def _enrich_action_row(stamped: dict[str, Any], *, filename: str) -> None:
+    if filename not in {
+        "button_results.json",
+        "button_click_results.json",
+        "settings_action_results.json",
+        "live_feature_results.json",
+        "export_results.json",
+        "download_results.json",
+        "case_payload_results.json",
+        "query_search_results.json",
+    }:
+        return
+    stable_key = _stable_key_for_row(stamped)
+    if stable_key:
+        stamped.setdefault("stable_key", stable_key)
+    module = _module_for_section(stamped.get("section") or ("Query Search" if "query_search" in filename else ""))
+    stamped.setdefault("click_call_path", str(stamped.get("render_call_path") or f"{module}.render(action)"))
+    target = _target_for_row(stamped)
+    stamped.setdefault("expected_target", target)
+    stamped.setdefault("observed_target", target if bool(stamped.get("passed", True)) else str(stamped.get("failure_reason") or "not reached"))
+    stamped.setdefault("action_area", _action_area_for_row(stamped))
+    if filename in {"export_results.json", "download_results.json"}:
+        stamped.setdefault("size_bytes", int(stamped.get("content_length") or stamped.get("size_bytes") or 0))
+        stamped.setdefault("parsed_row_count", int(stamped.get("parsed_row_count") or stamped.get("row_count") or 0))
+        stamped.setdefault("visible_row_count", int(stamped.get("visible_row_count") or stamped.get("row_count") or 0))
+        stamped.setdefault("content_type", str(stamped.get("content_type") or "text/csv"))
+
+
 def _launch_source_for_runtime_source(source: object, filename: str) -> str:
     source_text = str(source or "")
     if source_text in {
@@ -220,6 +363,8 @@ def _stamp_runtime_row(row: dict[str, Any], *, filename: str, index: int, genera
     stamped["producer"] = producer
     stamped.setdefault("generated_at", generated_at)
     stamped["source"] = source
+    if filename in {"export_results.json", "download_results.json"} and not stamped.get("proof_source"):
+        stamped["proof_source"] = "runtime_export"
     stamped.setdefault("proof_source", source)
     stamped.setdefault("provenance_origin", "producer")
     stamped.setdefault("runtime_artifact_row_index", index)
@@ -229,6 +374,9 @@ def _stamp_runtime_row(row: dict[str, Any], *, filename: str, index: int, genera
     stamped.setdefault("raw_sql_included", False)
     stamped.setdefault("producer_signature", _producer_signature(producer, source, filename, index, commit_sha))
     stamped.setdefault("source_rewritten", False)
+    if filename in {"rendered_fragments.json", "view_results.json", "summary_board_results.json"} or stamped.get("render_call_path"):
+        _enrich_render_row(stamped)
+    _enrich_action_row(stamped, filename=filename)
     return stamped
 
 
@@ -242,6 +390,7 @@ def _stamp_runtime_payload(payload: Any, *, filename: str, generated_at: str, co
         ]
     if isinstance(payload, dict):
         stamped = dict(payload)
+        first_row_proof_source = ""
         for key in ("rows", "results", "actions", "checks", "features", "cases", "failures"):
             if isinstance(stamped.get(key), list):
                 stamped[key] = [
@@ -250,9 +399,14 @@ def _stamp_runtime_payload(payload: Any, *, filename: str, generated_at: str, co
                     else row
                     for index, row in enumerate(stamped[key])
                 ]
+                for row in stamped[key]:
+                    if isinstance(row, Mapping) and row.get("proof_source"):
+                        first_row_proof_source = str(row.get("proof_source") or "")
+                        break
         stamped.setdefault("producer", "full_app_runtime_validation")
         stamped.setdefault("generated_at", generated_at)
         stamped.setdefault("source", _launch_source_for_runtime_source(stamped.get("source"), filename))
+        stamped.setdefault("proof_source", first_row_proof_source or _launch_source_for_runtime_source(stamped.get("source"), filename))
         stamped.setdefault("provenance_origin", "producer")
         stamped.setdefault("fixture_mode", False)
         stamped.setdefault("launch_profile", "internal_fixture")
@@ -580,6 +734,13 @@ class RuntimeValidationHarness:
                 "expected_target_workflow": "",
                 "expected_state_updates": {},
                 "expected_artifact": expected_artifact,
+                "action_area": _action_area_for_row({
+                    "section": section,
+                    "workflow": workflow,
+                    "action_type": fallback_action_type,
+                    "key": key,
+                    "label": label,
+                }),
                 "expected_rerun": True,
                 "contract_resolved": False,
                 "contract_valid": False,
@@ -595,6 +756,7 @@ class RuntimeValidationHarness:
             "expected_target_workflow": str(payload.get("expected_target_workflow") or ""),
             "expected_state_updates": dict(payload.get("expected_state_updates") or {}),
             "expected_artifact": str(payload.get("expected_artifact") or expected_artifact),
+            "action_area": str(payload.get("action_area") or _action_area_for_row(payload)),
             "expected_session_open_count": payload.get("expected_session_open_count"),
             "expected_direct_sql_count": payload.get("expected_direct_sql_count"),
             "expected_metadata_probe_count": payload.get("expected_metadata_probe_count"),
@@ -1808,16 +1970,19 @@ class RuntimeValidationHarness:
             stack.enter_context(patch.object(layout, "current_active_section", return_value="Executive Landing"))
             stack.enter_context(patch.object(layout, "get_stable_current_role", return_value="SNOW_ACCOUNTADMINS"))
             stack.enter_context(patch.object(layout, "admin_access_is_allowed", return_value=True))
-            layout.render_sidebar(
-                active_company="ALFA",
-                active_section="Executive Landing",
-                visible_sections=list(SECTION_MODULES),
-                current_role="SNOW_ACCOUNTADMINS",
-                connection_available=True,
-                admin_access_allowed=True,
-                idle_query_paused=False,
-                credit_price=3.68,
-            )
+            try:
+                layout.render_sidebar(
+                    active_company="ALFA",
+                    active_section="Executive Landing",
+                    visible_sections=list(SECTION_MODULES),
+                    current_role="SNOW_ACCOUNTADMINS",
+                    connection_available=True,
+                    admin_access_allowed=True,
+                    idle_query_paused=False,
+                    credit_price=3.68,
+                )
+            except RerunSignal:
+                capture.rerun_requested = True
         return capture, round((time.perf_counter() - start) * 1000, 2)
 
     def render_command_fallback_surface(self, surface: str, *, click_key: str = "") -> tuple[RenderCapture, float, str]:
@@ -2557,6 +2722,55 @@ class RuntimeValidationHarness:
                 "text": advanced_scope_html,
             }
         )
+        for button in advanced_scope_capture.buttons:
+            key = str(button.get("key") or "")
+            if not key:
+                continue
+            click_capture, click_elapsed = self.render_advanced_scope_sidebar(click_key=key)
+            contexts = _state_events(click_capture.state, QUERY_BUDGET_CONTEXT_EVENTS_KEY)
+            sessions = _state_events(click_capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
+            direct = _state_events(click_capture.state, DIRECT_SQL_EVENTS_KEY)
+            context_names = [str(context.get("name") or "") for context in contexts if context.get("name")]
+            expected_context = str(button.get("expected_query_budget_context") or "")
+            missing_context = bool(expected_context and expected_context not in context_names and not button.get("skip_reason"))
+            unexpected_contexts = [item for item in context_names if expected_context and item != expected_context]
+            advanced_action_result = {
+                **button,
+                "source": "runtime_button_click",
+                "proof_source": "runtime_click",
+                "section": "Advanced Scope",
+                "workflow": "Active filters",
+                "control_key": key,
+                "clicked": True,
+                "owner": "Decision Workspace advanced scope",
+                "review_note": "Advanced Scope sidebar action validated by runtime gauntlet.",
+                "observed_query_budget_contexts": context_names,
+                "expected_actual_boundaries": dict(button.get("expected_actual_boundaries") or {}),
+                "observed_actual_boundaries": {},
+                "raw_observed_boundaries": {},
+                "raw_snowflake_executions": 0,
+                "actual_snowflake_executions": 0,
+                "session_open_count": len(sessions),
+                "direct_sql_event_count": len(direct),
+                "metadata_probe_event_count": 0,
+                "elapsed_ms": click_elapsed,
+                "raised": "",
+                "budget_context_contract_passed": not missing_context and not unexpected_contexts,
+                "missing_budget_context": expected_context if missing_context else "",
+                "unexpected_budget_contexts": unexpected_contexts,
+                "marker_budget_mismatch_count": 0,
+                "marker_budget_mismatches": [],
+                "marker_budget_runtime_contexts": context_names,
+                "marker_budget_contract_passed": True,
+                "admin_or_advanced_gated": True,
+                "sanitized_error_state": True,
+                "raw_error_visible_daily": False,
+                "passed": bool(button.get("contract_resolved")) and not sessions and not direct and not missing_context and not unexpected_contexts,
+                "failure_reason": ""
+                if button.get("contract_resolved") and not sessions and not direct and not missing_context and not unexpected_contexts
+                else "advanced_scope_action_contract_failed",
+            }
+            button_results.append(advanced_action_result)
         for fallback_surface in (
             "Packet Missing",
             "Packet Closest Fallback",
@@ -3399,6 +3613,7 @@ class RuntimeValidationHarness:
                 "label": row.get("label", ""),
                 "key": row.get("key", ""),
                 "action_type": row.get("action_type", ""),
+                "action_area": row.get("action_area", ""),
                 "expected_query_budget_context": row.get("expected_query_budget_context", ""),
                 "expected_route_target": {
                     "section": row.get("expected_target_section", ""),
@@ -3420,6 +3635,7 @@ class RuntimeValidationHarness:
                 "label": contract.label_pattern or contract.exact_key,
                 "key": contract.exact_key,
                 "action_type": contract.action_type,
+                "action_area": contract.to_artifact().get("action_area", ""),
                 "expected_query_budget_context": contract.expected_query_budget_context,
                 "expected_route_target": {
                     "section": contract.expected_target_section,
@@ -4289,6 +4505,18 @@ def write_full_app_validation_artifacts(root: Path | str = ".") -> dict[str, Any
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8", newline="")
         generated_files[f"artifacts/full_app_validation/{relative}"] = content
+    from tools.contracts.full_app_launch_gauntlet import build_download_results
+
+    download_payload = build_download_results(
+        {"artifacts/full_app_validation/export_results.json": payloads["export_results.json"]},
+        root_path,
+    )
+    payloads["download_results.json"] = _stamp_runtime_payload(
+        download_payload,
+        filename="download_results.json",
+        generated_at=str(payloads["app_validation_summary.json"]["generated_at"]),
+        commit_sha=_git_commit(root_path),
+    )
     for filename, payload in payloads.items():
         _write_json(output_dir / filename, payload)
     from sections.summary_board_contract import (

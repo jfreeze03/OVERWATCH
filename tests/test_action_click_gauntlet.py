@@ -54,7 +54,11 @@ class ActionClickGauntletTests(unittest.TestCase):
                         "section": "Executive Landing",
                         "workflow": "Overview",
                         "action_like_elements": [
-                            {"label": "View all priorities", "stable_key": "view_all_priorities"}
+                            {
+                                "label": "View all priorities",
+                                "stable_key": "view_all_priorities",
+                                "action_area": "route_action",
+                            }
                         ],
                     }
                 ],
@@ -67,3 +71,4 @@ class ActionClickGauntletTests(unittest.TestCase):
             any(row.get("failure_reason") == "rendered_action_without_click_result" for row in results["failures"])
         )
         self.assertTrue(any(row.get("action_key") == "view_all_priorities" for row in results["rows"]))
+        self.assertTrue(any(row.get("action_area") == "route_action" for row in results["rows"]))

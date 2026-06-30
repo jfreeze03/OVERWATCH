@@ -61,6 +61,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             "artifacts/full_app_validation/control_inventory.json",
             "artifacts/full_app_validation/control_contract_coverage.json",
             "artifacts/full_app_validation/export_results.json",
+            "artifacts/full_app_validation/download_results.json",
             "artifacts/full_app_validation/settings_results.json",
             "artifacts/full_app_validation/settings_action_results.json",
             "artifacts/full_app_validation/live_feature_results.json",
@@ -170,6 +171,11 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             self.assertEqual(row["runtime_source"], "actual_section_render")
             self.assertEqual(row["provenance_origin"], "producer")
             self.assertEqual(row["proof_source"], "runtime_render")
+            self.assertTrue(row["module"], row)
+            self.assertTrue(row["render_call_path"], row)
+            self.assertTrue(row["first_viewport_text"], row)
+            self.assertTrue(row["html_fragment"], row)
+            self.assertTrue(row["rendered_text"], row)
             self.assertTrue(row["passed"], row)
             self.assertGreater(row["rendered_fragment_count"], 0, row)
             self.assertEqual(row["first_paint"]["cold_packet_queries"], 1)
@@ -187,6 +193,11 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             self.assertEqual(row["proof_source"], "runtime_click")
             self.assertTrue(row["label"], row)
             self.assertTrue(row["key"], row)
+            self.assertTrue(row["stable_key"], row)
+            self.assertTrue(row["click_call_path"], row)
+            self.assertTrue(row["expected_target"], row)
+            self.assertTrue(row["observed_target"], row)
+            self.assertTrue(row["action_area"], row)
             self.assertTrue(row["passed"] or row["skip_reason"], row)
             if row["action_type"] == "route":
                 self.assertEqual(row["actual_snowflake_executions"], 0, row)
@@ -208,6 +219,11 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             self.assertEqual(row["proof_source"], "runtime_export")
             self.assertNotIn("payload_text", row)
             self.assertGreater(row["content_length"], 0, row)
+            self.assertGreater(row["size_bytes"], 0, row)
+            self.assertTrue(row["stable_key"], row)
+            self.assertTrue(row["click_call_path"], row)
+            self.assertTrue(row["expected_target"], row)
+            self.assertTrue(row["observed_target"], row)
             self.assertGreaterEqual(row["row_count"], 1, row)
             self.assertEqual(row["row_count"], row["parsed_row_count"], row)
             self.assertEqual(row["row_count"], row["visible_row_count"], row)

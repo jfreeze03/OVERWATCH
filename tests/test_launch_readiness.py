@@ -162,6 +162,9 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(summary["workload_formula_semantics_failure_count"], 0)
         self.assertTrue(summary["query_budget_gate_passed"])
         self.assertEqual(summary["query_budget_gate_failure_count"], 0)
+        self.assertTrue(summary["render_provenance_reconciliation_passed"])
+        self.assertEqual(summary["render_provenance_reconciliation_failure_count"], 0)
+        self.assertGreater(summary["render_provenance_reconciliation_surface_count"], 0)
         self.assertGreaterEqual(summary["required_artifact_count"], len(REQUIRED_LAUNCH_READINESS_ARTIFACTS))
         self.assertIn("decision-workspace-proof", summary["uploaded_artifact_names"])
         self.assertFalse(summary["raw_sql_included"])
@@ -186,6 +189,7 @@ class LaunchReadinessTests(unittest.TestCase):
             "cortex_cost_consistency",
             "cost_chart_workbench",
             "formula_live_validation",
+            "render_provenance_reconciliation",
             "snowflake_cli_live_validation",
             "metric_semantic_registry",
             "workload_formula_semantics",
@@ -340,6 +344,8 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertTrue(summary["snowflake_cli_live_validation_passed"])
         self.assertTrue(summary["snowflake_cli_live_validation_skipped"])
         self.assertFalse(summary["snowflake_cli_live_validation_required"])
+        self.assertTrue(summary["render_provenance_reconciliation_passed"])
+        self.assertEqual(summary["render_provenance_reconciliation_failure_count"], 0)
         self.assertTrue(summary["formula_value_reconciliation_passed"])
         self.assertEqual(summary["formula_validation_mode"], "fixture_static")
         self.assertTrue(summary["snowflake_formula_value_passed"])

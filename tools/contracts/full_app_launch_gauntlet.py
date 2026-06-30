@@ -120,6 +120,7 @@ def _account_usage_count(row: Mapping[str, Any]) -> int:
 def _launch_row(
     *,
     area: str,
+    action_area: str = "",
     section: str,
     workflow: str,
     action_key: str,
@@ -139,6 +140,7 @@ def _launch_row(
 ) -> dict[str, Any]:
     return {
         "area": area,
+        "action_area": action_area or area,
         "section": section,
         "workflow": workflow,
         "action_key": action_key,
@@ -178,6 +180,7 @@ def build_action_manifest(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
         rows.append(
             _launch_row(
                 area="render",
+                action_area="first_paint_render",
                 section=section,
                 workflow=str(view.get("workflow") or "Overview"),
                 action_key=f"render::{section}",
@@ -204,6 +207,7 @@ def build_action_manifest(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
         rows.append(
             _launch_row(
                 area="button",
+                action_area=str(button.get("action_area") or action_type or "button"),
                 section=section,
                 workflow=str(button.get("workflow") or ""),
                 action_key=str(button.get("key") or button.get("control_key") or button.get("label") or action_type),
@@ -226,6 +230,7 @@ def build_action_manifest(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
         rows.append(
             _launch_row(
                 area="settings",
+                action_area=str(row.get("action_area") or "settings_control"),
                 section="Settings",
                 workflow="Settings/Admin Setup Health",
                 action_key=str(row.get("control_key") or row.get("action") or row.get("label") or "settings_action"),
@@ -247,6 +252,7 @@ def build_action_manifest(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
         rows.append(
             _launch_row(
                 area="live_feature",
+                action_area=str(row.get("action_area") or "live_feature"),
                 section=str(row.get("section") or "Settings/Admin Setup Health"),
                 workflow=str(row.get("workflow") or row.get("feature") or "Live feature"),
                 action_key=str(row.get("control_key") or row.get("feature") or row.get("label") or "live_feature"),
@@ -267,6 +273,7 @@ def build_action_manifest(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
         rows.append(
             _launch_row(
                 area="evidence",
+                action_area="evidence_action",
                 section=str(row.get("section") or ""),
                 workflow=str(row.get("workflow") or "Evidence"),
                 action_key=str(row.get("button_key") or row.get("expected_loader_name") or "evidence"),
@@ -282,14 +289,16 @@ def build_action_manifest(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
 
     for row in query_search:
         case = str(row.get("case") or "")
+        control_key = str(row.get("control_key_clicked") or "")
         no_click = case in {"render_no_click", "text_contains_no_autorun", "warehouse_prefill_no_autorun"}
         passed = bool(row.get("passed", True)) and (not no_click or _query_count(row) == 0)
         rows.append(
             _launch_row(
                 area="query_search",
+                action_area="query_search",
                 section="Workload Operations",
                 workflow="Query Search",
-                action_key=case,
+                action_key=control_key or case,
                 expected_behavior="no-click is zero-cost; explicit search is bounded and sanitized",
                 observed_behavior="zero cost" if no_click else "explicit search validated",
                 clicked=not no_click,
@@ -309,6 +318,7 @@ def build_action_manifest(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
         rows.append(
             _launch_row(
                 area="export",
+                action_area="export_download",
                 section=str(row.get("section") or ""),
                 workflow=str(row.get("workflow") or ""),
                 action_key=str(row.get("filename") or row.get("label") or "export"),
@@ -327,6 +337,7 @@ def build_action_manifest(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
         rows.append(
             _launch_row(
                 area="case_payload",
+                action_area="export_download",
                 section=str(row.get("section") or ""),
                 workflow=str(row.get("workflow") or ""),
                 action_key=str(row.get("target") or "case_payload"),
@@ -343,6 +354,7 @@ def build_action_manifest(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
         rows.append(
             _launch_row(
                 area="stress",
+                action_area="user_stress",
                 section=", ".join(str(item) for item in _as_list(row.get("sections_touched") or row.get("sections"))),
                 workflow=str(row.get("case") or ""),
                 action_key=str(row.get("case") or "stress"),
@@ -617,6 +629,7 @@ def build_full_app_launch_gauntlet(payloads: Mapping[str, Any], root: Path) -> t
         if section not in sections:
             failures.append(_launch_row(
                 area="coverage",
+                action_area="coverage",
                 section=section,
                 workflow="Overview",
                 action_key=f"coverage::{section}",

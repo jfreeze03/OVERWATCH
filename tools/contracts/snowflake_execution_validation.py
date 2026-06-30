@@ -198,9 +198,36 @@ def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+_SENSITIVE_KEY_MARKERS = (
+    "secret",
+    "token",
+    "password",
+    "credential",
+    "raw_sql",
+)
+_SENSITIVE_EXACT_KEYS = {
+    "BILLING_BRIDGE_STATUS",
+    "BILLING_WINDOW_COMPLETE",
+}
+
+
+def _redact_sensitive_payload(value: Any, key_hint: str = "") -> Any:
+    key_text = str(key_hint or "")
+    key_upper = key_text.upper()
+    key_lower = key_text.lower()
+    if key_upper in _SENSITIVE_EXACT_KEYS or any(marker in key_lower for marker in _SENSITIVE_KEY_MARKERS):
+        return "[REDACTED]"
+    if isinstance(value, Mapping):
+        return {k: _redact_sensitive_payload(v, str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_sensitive_payload(item, key_hint) for item in value]
+    return value
+
+
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    sanitized_payload = _redact_sensitive_payload(payload)
+    path.write_text(json.dumps(sanitized_payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def _normalize_name(name: str) -> str:

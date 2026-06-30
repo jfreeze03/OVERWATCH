@@ -26,13 +26,13 @@ def _coerce_date(value: object) -> date | None:
 
 
 def active_decision_window_days(default: int = DEFAULT_DAY_WINDOW) -> int:
-    """Return the inclusive global Decision Workspace window in days."""
+    """Return the completed-day Decision packet window for the global range."""
     fallback = int(default or DEFAULT_DAY_WINDOW or 7)
     start = _coerce_date(get_state(GLOBAL_START_DATE))
     end = _coerce_date(get_state(GLOBAL_END_DATE))
     if start is None or end is None:
         return max(1, fallback)
-    return max(1, int((end - start).days) + 1)
+    return max(1, int((end - start).days))
 
 
 __all__ = ["active_decision_window_days"]

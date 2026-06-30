@@ -38,7 +38,7 @@ def _money(value: object) -> str:
 def _pct(part: object, total: object) -> str:
     denominator = safe_float(total)
     if denominator <= 0:
-        return "Not loaded"
+        return "Pending"
     return f"{safe_float(part) / denominator * 100:.1f}%"
 
 
@@ -129,9 +129,9 @@ def build_cortex_signal(
             "top_cortex_warehouse",
             "TOP_CORTEX_USER",
         ),
-        "Not loaded",
+        "Pending",
     )
-    if top_driver == "Not loaded" and isinstance(control_exceptions, pd.DataFrame) and not control_exceptions.empty:
+    if top_driver == "Pending" and isinstance(control_exceptions, pd.DataFrame) and not control_exceptions.empty:
         top = control_exceptions.iloc[0].to_dict()
         top_driver = " / ".join(
             str(part or "").strip()
@@ -141,9 +141,9 @@ def build_cortex_signal(
     trend = _first_text(
         source,
         ("cortex_trend", "cortex_cost_trend", "run_rate_state", "RUN_RATE_STATE"),
-        "Predictive data not loaded",
+        "Pending",
     )
-    if trend == "Predictive data not loaded" and control_summary:
+    if trend == "Pending" and control_summary:
         trend = "Loaded cost control"
     loaded = any(
         (
@@ -152,7 +152,7 @@ def build_cortex_signal(
             forecast > 0,
             anomaly_count > 0,
             requests > 0,
-            top_driver not in {"", "Not loaded", "No Cortex user"},
+            top_driver not in {"", "Pending", "No Cortex user"},
         )
     )
     if anomaly_count:
@@ -162,7 +162,7 @@ def build_cortex_signal(
     elif spend:
         risk = "Spend active"
     else:
-        risk = "Not loaded"
+        risk = "Pending"
 
     total_spend = safe_float(total_spend_usd) or _first_number(
         source,
@@ -171,12 +171,12 @@ def build_cortex_signal(
     return {
         "loaded": loaded,
         "spend_usd": spend,
-        "spend_label": _money(spend) if loaded or spend else "No Cortex telemetry available",
+        "spend_label": _money(spend) if loaded or spend else "Cortex summary pending",
         "trend": trend,
         "forecast_usd": forecast,
-        "forecast_label": _money(forecast) if forecast else "Predictive alert data not loaded",
+        "forecast_label": _money(forecast) if forecast else "Pending",
         "anomaly_count": anomaly_count,
-        "predictive_alert_label": f"{anomaly_count:,}" if anomaly_count else ("0" if loaded else "Not loaded"),
+        "predictive_alert_label": f"{anomaly_count:,}" if anomaly_count else ("0" if loaded else "Pending"),
         "top_driver": top_driver if top_driver != "No Cortex user" else "No Cortex user",
         "credits": credits,
         "requests": requests,
@@ -204,20 +204,35 @@ def render_cortex_signal_panel(
 ) -> None:
     """Render an executive Cortex lane from already-loaded/session-only values."""
     st.markdown(f"**{title}**")
+    if not bool(signal.get("loaded")):
+        render_shell_snapshot(
+            (
+                ("Cortex summary", "Cortex summary pending."),
+                ("Billing", "Billing reconciliation pending."),
+                ("Details", "Detailed allocations load on request."),
+            )
+        )
+        if st.button(cta_label, key=cta_key, width="stretch"):
+            for key, value in (session_state_updates or {}).items():
+                st.session_state[str(key)] = value
+            if route_to_cost:
+                apply_cortex_cost_route()
+            st.rerun()
+        return
     render_shell_kpi_row(
         (
-            ("Cortex AI Spend", str(signal.get("spend_label") or "No Cortex telemetry available")),
-            ("Cortex AI Cost Trend", str(signal.get("trend") or "Predictive data not loaded")),
-            ("Cortex Forecast", str(signal.get("forecast_label") or "Predictive alert data not loaded")),
-            ("Cortex Predictive Alerts", str(signal.get("predictive_alert_label") or "Not loaded")),
+            ("Cortex AI Spend", str(signal.get("spend_label") or "Cortex summary pending")),
+            ("Cortex AI Cost Trend", str(signal.get("trend") or "Pending")),
+            ("Cortex Forecast", str(signal.get("forecast_label") or "Pending")),
+            ("Cortex Predictive Alerts", str(signal.get("predictive_alert_label") or "Pending")),
         )
     )
     render_shell_snapshot(
         (
-            ("Cortex Cost Risk", str(signal.get("risk") or "Not loaded")),
-            ("Percent of Total Spend", str(signal.get("percent_of_total") or "Not loaded")),
-            ("Top Cortex Driver", str(signal.get("top_driver") or "Not loaded")),
-            ("Telemetry Boundary", "Summary uses already-loaded/session data; details require explicit Cortex load."),
+            ("Cortex Cost Risk", str(signal.get("risk") or "Pending")),
+            ("Percent of Total Spend", str(signal.get("percent_of_total") or "Pending")),
+            ("Top Cortex Driver", str(signal.get("top_driver") or "Pending")),
+            ("Details", "Detailed allocations load on request."),
         )
     )
     if st.button(cta_label, key=cta_key, width="stretch"):

@@ -328,10 +328,10 @@ def _default_platform_summary() -> dict:
         "migration_blockers": 0,
         "top_cost_driver": "On demand",
         "cortex_spend_usd": 0.0,
-        "cortex_trend": "Predictive data not loaded",
+        "cortex_trend": "Pending",
         "cortex_forecast_usd": 0.0,
         "cortex_predictive_alerts": 0,
-        "top_cortex_driver": "Not loaded",
+        "top_cortex_driver": "Pending",
     }
     summary.update(_advisor_overlay_totals(pd.DataFrame()))
     return _with_platform_operating_score(summary, source_health)

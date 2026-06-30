@@ -136,14 +136,14 @@ def build_cost_hero_metrics(company: str) -> tuple[dict[str, str], ...]:
         },
         {
             "label": "Cortex AI Spend",
-            "value": str(cortex_signal.get("spend_label") or "No Cortex telemetry available"),
+            "value": str(cortex_signal.get("spend_label") or "Cortex summary pending"),
             "detail": str(cortex_signal.get("percent_of_total") or "Percent loads with cost facts."),
             "tone": "cortex",
         },
         {
             "label": "Cortex Predictive Alerts",
-            "value": str(cortex_signal.get("predictive_alert_label") or "Not loaded"),
-            "detail": str(cortex_signal.get("risk") or "Predictive alert data not loaded."),
+            "value": str(cortex_signal.get("predictive_alert_label") or "Pending"),
+            "detail": str(cortex_signal.get("risk") or "Pending."),
             "tone": "cortex",
         },
         {

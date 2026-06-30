@@ -462,11 +462,11 @@ class SectionCommandBriefTests(unittest.TestCase):
         ):
             brief = brief_module.autoload_section_command_brief("Security Monitoring", "ALFA", "PROD", 30)
 
-        self.assertEqual(brief.state, "Summary not initialized")
+        self.assertEqual(brief.state, "Summary pending")
         self.assertIn("Mart summary unavailable", brief.fallback_reason)
         self.assertEqual(len(brief.metrics), 0)
         self.assertEqual(brief.detail_cta, "Load Security Evidence")
-        self.assertEqual(brief.raw_payload.get("workspace_mode"), "UNINITIALIZED")
+        self.assertEqual(brief.raw_payload.get("workspace_mode"), "PENDING")
 
     def test_loader_skips_query_when_snowflake_entry_is_unavailable(self):
         from sections import section_command_brief as brief_module
@@ -617,11 +617,11 @@ class SectionCommandBriefTests(unittest.TestCase):
             company="ALFA",
             environment="PROD",
             window_label="7 days",
-            state="Summary not initialized",
-            headline="Summary not initialized",
-            summary="No current Decision packet exists.",
+            state="Summary pending",
+            headline="Summary pending",
+            summary="Waiting for the current ALFA / PROD summary packet.",
             source="Decision packet",
-            freshness_label="Setup required",
+            freshness_label="Packet pending",
             loaded_at="2026-06-25T10:00:00",
             fallback_reason="MART_SECTION_DECISION_CURRENT has no row for FACT_COST_DAILY.",
             source_gap_detail="FACT_COST_DAILY; FACT_CORTEX_DAILY",
@@ -641,7 +641,7 @@ class SectionCommandBriefTests(unittest.TestCase):
 
         first_markup = html.call_args_list[0].args[0]
         self.assertNotIn("SUMMARY UNAVAILABLE", first_markup)
-        self.assertIn("Summary not initialized", first_markup)
+        self.assertIn("Summary pending", first_markup)
         self.assertNotIn("MART_SECTION_DECISION_CURRENT", first_markup)
         self.assertNotIn("FACT_COST_DAILY", first_markup)
         renderer_source = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")

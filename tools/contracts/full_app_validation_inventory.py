@@ -44,6 +44,10 @@ FORBIDDEN_DAILY_TOKENS = (
     "ACCOUNT_USAGE",
     "Traceback",
     "SnowflakeSQLException",
+    "DOLLAR VALUES USE THE CONFIGURED RATE",
+    "DATABASE, USER, ROLE, AND QUERY COST VIEWS ARE ALLOCATED ESTIMATES",
+    "Summary uses already-loaded/session data",
+    "details require explicit Cortex load",
 )
 
 PRIMARY_ROUTE_BUDGET = {

@@ -23,10 +23,10 @@ class CortexFirstClassSignalTests(unittest.TestCase):
 
         signal = build_cortex_signal({}, state={}, days=7)
 
-        self.assertEqual(signal["spend_label"], "No Cortex telemetry available")
-        self.assertEqual(signal["forecast_label"], "Predictive alert data not loaded")
-        self.assertEqual(signal["predictive_alert_label"], "Not loaded")
-        self.assertEqual(signal["top_driver"], "Not loaded")
+        self.assertEqual(signal["spend_label"], "Cortex summary pending")
+        self.assertEqual(signal["forecast_label"], "Pending")
+        self.assertEqual(signal["predictive_alert_label"], "Pending")
+        self.assertEqual(signal["top_driver"], "Pending")
 
     def test_cortex_signal_uses_loaded_summary_and_session_context(self):
         from sections.cortex_signals import build_cortex_signal

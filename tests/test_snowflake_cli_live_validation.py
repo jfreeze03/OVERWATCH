@@ -22,6 +22,7 @@ from tools.contracts.snowflake_cli_live_validation import (
     CLI_LAUNCH_GATE_REL,
     CLI_MANIFEST_RECONCILIATION_REL,
     CLI_PACKET_VALUE_REL,
+    CLI_COST_RECONCILIATION_REL,
     CLI_QUERY_BUDGET_REL,
     CLI_SETUP_REL,
     REQUIRED_QUERY_BUDGET_BOUNDARIES,
@@ -31,6 +32,10 @@ from tools.contracts.snowflake_cli_live_validation import (
     sanitize_text,
     write_snowflake_cli_live_validation_artifacts,
 )
+from tools.contracts.packet_availability_live_validation import (
+    PACKET_AVAILABILITY_GATE_REL,
+    SNOWFLAKE_CLI_PACKET_AVAILABILITY_REL,
+)
 
 
 NUMERIC_DEFAULTS = {
@@ -39,8 +44,8 @@ NUMERIC_DEFAULTS = {
     "ACCOUNT_USED_CREDITS": 98.0,
     "COMPUTE_CREDITS": 80.0,
     "CLOUD_SERVICES_CREDITS": 10.0,
-    "CLOUD_SERVICES_ADJUSTMENT": 0.0,
-    "ACCOUNT_CLOUD_SERVICES_ADJUSTMENT": 0.0,
+    "CLOUD_SERVICES_ADJUSTMENT": -2.0,
+    "ACCOUNT_CLOUD_SERVICES_ADJUSTMENT": -2.0,
     "WAREHOUSE_CREDITS": 90.0,
     "WAREHOUSE_COST_ESTIMATE_USD": 331.2,
     "WAREHOUSE_COST_USD": 331.2,
@@ -139,11 +144,49 @@ def _query_budget_stdout() -> str:
     return json.dumps(rows)
 
 
+def _availability_stdout() -> str:
+    rows = []
+    for section in (
+        "Executive Landing",
+        "Cost & Contract",
+        "Workload Operations",
+        "DBA Control Room",
+        "Alert Center",
+        "Security Monitoring",
+    ):
+        rows.append(
+            {
+                "ROW_JSON": {
+                    "section_name": section,
+                    "company": "ALL",
+                    "environment": "ALL",
+                    "window_days": 7,
+                    "active_current_count": 1,
+                    "flat_current_count": 1,
+                    "last_good_count": 1,
+                    "latest_snapshot_ts": "2026-06-28T17:43:00Z",
+                    "latest_load_ts": "2026-06-28T17:44:00Z",
+                }
+            }
+        )
+    return json.dumps(rows)
+
+
 def _root_with_validation_sql() -> tempfile.TemporaryDirectory[str]:
     temp = tempfile.TemporaryDirectory()
     root = Path(temp.name)
     (root / "snowflake").mkdir(parents=True)
     (root / "snowflake" / "OVERWATCH_MART_VALIDATION.sql").write_text("-- validation placeholder\n", encoding="utf-8")
+    rendered = {
+        "source": "rendered_formula_results",
+        "value_checks": [
+            {"packet_field": field, "rendered_value": _packet_values().get(field)}
+            for field in REQUIRED_PACKET_FIELDS
+        ],
+    }
+    rendered_path = root / "artifacts" / "full_app_validation" / "rendered_formula_results.json"
+    rendered_path.parent.mkdir(parents=True, exist_ok=True)
+    rendered_path.write_text(json.dumps(rendered), encoding="utf-8")
     return temp
 
 
@@ -195,6 +238,8 @@ def _runner(
             return subprocess.CompletedProcess(args, 0, "validation passed\n", "")
         if "QUERY_HISTORY" in joined:
             return subprocess.CompletedProcess(args, 0, _query_budget_stdout(), "")
+        if "PACKET_AVAILABILITY_PROBE" in joined:
+            return subprocess.CompletedProcess(args, 0, _availability_stdout(), "")
         if "MART_SECTION_COMMAND_BRIEF" in joined:
             if table_packet_output:
                 return subprocess.CompletedProcess(args, 0, "+---+\n| ROW_JSON |\n+---+\n", "")
@@ -321,8 +366,10 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
             )
 
         self.assertTrue(artifacts[CLI_SETUP_REL]["passed"], artifacts[CLI_SETUP_REL])
+        self.assertTrue(artifacts[SNOWFLAKE_CLI_PACKET_AVAILABILITY_REL]["passed"], artifacts[SNOWFLAKE_CLI_PACKET_AVAILABILITY_REL])
         self.assertTrue(artifacts[CLI_PACKET_VALUE_REL]["passed"], artifacts[CLI_PACKET_VALUE_REL])
         self.assertTrue(artifacts[CLI_FORMULA_VALUE_REL]["passed"], artifacts[CLI_FORMULA_VALUE_REL])
+        self.assertTrue(artifacts[CLI_COST_RECONCILIATION_REL]["passed"], artifacts[CLI_COST_RECONCILIATION_REL])
         self.assertTrue(artifacts[CLI_QUERY_BUDGET_REL]["passed"], artifacts[CLI_QUERY_BUDGET_REL])
         self.assertTrue(artifacts[CLI_FORMULA_VALUE_GATE_REL]["passed"], artifacts[CLI_FORMULA_VALUE_GATE_REL])
         self.assertEqual(
@@ -334,7 +381,18 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
         self.assertTrue(artifacts[CLI_LAUNCH_GATE_REL]["snowflake_cli_live_executed"], artifacts[CLI_LAUNCH_GATE_REL])
         self.assertTrue(artifacts[CLI_LAUNCH_GATE_REL]["snowflake_cli_live_passed"], artifacts[CLI_LAUNCH_GATE_REL])
         self.assertFalse(artifacts[CLI_LAUNCH_GATE_REL]["snowflake_cli_live_skipped"], artifacts[CLI_LAUNCH_GATE_REL])
+        self.assertTrue(artifacts[PACKET_AVAILABILITY_GATE_REL]["passed"], artifacts[PACKET_AVAILABILITY_GATE_REL])
+        self.assertTrue(artifacts[CLI_LAUNCH_GATE_REL]["packet_availability_passed"], artifacts[CLI_LAUNCH_GATE_REL])
+        self.assertTrue(artifacts[CLI_LAUNCH_GATE_REL]["cost_reconciliation_passed"], artifacts[CLI_LAUNCH_GATE_REL])
         self.assertFalse(json.dumps(artifacts).count("SELECT *"))
+
+    def test_formula_sql_uses_cloud_services_adjustment(self):
+        from tools.contracts import snowflake_cli_live_validation as module
+
+        sql = module._formula_expected_sql(SnowflakeCliValidationOptions(connection="dev", profile="internal_live"))
+
+        self.assertIn("CREDITS_ADJUSTMENT_CLOUD_SERVICES", sql)
+        self.assertNotIn("'CLOUD_SERVICES_ADJUSTMENT', 0", sql)
 
     def test_null_packet_value_with_source_rows_fails_formula_validation(self):
         with _root_with_validation_sql() as temp:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from sections.metric_semantic_registry import MetricSemantic, get_metric_semantic
 
@@ -455,6 +455,11 @@ def _source_rows(brief: object) -> tuple[DecisionSourceRow, ...]:
 
 
 def _source_technical_summary(brief: object) -> str:
+    raw_payload = getattr(brief, "raw_payload", {}) if hasattr(brief, "raw_payload") else {}
+    if isinstance(raw_payload, Mapping):
+        closest = str(raw_payload.get("closest_packet_summary") or "").strip()
+        if closest:
+            return f"Latest available: {closest}. Setup Health can refresh summaries."
     requested = (
         f"{getattr(brief, 'requested_company', '') or getattr(brief, 'company', '')} / "
         f"{getattr(brief, 'requested_environment', '') or getattr(brief, 'environment', '')} / "
@@ -465,7 +470,7 @@ def _source_technical_summary(brief: object) -> str:
         f"{getattr(brief, 'resolved_environment', '') or getattr(brief, 'environment', '')} / "
         f"{getattr(brief, 'resolved_window_days', '') or getattr(brief, 'requested_window_days', '')} days"
     )
-    return f"Requested {requested}; resolved {resolved}; source trust details are available in Setup Health."
+    return f"Requested {requested}; resolved {resolved}; Setup Health can refresh summaries."
 
 
 def _fallback_view(brief: object, source_mode: str, *, evidence_action: object | None) -> DecisionFallbackView | None:
@@ -473,11 +478,11 @@ def _fallback_view(brief: object, source_mode: str, *, evidence_action: object |
         return None
     scope = f"{getattr(brief, 'company', '')} / {getattr(brief, 'environment', '')} / {getattr(brief, 'window_label', '')}"
     offline = source_mode == "offline"
-    title = "Offline summary is not available" if offline else "Summary not initialized"
+    title = "Offline summary is not available" if offline else "Summary pending"
     message = (
         "Snowflake is not reachable from this session. Configure the connection or ask an administrator to refresh the Decision summary marts."
         if offline
-        else f"No current Decision packet exists for {scope}."
+        else f"Waiting for the current {getattr(brief, 'company', '')} / {getattr(brief, 'environment', '')} summary packet."
     )
     return DecisionFallbackView(
         mode=source_mode,

@@ -2447,6 +2447,12 @@ class RuntimeValidationHarness:
             if isinstance(mismatch, dict)
         ]
         daily_scan = _scan_text_rows(rendered_fragments, text_keys=("text",), surface="daily_html", proof_source="runtime_render")
+        daily_wording_scan = {
+            **daily_scan,
+            "source": "daily_wording_scan_results",
+            "surface": "daily_wording",
+            "compact_daily_copy_required": True,
+        }
         export_token_findings = [
             finding
             for row in export_results
@@ -3240,6 +3246,7 @@ class RuntimeValidationHarness:
             "forbidden_ui_token_scan.json": forbidden_ui,
             "forbidden_source_token_scan.json": source_scan,
             "forbidden_daily_ui_scan.json": daily_scan,
+            "daily_wording_scan_results.json": daily_wording_scan,
             "forbidden_export_scan.json": export_scan,
             "query_budget_results.json": query_budget_results,
             "query_budget_violation_results.json": query_budget_violation_results,

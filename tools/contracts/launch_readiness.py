@@ -52,6 +52,8 @@ from tools.contracts.formula_end_to_end_validation import (
 )
 from tools.contracts.snowflake_cli_live_validation import (
     CLI_CONNECTION_REL,
+    CLI_COST_RECONCILIATION_REL,
+    CLI_COST_RECONCILIATION_GATE_REL,
     CLI_FORMULA_VALUE_REL,
     CLI_FORMULA_VALUE_GATE_REL,
     CLI_LAUNCH_GATE_REL,
@@ -63,6 +65,11 @@ from tools.contracts.snowflake_cli_live_validation import (
     REQUIRED_CLI_ARTIFACTS,
     evaluate_snowflake_cli_live_gate,
     write_snowflake_cli_live_validation_artifacts,
+)
+from tools.contracts.packet_availability_live_validation import (
+    PACKET_AVAILABILITY_GATE_REL,
+    PACKET_AVAILABILITY_MATRIX_REL,
+    evaluate_packet_availability_gate,
 )
 
 
@@ -103,6 +110,9 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/summary_board_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/billing_reconciliation_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/billing_reconciliation_live_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/packet_availability_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/live_cost_reconciliation_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/daily_wording_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/cortex_cost_consistency_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/cost_chart_workbench_gate_results.json",
     CORTEX_SERVICE_TYPE_GATE_REL,
@@ -4313,6 +4323,32 @@ def _query_budget_gate_results(payloads: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _daily_wording_gate_results(payloads: Mapping[str, Any]) -> dict[str, Any]:
+    wording = _as_mapping(payloads.get("artifacts/full_app_validation/daily_wording_scan_results.json"))
+    if not wording:
+        wording = _as_mapping(payloads.get("artifacts/full_app_validation/forbidden_daily_ui_scan.json"))
+    blocked_count = _as_int(wording.get("blocked_count"))
+    findings = _as_list(wording.get("findings"))
+    failures = []
+    if blocked_count:
+        failures.append(
+            {
+                "code": "DAILY_WORDING_BLOCKED",
+                "blocked_count": blocked_count,
+                "findings": findings[:20],
+            }
+        )
+    return {
+        "source": "daily_wording_gate_results",
+        "generated_at": _utc_now(),
+        "passed": not failures,
+        "failure_count": len(failures),
+        "blocked_count": blocked_count,
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+
+
 def _release_gate_matrix(
     payloads: Mapping[str, Any],
     launch_artifacts: Mapping[str, Any],
@@ -4344,6 +4380,9 @@ def _release_gate_matrix(
     summary_board_gate = _as_mapping(launch_artifacts.get("summary_board_gate_results"))
     billing_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_gate_results"))
     billing_live_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_live_gate_results"))
+    packet_availability_gate = _as_mapping(launch_artifacts.get("packet_availability_gate_results"))
+    live_cost_gate = _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results"))
+    daily_wording_gate = _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
     cortex_gate = _as_mapping(launch_artifacts.get("cortex_cost_consistency_gate_results"))
     cost_chart_gate = _as_mapping(launch_artifacts.get("cost_chart_workbench_gate_results"))
     cost_advisor_gate = _as_mapping(launch_artifacts.get("cost_advisor_gate_results"))
@@ -4401,6 +4440,24 @@ def _release_gate_matrix(
             "artifact": f"{LAUNCH_READINESS_DIR}/billing_reconciliation_live_gate_results.json",
             "passed": bool(billing_live_gate.get("passed")),
             "failure_reason": "" if billing_live_gate.get("passed") else "Live billing reconciliation is required for this launch profile or needs a signed waiver.",
+        },
+        {
+            "gate": "packet_availability",
+            "artifact": f"{LAUNCH_READINESS_DIR}/packet_availability_gate_results.json",
+            "passed": bool(packet_availability_gate.get("passed")),
+            "failure_reason": "" if packet_availability_gate.get("passed") else "Selected summary packets are missing or packet/flat publication does not reconcile.",
+        },
+        {
+            "gate": "live_cost_reconciliation",
+            "artifact": f"{LAUNCH_READINESS_DIR}/live_cost_reconciliation_gate_results.json",
+            "passed": bool(live_cost_gate.get("passed")),
+            "failure_reason": "" if live_cost_gate.get("passed") else "Live cost reconciliation failed or cloud-services adjustment proof is unavailable.",
+        },
+        {
+            "gate": "daily_wording",
+            "artifact": f"{LAUNCH_READINESS_DIR}/daily_wording_gate_results.json",
+            "passed": bool(daily_wording_gate.get("passed")),
+            "failure_reason": "" if daily_wording_gate.get("passed") else "Daily UI contains internal or verbose diagnostic wording.",
         },
         {
             "gate": "cost_db_formula_authority",
@@ -4795,6 +4852,11 @@ def evaluate_launch_readiness(
             profile,
             launch_waiver_rows,
         ),
+        "packet_availability_gate_results": _as_mapping(launch_artifacts.get("packet_availability_gate_results"))
+        or evaluate_packet_availability_gate(_as_mapping(payloads.get(PACKET_AVAILABILITY_MATRIX_REL))),
+        "live_cost_reconciliation_gate_results": _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results")),
+        "daily_wording_gate_results": _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
+        or _daily_wording_gate_results(payloads),
         "query_budget_gate_results": _query_budget_gate_results(payloads),
         "encoding_hygiene_results": _as_mapping(payloads.get("artifacts/encoding_hygiene_results.json"))
         or _as_mapping(launch_artifacts.get("encoding_hygiene_results")),
@@ -4855,6 +4917,9 @@ def evaluate_launch_readiness(
     summary_board_gate = _as_mapping(launch_artifacts.get("summary_board_gate_results"))
     billing_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_gate_results"))
     billing_live_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_live_gate_results"))
+    packet_availability_gate = _as_mapping(launch_artifacts.get("packet_availability_gate_results"))
+    live_cost_gate = _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results"))
+    daily_wording_gate = _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
     cortex_gate = _as_mapping(launch_artifacts.get("cortex_cost_consistency_gate_results"))
     cost_chart_gate = _as_mapping(launch_artifacts.get("cost_chart_workbench_gate_results"))
     cost_advisor_gate = _as_mapping(launch_artifacts.get("cost_advisor_gate_results"))
@@ -4911,6 +4976,15 @@ def evaluate_launch_readiness(
         "billing_reconciliation_live_passed": bool(billing_live_gate.get("passed")),
         "billing_reconciliation_live_skipped": bool(billing_live_gate.get("skipped")),
         "billing_reconciliation_live_required": bool(billing_live_gate.get("live_required")),
+        "packet_availability_passed": bool(packet_availability_gate.get("passed")),
+        "packet_availability_failure_count": _as_int(packet_availability_gate.get("failure_count")),
+        "packet_availability_missing_packet_count": _as_int(packet_availability_gate.get("missing_packet_count")),
+        "packet_availability_window_mismatch_count": _as_int(packet_availability_gate.get("window_mismatch_count")),
+        "live_cost_reconciliation_passed": bool(live_cost_gate.get("passed")),
+        "live_cost_reconciliation_failure_count": _as_int(live_cost_gate.get("failure_count")),
+        "daily_wording_passed": bool(daily_wording_gate.get("passed")),
+        "daily_wording_failure_count": _as_int(daily_wording_gate.get("failure_count")),
+        "daily_wording_blocked_count": _as_int(daily_wording_gate.get("blocked_count")),
         "cortex_cost_consistency_passed": bool(cortex_gate.get("passed")),
         "cortex_cost_consistency_failure_count": _as_int(cortex_gate.get("failure_count")),
         "cost_chart_workbench_passed": bool(cost_chart_gate.get("passed")),
@@ -5241,6 +5315,21 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["date_widget_regression_results"] = _date_widget_regression_results(root_path)
     launch_artifacts["metric_semantic_gate_results"] = _metric_semantic_gate_results(payloads)
     launch_artifacts["query_budget_gate_results"] = _query_budget_gate_results(payloads)
+    launch_artifacts["daily_wording_gate_results"] = _daily_wording_gate_results(payloads)
+    launch_artifacts["packet_availability_gate_results"] = evaluate_packet_availability_gate(
+        _as_mapping(payloads.get(PACKET_AVAILABILITY_MATRIX_REL))
+        or _as_mapping(snowflake_cli_artifacts.get(PACKET_AVAILABILITY_MATRIX_REL))
+    )
+    live_cost_reconciliation_gate = _as_mapping(snowflake_cli_artifacts.get(CLI_COST_RECONCILIATION_GATE_REL))
+    live_cost_reconciliation_payload = _as_mapping(snowflake_cli_artifacts.get(CLI_COST_RECONCILIATION_REL))
+    launch_artifacts["live_cost_reconciliation_gate_results"] = live_cost_reconciliation_gate or {
+        "source": "live_cost_reconciliation_gate_results",
+        "generated_at": _utc_now(),
+        "passed": bool(live_cost_reconciliation_payload.get("passed")),
+        "failure_count": _as_int(live_cost_reconciliation_payload.get("failure_count")),
+        "failures": _as_list(live_cost_reconciliation_payload.get("failures")),
+        "raw_sql_included": False,
+    }
     raw_results, raw_failures = _raw_invariant_artifacts(root_path, payloads)
     launch_artifacts["raw_invariant_results"] = raw_results
     launch_artifacts["raw_invariant_failures"] = raw_failures

@@ -511,32 +511,31 @@ def _fallback_brief(
             command_brief_fallback_used=True,
         )
     loaded_at = _now_label()
+    safe_scope = f"{company} / {environment}"
+    closest_packet = ""
     brief = SectionCommandBrief(
         section=contract.section,
         company=str(company),
         environment=str(environment),
         window_label=f"{int(window_days)} days",
-        state="Summary not initialized",
-        headline="Summary not initialized",
-        summary=(
-            f"No current Decision packet exists for {company} / {environment} / "
-            f"{int(window_days)} days."
-        ),
+        state="Summary pending",
+        headline="Summary pending",
+        summary=f"Waiting for the current {safe_scope} summary packet.",
         source="Decision packet",
-        freshness_label="Setup required",
+        freshness_label="Packet pending",
         loaded_at=loaded_at,
         metrics=(),
         top_signal=SectionCommandSignal(
-            severity="Setup",
-            signal=contract.top_signal_label,
-            entity="Decision setup",
-            detail="Initialize summaries or review setup health.",
+            severity="Watch",
+            signal="Summary packet pending",
+            entity=contract.section,
+            detail="Initialize summaries or open Setup Health.",
             route_section=contract.section,
             route_workflow=contract.default_view,
         ),
         exceptions=(),
         next_actions=_default_actions(contract),
-        fallback_reason=reason or "Mart summary unavailable; live fallback disabled for speed.",
+        fallback_reason=reason or "Summary packet is not available for the selected scope.",
         detail_cta=contract.detail_cta,
         detail_available=False,
         requested_company=str(company),
@@ -545,7 +544,7 @@ def _fallback_brief(
         resolved_company="",
         resolved_environment="",
         resolved_window_days=int(window_days),
-        source_objects="; ".join(contract.required_sources),
+        source_objects="Decision packet",
         target_freshness_minutes=int(contract.target_freshness_minutes),
         stale=True,
         confidence="unavailable",
@@ -553,14 +552,18 @@ def _fallback_brief(
         available_source_count=0,
         missing_source_count=len(contract.required_sources),
         source_coverage_pct=0.0,
-        data_availability_state="Data Gap",
+        data_availability_state="Summary pending",
         stale_source_count=0,
-        source_gap_detail="; ".join(contract.required_sources),
+        source_gap_detail="Summary packet pending",
         cache_expires_at=_expiry_label(NEGATIVE_CACHE_SECONDS),
         app_query_loaded_at=loaded_at,
         command_brief_query_count=0,
         command_brief_fallback_used=True,
-        raw_payload={"workspace_mode": "UNINITIALIZED", "technical_sources": "; ".join(contract.required_sources)},
+        raw_payload={
+            "workspace_mode": "PENDING",
+            "missing_packet_scope": f"{company}/{environment}/{int(window_days)}",
+            "closest_packet_summary": closest_packet,
+        },
     )
     return brief
 
@@ -611,6 +614,7 @@ def _availability_callable_is_mocked() -> bool:
 
 
 def _scoped_where(section: str, company: str, environment: str, window_days: int) -> str:
+    lookup_window_days = _normalize_packet_window_days(window_days)
     return f"""
         SECTION_NAME_NORM = UPPER({sql_literal(section, 120)})
         AND (COMPANY_NORM = UPPER({sql_literal(company, 100)}) OR COMPANY_NORM IN ('ALL', 'GLOBAL'))
@@ -618,13 +622,25 @@ def _scoped_where(section: str, company: str, environment: str, window_days: int
             ENVIRONMENT_NORM = UPPER({sql_literal(environment, 100)})
             OR ENVIRONMENT_NORM IN ('ALL', 'ALL ENVIRONMENTS', 'GLOBAL')
         )
-        AND (WINDOW_DAYS_NORM = {int(window_days)} OR WINDOW_DAYS_NORM IS NULL)
+        AND (WINDOW_DAYS_NORM = {lookup_window_days} OR WINDOW_DAYS_NORM IS NULL)
         AND COALESCE(IS_ACTIVE, TRUE)
     """
 
 
+def _normalize_packet_window_days(window_days: int) -> int:
+    """Map inclusive UI ranges to the completed-day packet convention."""
+    try:
+        days = int(window_days)
+    except Exception:
+        days = 7
+    if days == 8:
+        return 7
+    return max(1, days)
+
+
 def _packet_sql(section: str, company: str, environment: str, window_days: int) -> str:
     current_table = mart_object_name("MART_SECTION_DECISION_CURRENT_FLAT")
+    lookup_window_days = _normalize_packet_window_days(window_days)
     where = _scoped_where(section, company, environment, window_days)
     return f"""
 SELECT
@@ -680,7 +696,7 @@ SELECT
     ORDER BY
         IFF(COMPANY_NORM = UPPER({sql_literal(company, 100)}), 1, 0) DESC,
         IFF(ENVIRONMENT_NORM = UPPER({sql_literal(environment, 100)}), 1, 0) DESC,
-        IFF(WINDOW_DAYS_NORM = {int(window_days)}, 1, 0) DESC,
+        IFF(WINDOW_DAYS_NORM = {lookup_window_days}, 1, 0) DESC,
         IS_EXACT_SCOPE DESC,
         SCOPE_PRIORITY DESC,
         SNAPSHOT_TS DESC,

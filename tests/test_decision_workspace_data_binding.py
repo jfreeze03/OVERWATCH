@@ -2323,7 +2323,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertEqual(markup.count("Trend data not available for this packet."), 1)
         self.assertNotIn("ow-trend-unavailable", markup)
 
-    def test_decision_window_uses_inclusive_global_dates(self):
+    def test_decision_window_uses_completed_packet_days(self):
         from datetime import date
         from sections import decision_workspace_scope
 
@@ -2332,7 +2332,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             "global_end_date": date(2026, 6, 25),
         }
         with patch.object(decision_workspace_scope, "get_state", side_effect=lambda key, default=None: values.get(key, default)):
-            self.assertEqual(decision_workspace_scope.active_decision_window_days(), 8)
+            self.assertEqual(decision_workspace_scope.active_decision_window_days(), 7)
         with patch.object(decision_workspace_scope, "get_state", return_value=None):
             self.assertEqual(decision_workspace_scope.active_decision_window_days(11), 11)
 

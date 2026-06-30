@@ -17,10 +17,33 @@ from typing import Any, Iterable, Mapping
 
 from tools.contracts.cleanup_inventory import write_cleanup_artifacts
 from tools.contracts.direct_sql_contract import direct_sql_scan_artifact, scan_direct_sql_usage
+from tools.contracts.action_click_gauntlet import write_action_click_gauntlet_artifacts
+from tools.contracts.export_download_gauntlet import write_export_download_artifacts
+from tools.contracts.full_app_launch_gauntlet import (
+    FULL_APP_LAUNCH_ARTIFACTS,
+    write_full_app_launch_gauntlet_artifacts,
+)
 from tools.contracts.full_app_runtime_validation import write_full_app_validation_artifacts
 from tools.contracts.full_app_validation_inventory import write_full_app_contract_inventory_artifacts
+from tools.contracts.rendered_ui_leak_scan import (
+    RENDERED_UI_LEAK_ARTIFACTS,
+    write_rendered_ui_leak_scan_artifacts,
+)
 from tools.contracts.session_open_contract import scan_session_open_usage, session_open_scan_artifact
+from tools.contracts.source_internal_leak_scan import (
+    SOURCE_INTERNAL_LEAK_RESULTS_REL,
+    write_source_internal_leak_scan_artifacts,
+)
+from tools.contracts.sql_dead_code_scan import (
+    SQL_DEAD_CODE_SCAN_REL,
+    write_sql_dead_code_scan_artifacts,
+)
 from tools.contracts.sql_performance_lint import lint_sql_files
+from tools.contracts.sql_value_inventory import (
+    SQL_VALUE_INVENTORY_REL,
+    write_sql_value_inventory_artifacts,
+)
+from tools.contracts.user_stress_test import USER_STRESS_RESULTS_REL, write_user_stress_artifacts
 
 
 REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
@@ -74,6 +97,15 @@ REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
     "artifacts/sql_performance_lint_findings.json",
     "artifacts/sql_performance_lint_file_inventory.json",
     "artifacts/query_search_proof.json",
+    *FULL_APP_LAUNCH_ARTIFACTS,
+    *RENDERED_UI_LEAK_ARTIFACTS,
+    "artifacts/full_app_validation/action_click_manifest.json",
+    "artifacts/full_app_validation/action_click_results.json",
+    "artifacts/full_app_validation/download_results.json",
+    USER_STRESS_RESULTS_REL,
+    SOURCE_INTERNAL_LEAK_RESULTS_REL,
+    SQL_VALUE_INVENTORY_REL,
+    SQL_DEAD_CODE_SCAN_REL,
 }
 
 
@@ -1146,6 +1178,14 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
     metric_semantic_artifact = _write_metric_semantic_artifact(root_path)
     formula_consistency_artifacts = _write_formula_consistency_artifacts(root_path)
     static_artifacts = write_static_contract_artifacts(root_path)
+    launch_gauntlet_artifacts = write_full_app_launch_gauntlet_artifacts(root_path)
+    rendered_ui_leak_artifacts = write_rendered_ui_leak_scan_artifacts(root_path)
+    action_click_artifacts = write_action_click_gauntlet_artifacts(root_path)
+    export_download_artifacts = write_export_download_artifacts(root_path)
+    user_stress_artifacts = write_user_stress_artifacts(root_path)
+    source_leak_artifacts = write_source_internal_leak_scan_artifacts(root_path)
+    sql_value_artifacts = write_sql_value_inventory_artifacts(root_path)
+    sql_dead_code_artifacts = write_sql_dead_code_scan_artifacts(root_path)
     artifacts = {
         **cleanup_artifacts,
         **inventory_artifacts,
@@ -1154,6 +1194,14 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
         **metric_semantic_artifact,
         **formula_consistency_artifacts,
         **static_artifacts,
+        **launch_gauntlet_artifacts,
+        **rendered_ui_leak_artifacts,
+        **action_click_artifacts,
+        **export_download_artifacts,
+        **user_stress_artifacts,
+        **source_leak_artifacts,
+        **sql_value_artifacts,
+        **sql_dead_code_artifacts,
     }
     _ensure_manifest_entries(
         root_path,
@@ -1167,8 +1215,26 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             "artifacts/full_app_validation/rendered_formula_results.json",
             "artifacts/full_app_validation/summary_metric_consistency_results.json",
             "artifacts/full_app_validation/workload_formula_results.json",
+            *FULL_APP_LAUNCH_ARTIFACTS,
+            *RENDERED_UI_LEAK_ARTIFACTS,
+            "artifacts/full_app_validation/action_click_manifest.json",
+            "artifacts/full_app_validation/action_click_results.json",
+            "artifacts/full_app_validation/download_results.json",
+            USER_STRESS_RESULTS_REL,
+            SOURCE_INTERNAL_LEAK_RESULTS_REL,
+            SQL_VALUE_INVENTORY_REL,
+            SQL_DEAD_CODE_SCAN_REL,
         },
     )
+    cleanup_manifest = _ensure_manifest_entries(
+        root_path,
+        "artifacts/cleanup/artifact_manifest.json",
+        {
+            SQL_VALUE_INVENTORY_REL,
+            SQL_DEAD_CODE_SCAN_REL,
+        },
+    )
+    artifacts["artifacts/cleanup/artifact_manifest.json"] = cleanup_manifest
     recomputed = recompute_full_app_invariants(artifacts, root=root_path)
     recomputed_rel = "artifacts/full_app_validation/gauntlet_recomputed_invariants.json"
     reconciliation_rel = "artifacts/full_app_validation/gauntlet_artifact_reconciliation.json"
@@ -1194,6 +1260,15 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             "artifacts/full_app_validation/rendered_formula_results.json",
             "artifacts/full_app_validation/summary_metric_consistency_results.json",
             "artifacts/full_app_validation/workload_formula_results.json",
+            *FULL_APP_LAUNCH_ARTIFACTS,
+            *RENDERED_UI_LEAK_ARTIFACTS,
+            "artifacts/full_app_validation/action_click_manifest.json",
+            "artifacts/full_app_validation/action_click_results.json",
+            "artifacts/full_app_validation/download_results.json",
+            USER_STRESS_RESULTS_REL,
+            SOURCE_INTERNAL_LEAK_RESULTS_REL,
+            SQL_VALUE_INVENTORY_REL,
+            SQL_DEAD_CODE_SCAN_REL,
             "artifacts/direct_sql_static_scan.json",
             "artifacts/session_open_static_scan.json",
             "artifacts/sql_performance_lint_findings.json",

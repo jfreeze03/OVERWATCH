@@ -71,6 +71,18 @@ jobs:
       - name: Run full app gauntlet tests
         run: python -m unittest tests.test_full_app_gauntlet
 
+      - name: Run launch gauntlet closure tests
+        run: |
+          python -m unittest \
+            tests.test_full_app_launch_gauntlet \
+            tests.test_rendered_ui_leak_scan \
+            tests.test_action_click_gauntlet \
+            tests.test_export_download_gauntlet \
+            tests.test_sql_value_inventory \
+            tests.test_sql_dead_code_scan \
+            tests.test_user_stress_test \
+            tests.test_source_internal_leak_scan
+
       - name: Run launch readiness tests
         run: python -m unittest tests.test_launch_readiness
 

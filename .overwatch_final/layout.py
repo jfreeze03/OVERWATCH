@@ -372,10 +372,7 @@ def render_sidebar(
                     "Alert email is not configured. Set OVERWATCH_SETTINGS.DEFAULT_ALERT_EMAIL "
                     "in Snowflake, or enter recipients here before enabling scheduled email delivery."
                 )
-            st.caption(
-                "Dollar values use the configured rate. Database, user, role, and query cost views are "
-                "allocated estimates unless a panel explicitly marks the metric as exact."
-            )
+            st.caption("Cost estimates use configured credit rates.")
 
             current_metric_signature = metric_settings_signature()
             previous_metric_signature = get_state(PREV_METRIC_SETTINGS_SIGNATURE)

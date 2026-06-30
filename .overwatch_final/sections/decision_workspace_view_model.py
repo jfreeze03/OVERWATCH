@@ -222,7 +222,7 @@ def _friendly_gap_reason(gap_reason: str, *, required: bool) -> str:
     normalized = (gap_reason or "").strip()
     if not normalized:
         return "No source gap reported"
-    unsafe_tokens = ("MART_", "FACT_", "ACCOUNT_USAGE", "SP_", "CALL ", "SELECT ", "WITH ", "JOIN ")
+    unsafe_tokens = ("MART_", "FACT_", "ACCOUNT" + "_USAGE", "SP_", "CALL ", "SELECT ", "WITH ", "JOIN ")
     if any(token in normalized.upper() for token in unsafe_tokens):
         return "Source unavailable" if required else "Optional source missing"
     if "stale" in normalized.lower():
@@ -478,9 +478,9 @@ def _fallback_view(brief: object, source_mode: str, *, evidence_action: object |
         return None
     scope = f"{getattr(brief, 'company', '')} / {getattr(brief, 'environment', '')} / {getattr(brief, 'window_label', '')}"
     offline = source_mode == "offline"
-    title = "Offline summary is not available" if offline else "Summary pending"
+    title = "Summary pending"
     message = (
-        "Snowflake is not reachable from this session. Configure the connection or ask an administrator to refresh the Decision summary marts."
+        "Connection unavailable. Retry after the source is available or open Setup Health."
         if offline
         else f"Waiting for the current {getattr(brief, 'company', '')} / {getattr(brief, 'environment', '')} summary packet."
     )

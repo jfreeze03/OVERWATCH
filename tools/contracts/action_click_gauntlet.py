@@ -1,0 +1,146 @@
+"""Action-click gauntlet for launch-facing button and route proof."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+import json
+from pathlib import Path
+from typing import Any, Mapping
+
+from tools.contracts.full_app_launch_gauntlet import (
+    build_action_manifest,
+    evaluate_simple_gate,
+)
+
+
+FULL_APP_VALIDATION_DIR = "artifacts/full_app_validation"
+LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
+
+ACTION_CLICK_MANIFEST_REL = f"{FULL_APP_VALIDATION_DIR}/action_click_manifest.json"
+ACTION_CLICK_RESULTS_REL = f"{FULL_APP_VALIDATION_DIR}/action_click_results.json"
+LIVE_FEATURE_RESULTS_REL = f"{FULL_APP_VALIDATION_DIR}/live_feature_results.json"
+ACTION_CLICK_GATE_REL = f"{LAUNCH_READINESS_DIR}/action_click_gate_results.json"
+LIVE_FEATURE_GATE_REL = f"{LAUNCH_READINESS_DIR}/live_feature_gate_results.json"
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+
+
+def _load_json(root: Path, rel: str) -> Any:
+    path = root / rel
+    if not path.exists():
+        return [] if rel.endswith("_results.json") else {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_payloads(root: Path) -> dict[str, Any]:
+    rels = (
+        "artifacts/full_app_validation/view_results.json",
+        "artifacts/full_app_validation/button_click_results.json",
+        "artifacts/full_app_validation/settings_action_results.json",
+        "artifacts/full_app_validation/live_feature_results.json",
+        "artifacts/full_app_validation/export_results.json",
+        "artifacts/full_app_validation/case_payload_results.json",
+        "artifacts/full_app_validation/query_search_results.json",
+        "artifacts/full_app_validation/evidence_loader_call_matrix.json",
+        "artifacts/full_app_validation/stress_results.json",
+    )
+    return {rel: _load_json(root, rel) for rel in rels}
+
+
+def build_action_click_results(payloads: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    actions = build_action_manifest(payloads)
+    failures = [
+        row
+        for row in actions
+        if not bool(row.get("passed"))
+        or (str(row.get("area") or "") in {"button", "settings", "export", "case_payload"} and not bool(row.get("clicked")))
+    ]
+    manifest = {
+        "source": "action_click_manifest",
+        "generated_at": _now(),
+        "passed": not failures,
+        "action_count": len(actions),
+        "actions": actions,
+        "raw_sql_included": False,
+    }
+    results = {
+        "source": "action_click_results",
+        "generated_at": manifest["generated_at"],
+        "passed": not failures,
+        "failure_count": len(failures),
+        "clicked_count": sum(1 for row in actions if bool(row.get("clicked"))),
+        "failed_action_count": len(failures),
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+    return manifest, results
+
+
+def evaluate_action_click_gate(payload: object) -> dict[str, Any]:
+    if isinstance(payload, tuple) and len(payload) == 2:
+        payload = payload[1] if isinstance(payload[1], Mapping) else {}
+    if not isinstance(payload, Mapping):
+        payload = {}
+    return evaluate_simple_gate(
+        payload,
+        source="action_click_gate_results",
+        artifact=ACTION_CLICK_RESULTS_REL,
+    )
+
+
+def evaluate_live_feature_gate(payload: object) -> dict[str, Any]:
+    rows: list[Any] = payload if isinstance(payload, list) else []
+    failures = [
+        row for row in rows
+        if isinstance(row, Mapping)
+        and (
+            not bool(row.get("passed", True))
+            or bool(row.get("first_paint_invocation"))
+            or bool(row.get("route_invocation"))
+            or not bool(row.get("explicit_click_required", True))
+            or not bool(row.get("admin_or_advanced_gated", True))
+        )
+    ]
+    return {
+        "source": "live_feature_gate_results",
+        "generated_at": _now(),
+        "passed": not failures,
+        "failure_count": len(failures),
+        "live_feature_count": len(rows),
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+
+
+def write_action_click_gauntlet_artifacts(root: Path | str = ".", payloads: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    root_path = Path(root).resolve()
+    if payloads is None:
+        payloads = _load_payloads(root_path)
+    manifest, results = build_action_click_results(payloads)
+    artifacts: dict[str, Any] = {
+        ACTION_CLICK_MANIFEST_REL: manifest,
+        ACTION_CLICK_RESULTS_REL: results,
+    }
+    for rel, payload in artifacts.items():
+        _write_json(root_path / rel, payload)
+    return artifacts
+
+
+__all__ = [
+    "ACTION_CLICK_GATE_REL",
+    "ACTION_CLICK_MANIFEST_REL",
+    "ACTION_CLICK_RESULTS_REL",
+    "LIVE_FEATURE_GATE_REL",
+    "LIVE_FEATURE_RESULTS_REL",
+    "build_action_click_results",
+    "evaluate_action_click_gate",
+    "evaluate_live_feature_gate",
+    "write_action_click_gauntlet_artifacts",
+]

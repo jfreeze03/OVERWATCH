@@ -598,8 +598,8 @@ def _offline_brief(
     return replace(
         brief,
         state="Offline",
-        headline="Offline summary is not available yet.",
-        summary="Configure Snowflake access or ask an administrator to refresh the Decision summary marts.",
+        headline="Summary pending.",
+        summary="Connection unavailable. Retry after the source is available or open Setup Health.",
         freshness_label="Offline",
         raw_payload={**dict(brief.raw_payload or {}), "workspace_mode": "OFFLINE", "offline": True},
     )

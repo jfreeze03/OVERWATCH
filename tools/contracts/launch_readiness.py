@@ -71,6 +71,49 @@ from tools.contracts.packet_availability_live_validation import (
     PACKET_AVAILABILITY_MATRIX_REL,
     evaluate_packet_availability_gate,
 )
+from tools.contracts.action_click_gauntlet import (
+    ACTION_CLICK_GATE_REL,
+    LIVE_FEATURE_GATE_REL,
+    evaluate_action_click_gate,
+    evaluate_live_feature_gate,
+)
+from tools.contracts.export_download_gauntlet import evaluate_export_download_gate
+from tools.contracts.full_app_launch_gauntlet import (
+    EXPORT_DOWNLOAD_GATE_REL,
+    FIRST_PAINT_GATE_REL,
+    FIRST_PAINT_PERFORMANCE_REL,
+    FULL_APP_LAUNCH_GATE_REL,
+    FULL_APP_LAUNCH_RESULTS_REL,
+    PACKET_FALLBACK_GATE_REL,
+    PACKET_FALLBACK_UI_REL,
+    SETTINGS_GATE_REL,
+    SETTINGS_WORDING_REL,
+    SUMMARY_BOARD_VISUAL_CONTRACT_REL,
+    SUMMARY_BOARD_VISUAL_GATE_REL,
+    evaluate_simple_gate,
+)
+from tools.contracts.rendered_ui_leak_scan import (
+    DAILY_WORDING_GATE_REL,
+    RENDERED_UI_LEAK_GATE_REL,
+    RENDERED_UI_LEAK_RESULTS_REL,
+    evaluate_rendered_ui_leak_gate,
+)
+from tools.contracts.source_internal_leak_scan import (
+    SOURCE_INTERNAL_LEAK_GATE_REL,
+    SOURCE_INTERNAL_LEAK_RESULTS_REL,
+    evaluate_source_internal_leak_scan_gate,
+)
+from tools.contracts.sql_value_inventory import (
+    SQL_CLEANUP_GATE_REL,
+    SQL_VALUE_INVENTORY_REL,
+    evaluate_sql_cleanup_gate,
+)
+from tools.contracts.sql_dead_code_scan import SQL_DEAD_CODE_SCAN_REL
+from tools.contracts.user_stress_test import (
+    USER_STRESS_GATE_REL,
+    USER_STRESS_RESULTS_REL,
+    evaluate_user_stress_gate,
+)
 
 
 LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
@@ -113,6 +156,18 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/packet_availability_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/live_cost_reconciliation_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/daily_wording_gate_results.json",
+    FULL_APP_LAUNCH_GATE_REL,
+    RENDERED_UI_LEAK_GATE_REL,
+    SETTINGS_GATE_REL,
+    FIRST_PAINT_GATE_REL,
+    PACKET_FALLBACK_GATE_REL,
+    SUMMARY_BOARD_VISUAL_GATE_REL,
+    ACTION_CLICK_GATE_REL,
+    EXPORT_DOWNLOAD_GATE_REL,
+    LIVE_FEATURE_GATE_REL,
+    SQL_CLEANUP_GATE_REL,
+    USER_STRESS_GATE_REL,
+    SOURCE_INTERNAL_LEAK_GATE_REL,
     f"{LAUNCH_READINESS_DIR}/cortex_cost_consistency_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/cost_chart_workbench_gate_results.json",
     CORTEX_SERVICE_TYPE_GATE_REL,
@@ -2480,6 +2535,19 @@ def _release_candidate_summary_bundle(
         "artifact_hash_count": _as_int(reconciliation.get("hash_count")),
         "ci_artifact_reality_passed": bool(launch_summary.get("ci_artifact_reality_passed")),
         "full_app_gauntlet_passed": bool(launch_summary.get("gauntlet_passed")),
+        "full_app_launch_gauntlet_passed": bool(launch_summary.get("full_app_launch_gauntlet_passed")),
+        "rendered_ui_leak_scan_passed": bool(launch_summary.get("rendered_ui_leak_scan_passed")),
+        "diagnostic_leak_count": _as_int(launch_summary.get("diagnostic_leak_count")),
+        "internal_wording_leak_count": _as_int(launch_summary.get("internal_wording_leak_count")),
+        "failed_action_count": _as_int(launch_summary.get("failed_action_count")),
+        "export_failure_count": _as_int(launch_summary.get("export_failure_count")),
+        "settings_failure_count": _as_int(launch_summary.get("settings_failure_count")),
+        "live_feature_failure_count": _as_int(launch_summary.get("live_feature_failure_count")),
+        "stress_failure_count": _as_int(launch_summary.get("stress_failure_count")),
+        "slow_runtime_count": _as_int(launch_summary.get("slow_runtime_count")),
+        "sql_cleanup_failure_count": _as_int(launch_summary.get("sql_cleanup_failure_count")),
+        "first_paint_failure_count": _as_int(launch_summary.get("first_paint_failure_count")),
+        "source_internal_leak_scan_passed": bool(launch_summary.get("source_internal_leak_scan_passed")),
         "launch_readiness_passed": bool(launch_summary.get("all_passed")),
         "snowflake_validation_passed": bool(launch_summary.get("snowflake_validation_passed")),
         "live_execution_manifest_passed": bool(launch_summary.get("live_execution_manifest_gate_passed")),
@@ -2534,7 +2602,7 @@ def _release_candidate_summary_bundle(
         "settings_live_gating_passed": _gate_passed(matrix_rows, "settings_live_closure"),
         "deployment_readiness_passed": _gate_passed(matrix_rows, "deployment_readiness"),
         "docs_readiness_passed": _gate_passed(matrix_rows, "docs_readiness"),
-        "raw_sql_leak_count": _as_int(reconciliation.get("raw_sql_or_secret_count")),
+        "raw_sql_leak_count": _as_int(reconciliation.get("raw_sql_or_secret_count")) or _as_int(launch_summary.get("raw_sql_leak_count")),
         "forbidden_daily_token_count": _as_int(launch_summary.get("forbidden_daily_token_count")),
         "stale_artifact_count": _as_int(launch_summary.get("stale_artifact_count")),
         "unknown_sql_object_count": _as_int(launch_summary.get("cleanup_unknown_sql_object_count")),
@@ -4383,6 +4451,18 @@ def _release_gate_matrix(
     packet_availability_gate = _as_mapping(launch_artifacts.get("packet_availability_gate_results"))
     live_cost_gate = _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results"))
     daily_wording_gate = _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
+    full_app_launch_gate = _as_mapping(launch_artifacts.get("full_app_launch_gate_results"))
+    rendered_ui_leak_gate = _as_mapping(launch_artifacts.get("rendered_ui_leak_gate_results"))
+    settings_gate = _as_mapping(launch_artifacts.get("settings_gate_results"))
+    first_paint_gate = _as_mapping(launch_artifacts.get("first_paint_gate_results"))
+    packet_fallback_gate = _as_mapping(launch_artifacts.get("packet_fallback_ui_gate_results"))
+    summary_visual_gate = _as_mapping(launch_artifacts.get("summary_board_visual_contract_gate_results"))
+    action_click_gate = _as_mapping(launch_artifacts.get("action_click_gate_results"))
+    export_download_gate = _as_mapping(launch_artifacts.get("export_download_gate_results"))
+    live_feature_gate = _as_mapping(launch_artifacts.get("live_feature_gate_results"))
+    sql_cleanup_gate = _as_mapping(launch_artifacts.get("sql_cleanup_gate_results"))
+    user_stress_gate = _as_mapping(launch_artifacts.get("user_stress_gate_results"))
+    source_leak_gate = _as_mapping(launch_artifacts.get("source_internal_leak_scan_gate_results"))
     cortex_gate = _as_mapping(launch_artifacts.get("cortex_cost_consistency_gate_results"))
     cost_chart_gate = _as_mapping(launch_artifacts.get("cost_chart_workbench_gate_results"))
     cost_advisor_gate = _as_mapping(launch_artifacts.get("cost_advisor_gate_results"))
@@ -4422,6 +4502,78 @@ def _release_gate_matrix(
             "artifact": "artifacts/full_app_validation/gauntlet_results.json",
             "passed": bool(gauntlet.get("passed")),
             "failure_reason": "" if gauntlet.get("passed") else "Full app gauntlet failed.",
+        },
+        {
+            "gate": "full_app_launch_gauntlet",
+            "artifact": FULL_APP_LAUNCH_GATE_REL,
+            "passed": bool(full_app_launch_gate.get("passed")),
+            "failure_reason": "" if full_app_launch_gate.get("passed") else "Launch gauntlet found failed sections, actions, fallback states, or runtime checks.",
+        },
+        {
+            "gate": "rendered_ui_leak_scan",
+            "artifact": RENDERED_UI_LEAK_GATE_REL,
+            "passed": bool(rendered_ui_leak_gate.get("passed")),
+            "failure_reason": "" if rendered_ui_leak_gate.get("passed") else "Rendered daily UI or default exports contain diagnostic/internal/raw-source wording.",
+        },
+        {
+            "gate": "settings_gate",
+            "artifact": SETTINGS_GATE_REL,
+            "passed": bool(settings_gate.get("passed")),
+            "failure_reason": "" if settings_gate.get("passed") else "Settings wording or action contract failed.",
+        },
+        {
+            "gate": "first_paint_performance",
+            "artifact": FIRST_PAINT_GATE_REL,
+            "passed": bool(first_paint_gate.get("passed")),
+            "failure_reason": "" if first_paint_gate.get("passed") else "A primary section first paint was not packet-only or exceeded query/session budgets.",
+        },
+        {
+            "gate": "packet_fallback_ui",
+            "artifact": PACKET_FALLBACK_GATE_REL,
+            "passed": bool(packet_fallback_gate.get("passed")),
+            "failure_reason": "" if packet_fallback_gate.get("passed") else "Packet-missing fallback UI does not expose a clean closest-packet or setup action state.",
+        },
+        {
+            "gate": "summary_board_visual_contract",
+            "artifact": SUMMARY_BOARD_VISUAL_GATE_REL,
+            "passed": bool(summary_visual_gate.get("passed")),
+            "failure_reason": "" if summary_visual_gate.get("passed") else "Summary boards contain visual contract failures, duplicate boards, or diagnostic-card patterns.",
+        },
+        {
+            "gate": "action_click_gauntlet",
+            "artifact": ACTION_CLICK_GATE_REL,
+            "passed": bool(action_click_gate.get("passed")),
+            "failure_reason": "" if action_click_gate.get("passed") else "An action-looking control is unclickable, unrouted, or violates query/session/direct-SQL budgets.",
+        },
+        {
+            "gate": "export_download_gauntlet",
+            "artifact": EXPORT_DOWNLOAD_GATE_REL,
+            "passed": bool(export_download_gate.get("passed")),
+            "failure_reason": "" if export_download_gate.get("passed") else "An export/download/case payload lacks click, hash, row-count, or privacy proof.",
+        },
+        {
+            "gate": "live_feature_gate",
+            "artifact": LIVE_FEATURE_GATE_REL,
+            "passed": bool(live_feature_gate.get("passed")),
+            "failure_reason": "" if live_feature_gate.get("passed") else "A live feature runs too early, lacks gating, or exposes unsafe error behavior.",
+        },
+        {
+            "gate": "sql_cleanup_gate",
+            "artifact": SQL_CLEANUP_GATE_REL,
+            "passed": bool(sql_cleanup_gate.get("passed")),
+            "failure_reason": "" if sql_cleanup_gate.get("passed") else "SQL inventory/dead-code cleanup found unowned, daily-unsafe, or obsolete SQL paths.",
+        },
+        {
+            "gate": "user_stress_gate",
+            "artifact": USER_STRESS_GATE_REL,
+            "passed": bool(user_stress_gate.get("passed")),
+            "failure_reason": "" if user_stress_gate.get("passed") else "User stress scenarios failed or showed duplicate cards, leaks, state errors, or query growth.",
+        },
+        {
+            "gate": "source_internal_leak_scan",
+            "artifact": SOURCE_INTERNAL_LEAK_GATE_REL,
+            "passed": bool(source_leak_gate.get("passed")),
+            "failure_reason": "" if source_leak_gate.get("passed") else "Production daily source/rendered artifacts expose internal test, diagnostic, raw SQL, or stack-trace wording.",
         },
         {
             "gate": "summary_board_first_paint",
@@ -4857,6 +5009,57 @@ def evaluate_launch_readiness(
         "live_cost_reconciliation_gate_results": _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results")),
         "daily_wording_gate_results": _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
         or _daily_wording_gate_results(payloads),
+        "full_app_launch_gate_results": _as_mapping(launch_artifacts.get("full_app_launch_gate_results"))
+        or evaluate_simple_gate(
+            _as_mapping(payloads.get(FULL_APP_LAUNCH_RESULTS_REL)),
+            source="full_app_launch_gate_results",
+            artifact=FULL_APP_LAUNCH_RESULTS_REL,
+        ),
+        "rendered_ui_leak_gate_results": _as_mapping(launch_artifacts.get("rendered_ui_leak_gate_results"))
+        or evaluate_rendered_ui_leak_gate(_as_mapping(payloads.get(RENDERED_UI_LEAK_RESULTS_REL))),
+        "settings_gate_results": _as_mapping(launch_artifacts.get("settings_gate_results"))
+        or evaluate_simple_gate(
+            _as_mapping(payloads.get(SETTINGS_WORDING_REL)),
+            source="settings_gate_results",
+            artifact=SETTINGS_WORDING_REL,
+        ),
+        "first_paint_gate_results": _as_mapping(launch_artifacts.get("first_paint_gate_results"))
+        or evaluate_simple_gate(
+            _as_mapping(payloads.get(FIRST_PAINT_PERFORMANCE_REL)),
+            source="first_paint_gate_results",
+            artifact=FIRST_PAINT_PERFORMANCE_REL,
+        ),
+        "packet_fallback_ui_gate_results": _as_mapping(launch_artifacts.get("packet_fallback_ui_gate_results"))
+        or evaluate_simple_gate(
+            _as_mapping(payloads.get(PACKET_FALLBACK_UI_REL)),
+            source="packet_fallback_ui_gate_results",
+            artifact=PACKET_FALLBACK_UI_REL,
+        ),
+        "summary_board_visual_contract_gate_results": _as_mapping(launch_artifacts.get("summary_board_visual_contract_gate_results"))
+        or evaluate_simple_gate(
+            _as_mapping(payloads.get(SUMMARY_BOARD_VISUAL_CONTRACT_REL)),
+            source="summary_board_visual_contract_gate_results",
+            artifact=SUMMARY_BOARD_VISUAL_CONTRACT_REL,
+        ),
+        "action_click_gate_results": _as_mapping(launch_artifacts.get("action_click_gate_results"))
+        or evaluate_action_click_gate(payloads.get("artifacts/full_app_validation/action_click_results.json")),
+        "export_download_gate_results": _as_mapping(launch_artifacts.get("export_download_gate_results"))
+        or evaluate_export_download_gate(
+            payloads.get("artifacts/full_app_validation/export_results.json"),
+            payloads.get("artifacts/full_app_validation/download_results.json"),
+            _as_list(payloads.get("artifacts/full_app_validation/case_payload_results.json")),
+        ),
+        "live_feature_gate_results": _as_mapping(launch_artifacts.get("live_feature_gate_results"))
+        or evaluate_live_feature_gate(payloads.get("artifacts/full_app_validation/live_feature_results.json")),
+        "sql_cleanup_gate_results": _as_mapping(launch_artifacts.get("sql_cleanup_gate_results"))
+        or evaluate_sql_cleanup_gate(
+            _as_mapping(payloads.get(SQL_VALUE_INVENTORY_REL)),
+            _as_mapping(payloads.get(SQL_DEAD_CODE_SCAN_REL)),
+        ),
+        "user_stress_gate_results": _as_mapping(launch_artifacts.get("user_stress_gate_results"))
+        or evaluate_user_stress_gate(payloads.get(USER_STRESS_RESULTS_REL)),
+        "source_internal_leak_scan_gate_results": _as_mapping(launch_artifacts.get("source_internal_leak_scan_gate_results"))
+        or evaluate_source_internal_leak_scan_gate(payloads.get(SOURCE_INTERNAL_LEAK_RESULTS_REL)),
         "query_budget_gate_results": _query_budget_gate_results(payloads),
         "encoding_hygiene_results": _as_mapping(payloads.get("artifacts/encoding_hygiene_results.json"))
         or _as_mapping(launch_artifacts.get("encoding_hygiene_results")),
@@ -4920,6 +5123,18 @@ def evaluate_launch_readiness(
     packet_availability_gate = _as_mapping(launch_artifacts.get("packet_availability_gate_results"))
     live_cost_gate = _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results"))
     daily_wording_gate = _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
+    full_app_launch_gate = _as_mapping(launch_artifacts.get("full_app_launch_gate_results"))
+    rendered_ui_leak_gate = _as_mapping(launch_artifacts.get("rendered_ui_leak_gate_results"))
+    settings_gate = _as_mapping(launch_artifacts.get("settings_gate_results"))
+    first_paint_gate = _as_mapping(launch_artifacts.get("first_paint_gate_results"))
+    packet_fallback_gate = _as_mapping(launch_artifacts.get("packet_fallback_ui_gate_results"))
+    summary_visual_gate = _as_mapping(launch_artifacts.get("summary_board_visual_contract_gate_results"))
+    action_click_gate = _as_mapping(launch_artifacts.get("action_click_gate_results"))
+    export_download_gate = _as_mapping(launch_artifacts.get("export_download_gate_results"))
+    live_feature_gate = _as_mapping(launch_artifacts.get("live_feature_gate_results"))
+    sql_cleanup_gate = _as_mapping(launch_artifacts.get("sql_cleanup_gate_results"))
+    user_stress_gate = _as_mapping(launch_artifacts.get("user_stress_gate_results"))
+    source_leak_gate = _as_mapping(launch_artifacts.get("source_internal_leak_scan_gate_results"))
     cortex_gate = _as_mapping(launch_artifacts.get("cortex_cost_consistency_gate_results"))
     cost_chart_gate = _as_mapping(launch_artifacts.get("cost_chart_workbench_gate_results"))
     cost_advisor_gate = _as_mapping(launch_artifacts.get("cost_advisor_gate_results"))
@@ -4985,6 +5200,36 @@ def evaluate_launch_readiness(
         "daily_wording_passed": bool(daily_wording_gate.get("passed")),
         "daily_wording_failure_count": _as_int(daily_wording_gate.get("failure_count")),
         "daily_wording_blocked_count": _as_int(daily_wording_gate.get("blocked_count")),
+        "full_app_launch_gauntlet_passed": bool(full_app_launch_gate.get("passed")),
+        "full_app_launch_gauntlet_failure_count": _as_int(full_app_launch_gate.get("failure_count")),
+        "rendered_ui_leak_scan_passed": bool(rendered_ui_leak_gate.get("passed")),
+        "diagnostic_leak_count": _as_int(source_leak_gate.get("diagnostic_leak_count"))
+        or _as_int(rendered_ui_leak_gate.get("failure_count")),
+        "internal_wording_leak_count": _as_int(source_leak_gate.get("internal_wording_leak_count"))
+        or _as_int(daily_wording_gate.get("blocked_count")),
+        "raw_sql_leak_count": _as_int(rendered_ui_leak_gate.get("raw_sql_leak_count"))
+        or _as_int(source_leak_gate.get("raw_sql_leak_count")),
+        "settings_gate_passed": bool(settings_gate.get("passed")),
+        "settings_failure_count": _as_int(settings_gate.get("failure_count")),
+        "first_paint_gate_passed": bool(first_paint_gate.get("passed")),
+        "first_paint_failure_count": _as_int(first_paint_gate.get("failure_count")),
+        "packet_fallback_ui_passed": bool(packet_fallback_gate.get("passed")),
+        "packet_fallback_ui_failure_count": _as_int(packet_fallback_gate.get("failure_count")),
+        "summary_board_visual_contract_passed": bool(summary_visual_gate.get("passed")),
+        "summary_board_visual_contract_failure_count": _as_int(summary_visual_gate.get("failure_count")),
+        "action_click_gate_passed": bool(action_click_gate.get("passed")),
+        "failed_action_count": _as_int(action_click_gate.get("failure_count")),
+        "export_download_gate_passed": bool(export_download_gate.get("passed")),
+        "export_failure_count": _as_int(export_download_gate.get("failure_count")),
+        "live_feature_gate_passed": bool(live_feature_gate.get("passed")),
+        "live_feature_failure_count": _as_int(live_feature_gate.get("failure_count")),
+        "sql_cleanup_gate_passed": bool(sql_cleanup_gate.get("passed")),
+        "sql_cleanup_failure_count": _as_int(sql_cleanup_gate.get("failure_count")),
+        "user_stress_gate_passed": bool(user_stress_gate.get("passed")),
+        "stress_failure_count": _as_int(user_stress_gate.get("failure_count")),
+        "slow_runtime_count": _as_int(user_stress_gate.get("slow_runtime_count")),
+        "source_internal_leak_scan_passed": bool(source_leak_gate.get("passed")),
+        "source_internal_leak_scan_failure_count": _as_int(source_leak_gate.get("failure_count")),
         "cortex_cost_consistency_passed": bool(cortex_gate.get("passed")),
         "cortex_cost_consistency_failure_count": _as_int(cortex_gate.get("failure_count")),
         "cost_chart_workbench_passed": bool(cost_chart_gate.get("passed")),
@@ -5316,6 +5561,53 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["metric_semantic_gate_results"] = _metric_semantic_gate_results(payloads)
     launch_artifacts["query_budget_gate_results"] = _query_budget_gate_results(payloads)
     launch_artifacts["daily_wording_gate_results"] = _daily_wording_gate_results(payloads)
+    launch_artifacts["full_app_launch_gate_results"] = evaluate_simple_gate(
+        _as_mapping(payloads.get(FULL_APP_LAUNCH_RESULTS_REL)),
+        source="full_app_launch_gate_results",
+        artifact=FULL_APP_LAUNCH_RESULTS_REL,
+    )
+    launch_artifacts["rendered_ui_leak_gate_results"] = evaluate_rendered_ui_leak_gate(
+        _as_mapping(payloads.get(RENDERED_UI_LEAK_RESULTS_REL))
+    )
+    launch_artifacts["settings_gate_results"] = evaluate_simple_gate(
+        _as_mapping(payloads.get(SETTINGS_WORDING_REL)),
+        source="settings_gate_results",
+        artifact=SETTINGS_WORDING_REL,
+    )
+    launch_artifacts["first_paint_gate_results"] = evaluate_simple_gate(
+        _as_mapping(payloads.get(FIRST_PAINT_PERFORMANCE_REL)),
+        source="first_paint_gate_results",
+        artifact=FIRST_PAINT_PERFORMANCE_REL,
+    )
+    launch_artifacts["packet_fallback_ui_gate_results"] = evaluate_simple_gate(
+        _as_mapping(payloads.get(PACKET_FALLBACK_UI_REL)),
+        source="packet_fallback_ui_gate_results",
+        artifact=PACKET_FALLBACK_UI_REL,
+    )
+    launch_artifacts["summary_board_visual_contract_gate_results"] = evaluate_simple_gate(
+        _as_mapping(payloads.get(SUMMARY_BOARD_VISUAL_CONTRACT_REL)),
+        source="summary_board_visual_contract_gate_results",
+        artifact=SUMMARY_BOARD_VISUAL_CONTRACT_REL,
+    )
+    launch_artifacts["action_click_gate_results"] = evaluate_action_click_gate(
+        payloads.get("artifacts/full_app_validation/action_click_results.json")
+    )
+    launch_artifacts["export_download_gate_results"] = evaluate_export_download_gate(
+        payloads.get("artifacts/full_app_validation/export_results.json"),
+        payloads.get("artifacts/full_app_validation/download_results.json"),
+        _as_list(payloads.get("artifacts/full_app_validation/case_payload_results.json")),
+    )
+    launch_artifacts["live_feature_gate_results"] = evaluate_live_feature_gate(
+        payloads.get("artifacts/full_app_validation/live_feature_results.json")
+    )
+    launch_artifacts["sql_cleanup_gate_results"] = evaluate_sql_cleanup_gate(
+        _as_mapping(payloads.get(SQL_VALUE_INVENTORY_REL)),
+        _as_mapping(payloads.get(SQL_DEAD_CODE_SCAN_REL)),
+    )
+    launch_artifacts["user_stress_gate_results"] = evaluate_user_stress_gate(payloads.get(USER_STRESS_RESULTS_REL))
+    launch_artifacts["source_internal_leak_scan_gate_results"] = evaluate_source_internal_leak_scan_gate(
+        payloads.get(SOURCE_INTERNAL_LEAK_RESULTS_REL)
+    )
     launch_artifacts["packet_availability_gate_results"] = evaluate_packet_availability_gate(
         _as_mapping(payloads.get(PACKET_AVAILABILITY_MATRIX_REL))
         or _as_mapping(snowflake_cli_artifacts.get(PACKET_AVAILABILITY_MATRIX_REL))

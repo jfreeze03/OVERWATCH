@@ -56,6 +56,53 @@ def _load_payloads(root: Path) -> dict[str, Any]:
 
 def build_action_click_results(payloads: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     actions = build_action_manifest(payloads)
+    rendered_actions: list[Mapping[str, Any]] = []
+    for row in payloads.get("artifacts/full_app_validation/rendered_fragments.json", []):
+        if not isinstance(row, Mapping):
+            continue
+        for action in row.get("action_like_elements") or []:
+            if isinstance(action, Mapping):
+                rendered_actions.append(
+                    {
+                        "section": row.get("section") or row.get("surface") or "",
+                        "workflow": row.get("workflow") or "",
+                        "label": action.get("label") or "",
+                        "stable_key": action.get("stable_key") or action.get("key") or action.get("label") or "",
+                    }
+                )
+    click_keys = {
+        str(row.get("stable_key") or row.get("control_key") or row.get("key") or row.get("action_key") or "").strip()
+        for row in actions
+        if bool(row.get("clicked"))
+    }
+    click_labels = {
+        str(row.get("label") or row.get("action_key") or "").strip()
+        for row in actions
+        if bool(row.get("clicked"))
+    }
+    for rendered_action in rendered_actions:
+        stable_key = str(rendered_action.get("stable_key") or "").strip()
+        label = str(rendered_action.get("label") or "").strip()
+        matched = bool(stable_key and stable_key in click_keys) or bool(label and label in click_labels)
+        if not matched:
+            actions.append(
+                {
+                    "area": "rendered_action",
+                    "section": rendered_action.get("section", ""),
+                    "workflow": rendered_action.get("workflow", ""),
+                    "action_key": stable_key or label or "rendered_action",
+                    "expected_behavior": "visible action-like element has a matching click artifact",
+                    "observed_behavior": "missing click result",
+                    "clicked": False,
+                    "query_count": 0,
+                    "session_open_count": 0,
+                    "direct_sql_count": 0,
+                    "account_usage_count": 0,
+                    "passed": False,
+                    "failure_reason": "rendered_action_without_click_result",
+                    "raw_sql_included": False,
+                }
+            )
     failures = [
         row
         for row in actions

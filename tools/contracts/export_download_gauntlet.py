@@ -100,7 +100,7 @@ def write_export_download_artifacts(root: Path | str = ".", payloads: Mapping[st
             EXPORT_RESULTS_REL: _load_json(root_path, EXPORT_RESULTS_REL),
             CASE_PAYLOAD_RESULTS_REL: _load_json(root_path, CASE_PAYLOAD_RESULTS_REL),
         }
-    download_payload = build_download_results(payloads)
+    download_payload = build_download_results(payloads, root_path)
     _write_json(root_path / DOWNLOAD_RESULTS_REL, download_payload)
     return {DOWNLOAD_RESULTS_REL: download_payload}
 

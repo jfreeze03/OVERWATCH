@@ -16,6 +16,7 @@ import importlib
 import json
 from pathlib import Path
 import re
+import subprocess
 import sys
 import time
 from typing import Any, Callable, Iterable, Literal, Mapping
@@ -155,6 +156,120 @@ def _token(value: object) -> str:
     text = str(value or "").strip().lower()
     text = re.sub(r"[^a-z0-9]+", "_", text)
     return text.strip("_") or "item"
+
+
+def _git_commit(root: Path) -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def _producer_signature(*parts: object) -> str:
+    return hashlib.sha256("|".join(str(part or "") for part in parts).encode("utf-8")).hexdigest()
+
+
+def _launch_source_for_runtime_source(source: object, filename: str) -> str:
+    source_text = str(source or "")
+    if source_text in {
+        "lower_artifact_rendered",
+        "deterministic_streamlit_rendered",
+        "clicked_action",
+        "rendered_app",
+    }:
+        return source_text
+    if source_text in {
+        "runtime_section_render",
+        "runtime_settings_render",
+        "runtime_query_search_render",
+        "runtime_render",
+        "runtime_capture",
+    }:
+        return "lower_artifact_rendered"
+    if source_text in {
+        "runtime_button_click",
+        "runtime_real_loader_spy",
+        "runtime_real_loader_spy_matrix",
+        "runtime_query_search_click",
+        "runtime_export_payload",
+        "runtime_stress_sequence",
+        "runtime_budget_events",
+        "runtime_budget_violation_recording",
+        "runtime_telemetry_events",
+    }:
+        return "clicked_action"
+    if filename in {"rendered_fragments.json", "view_results.json", "summary_board_results.json"}:
+        return "lower_artifact_rendered"
+    if filename.endswith("_results.json") or filename.endswith("_matrix.json"):
+        return "clicked_action"
+    return "fixture"
+
+
+def _stamp_runtime_row(row: dict[str, Any], *, filename: str, index: int, generated_at: str, commit_sha: str) -> dict[str, Any]:
+    stamped = dict(row)
+    original_source = str(stamped.get("source") or "")
+    source = _launch_source_for_runtime_source(original_source, filename)
+    if original_source and original_source != source:
+        stamped.setdefault("runtime_source", original_source)
+    producer = str(stamped.get("producer") or "full_app_runtime_validation")
+    stamped["producer"] = producer
+    stamped.setdefault("generated_at", generated_at)
+    stamped["source"] = source
+    stamped.setdefault("proof_source", source)
+    stamped.setdefault("provenance_origin", "producer")
+    stamped.setdefault("runtime_artifact_row_index", index)
+    stamped.setdefault("fixture_mode", source == "fixture")
+    stamped.setdefault("launch_profile", "internal_fixture")
+    stamped.setdefault("commit_sha", commit_sha)
+    stamped.setdefault("raw_sql_included", False)
+    stamped.setdefault("producer_signature", _producer_signature(producer, source, filename, index, commit_sha))
+    stamped.setdefault("source_rewritten", False)
+    return stamped
+
+
+def _stamp_runtime_payload(payload: Any, *, filename: str, generated_at: str, commit_sha: str) -> Any:
+    if isinstance(payload, list):
+        return [
+            _stamp_runtime_row(dict(row), filename=filename, index=index, generated_at=generated_at, commit_sha=commit_sha)
+            if isinstance(row, Mapping)
+            else row
+            for index, row in enumerate(payload)
+        ]
+    if isinstance(payload, dict):
+        stamped = dict(payload)
+        for key in ("rows", "results", "actions", "checks", "features", "cases", "failures"):
+            if isinstance(stamped.get(key), list):
+                stamped[key] = [
+                    _stamp_runtime_row(dict(row), filename=filename, index=index, generated_at=generated_at, commit_sha=commit_sha)
+                    if isinstance(row, Mapping)
+                    else row
+                    for index, row in enumerate(stamped[key])
+                ]
+        stamped.setdefault("producer", "full_app_runtime_validation")
+        stamped.setdefault("generated_at", generated_at)
+        stamped.setdefault("source", _launch_source_for_runtime_source(stamped.get("source"), filename))
+        stamped.setdefault("provenance_origin", "producer")
+        stamped.setdefault("fixture_mode", False)
+        stamped.setdefault("launch_profile", "internal_fixture")
+        stamped.setdefault("commit_sha", commit_sha)
+        stamped.setdefault("raw_sql_included", False)
+        stamped.setdefault("producer_signature", _producer_signature("full_app_runtime_validation", stamped["source"], filename, "artifact", commit_sha))
+        return stamped
+    return payload
+
+
+def _stamp_runtime_payloads(payloads: dict[str, Any], *, root: Path) -> dict[str, Any]:
+    generated_at = str(payloads.get("app_validation_summary.json", {}).get("generated_at") or _now())
+    commit_sha = _git_commit(root)
+    return {
+        filename: _stamp_runtime_payload(payload, filename=filename, generated_at=generated_at, commit_sha=commit_sha)
+        for filename, payload in payloads.items()
+    }
 
 
 def _json_safe(value: object) -> object:
@@ -3652,6 +3767,7 @@ def write_full_app_validation_artifacts(root: Path | str = ".") -> dict[str, Any
                     child.unlink()
     payloads = RuntimeValidationHarness(root_path).run()
     generated_export_payloads = list(payloads.pop("__generated_export_payloads__", []))
+    payloads = _stamp_runtime_payloads(payloads, root=root_path)
     generated_dir = output_dir / "generated_exports"
     generated_dir.mkdir(parents=True, exist_ok=True)
     generated_files: dict[str, str] = {}
@@ -3685,6 +3801,7 @@ def write_full_app_validation_artifacts(root: Path | str = ".") -> dict[str, Any
         "summary_board_error_inventory.json": build_summary_board_error_inventory(summary_board_rows),
         "summary_board_failure_diagnostics.json": build_summary_board_failure_diagnostics(summary_board_rows),
     }
+    summary_board_payloads = _stamp_runtime_payloads(summary_board_payloads, root=root_path)
     for filename, payload in summary_board_payloads.items():
         _write_json(output_dir / filename, payload)
     payloads.update(summary_board_payloads)

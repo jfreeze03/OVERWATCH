@@ -23,6 +23,16 @@ from tools.contracts.browser_render_gauntlet import (
     BROWSER_RENDER_GATE_REL,
     write_browser_render_gauntlet_artifacts,
 )
+from tools.contracts.browser_smoke_runner import (
+    BROWSER_SMOKE_GATE_REL,
+    BROWSER_SMOKE_RESULTS_REL,
+    write_browser_smoke_runner_artifacts,
+)
+from tools.contracts.deterministic_streamlit_render import (
+    DETERMINISTIC_RENDER_GATE_REL,
+    DETERMINISTIC_RENDER_RESULTS_REL,
+    write_deterministic_streamlit_render_artifacts,
+)
 from tools.contracts.export_download_gauntlet import write_export_download_artifacts
 from tools.contracts.full_app_launch_gauntlet import (
     FULL_APP_LAUNCH_ARTIFACTS,
@@ -108,6 +118,10 @@ REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
     "artifacts/sql_performance_lint_file_inventory.json",
     "artifacts/query_search_proof.json",
     *FULL_APP_LAUNCH_ARTIFACTS,
+    DETERMINISTIC_RENDER_RESULTS_REL,
+    DETERMINISTIC_RENDER_GATE_REL,
+    BROWSER_SMOKE_RESULTS_REL,
+    BROWSER_SMOKE_GATE_REL,
     *BROWSER_RENDER_ARTIFACTS,
     *RENDERED_UI_LEAK_ARTIFACTS,
     RUNTIME_ARTIFACT_PROVENANCE_REL,
@@ -1188,6 +1202,8 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
     cleanup_artifacts = write_cleanup_artifacts(root_path)
     inventory_artifacts = write_full_app_contract_inventory_artifacts(root_path)
     validation_artifacts = write_full_app_validation_artifacts(root_path)
+    deterministic_render_artifacts = write_deterministic_streamlit_render_artifacts(root_path)
+    browser_smoke_artifacts = write_browser_smoke_runner_artifacts(root_path)
     browser_render_artifacts = write_browser_render_gauntlet_artifacts(root_path)
     summary_board_artifacts = _write_summary_board_contract_artifacts(root_path)
     metric_semantic_artifact = _write_metric_semantic_artifact(root_path)
@@ -1206,6 +1222,8 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
         **cleanup_artifacts,
         **inventory_artifacts,
         **validation_artifacts,
+        **deterministic_render_artifacts,
+        **browser_smoke_artifacts,
         **browser_render_artifacts,
         **summary_board_artifacts,
         **metric_semantic_artifact,
@@ -1233,6 +1251,8 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             "artifacts/full_app_validation/rendered_formula_results.json",
             "artifacts/full_app_validation/summary_metric_consistency_results.json",
             "artifacts/full_app_validation/workload_formula_results.json",
+            DETERMINISTIC_RENDER_RESULTS_REL,
+            BROWSER_SMOKE_RESULTS_REL,
             *BROWSER_RENDER_ARTIFACTS,
             BROWSER_RENDER_GATE_REL,
             *FULL_APP_LAUNCH_ARTIFACTS,
@@ -1282,6 +1302,8 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             "artifacts/full_app_validation/rendered_formula_results.json",
             "artifacts/full_app_validation/summary_metric_consistency_results.json",
             "artifacts/full_app_validation/workload_formula_results.json",
+            DETERMINISTIC_RENDER_RESULTS_REL,
+            BROWSER_SMOKE_RESULTS_REL,
             *BROWSER_RENDER_ARTIFACTS,
             BROWSER_RENDER_GATE_REL,
             *FULL_APP_LAUNCH_ARTIFACTS,

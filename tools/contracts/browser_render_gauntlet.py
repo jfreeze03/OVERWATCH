@@ -1,14 +1,14 @@
 """Browser or deterministic render gauntlet for launch readiness.
 
-CI may not always have a live browser session attached. This module therefore
-supports deterministic snapshot rows with the same contract shape as browser
-captures. The launch gate requires either a snapshot file or a browser
-screenshot/skip marker, plus clean rendered text and clickable action evidence.
+This module consumes rendered evidence from real producers. It may create an
+explicit synthetic skip row for diagnostics, but it never turns invented text
+into launch proof.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import hashlib
 import html
 import json
 import subprocess
@@ -26,6 +26,8 @@ SCREENSHOT_DIR = "artifacts/browser_screenshots"
 BROWSER_RENDER_RESULTS_REL = f"{FULL_APP_VALIDATION_DIR}/browser_render_results.json"
 RENDERED_FRAGMENTS_REL = f"{FULL_APP_VALIDATION_DIR}/rendered_fragments.json"
 BROWSER_RENDER_GATE_REL = f"{LAUNCH_READINESS_DIR}/browser_render_gate_results.json"
+DETERMINISTIC_RENDER_RESULTS_REL = f"{FULL_APP_VALIDATION_DIR}/deterministic_streamlit_render_results.json"
+BROWSER_SMOKE_RESULTS_REL = f"{FULL_APP_VALIDATION_DIR}/browser_smoke_results.json"
 
 BROWSER_RENDER_ARTIFACTS = {
     BROWSER_RENDER_RESULTS_REL,
@@ -59,6 +61,12 @@ ACTION_LABELS_BY_SURFACE = {
     "Advanced Scope": ("Apply Scope",),
     "Settings": ("Open Setup Health",),
     "Settings/Admin Setup Health": ("Close Setup Health",),
+}
+
+RENDER_PROOF_SOURCES = {
+    "browser_rendered",
+    "deterministic_streamlit_rendered",
+    "lower_artifact_rendered",
 }
 
 
@@ -95,6 +103,10 @@ def _token(value: str) -> str:
     return "".join(ch.lower() if ch.isalnum() else "_" for ch in value).strip("_") or "surface"
 
 
+def _signature(*parts: object) -> str:
+    return hashlib.sha256("|".join(str(part or "") for part in parts).encode("utf-8")).hexdigest()
+
+
 def _load_payloads(root: Path, rels: Iterable[str]) -> dict[str, Any]:
     payloads: dict[str, Any] = {}
     for rel in rels:
@@ -108,7 +120,7 @@ def _load_payloads(root: Path, rels: Iterable[str]) -> dict[str, Any]:
     return payloads
 
 
-def _safe_text_for_surface(section: str, workflow: str) -> str:
+def _synthetic_text_for_surface(section: str, workflow: str) -> str:
     if section == "Settings":
         return "Settings. Theme. Cost estimates use configured credit rates. Open Setup Health."
     if section == "Settings/Admin Setup Health":
@@ -130,19 +142,53 @@ def _safe_text_for_surface(section: str, workflow: str) -> str:
     )
 
 
-def _first_viewport_from_payload(section: str, workflow: str, payloads: Mapping[str, Any]) -> str:
-    for rel in (RENDERED_FRAGMENTS_REL, f"{FULL_APP_VALIDATION_DIR}/view_results.json"):
+def _payload_rows(payload: object) -> list[Mapping[str, Any]]:
+    if isinstance(payload, Mapping):
+        for key in ("rows", "rendered_fragments", "results"):
+            rows = payload.get(key)
+            if isinstance(rows, list):
+                return [_as_mapping(row) for row in rows]
+        return [_as_mapping(payload)]
+    return [_as_mapping(row) for row in _as_list(payload)]
+
+
+def _rendered_candidate(section: str, payloads: Mapping[str, Any]) -> Mapping[str, Any]:
+    for rel in (BROWSER_SMOKE_RESULTS_REL, DETERMINISTIC_RENDER_RESULTS_REL, RENDERED_FRAGMENTS_REL):
+        for row in _payload_rows(payloads.get(rel)):
+            mapping = _as_mapping(row)
+            if str(mapping.get("section") or mapping.get("surface") or "") != section:
+                continue
+            text = " ".join(
+                str(mapping.get(key) or "")
+                for key in ("first_viewport_text", "text", "rendered_text", "headline", "summary", "fallback_text")
+            ).strip()
+            if text and bool(mapping.get("rendered", True)):
+                return mapping
+    for rel in (f"{FULL_APP_VALIDATION_DIR}/view_results.json",):
         for row in _as_list(payloads.get(rel)):
             mapping = _as_mapping(row)
             if str(mapping.get("section") or mapping.get("surface") or "") != section:
                 continue
-            candidate = " ".join(
-                str(mapping.get(key) or "")
-                for key in ("first_viewport_text", "text", "rendered_text", "headline", "summary", "fallback_text")
-            ).strip()
-            if candidate:
-                return candidate[:2000]
-    return _safe_text_for_surface(section, workflow)
+            return mapping
+    return {}
+
+
+def _first_viewport_from_candidate(candidate: Mapping[str, Any]) -> str:
+    return " ".join(
+        str(candidate.get(key) or "")
+        for key in ("first_viewport_text", "text", "rendered_text", "html_fragment", "headline", "summary", "fallback_text")
+    ).strip()[:2000]
+
+
+def _proof_source(candidate: Mapping[str, Any]) -> str:
+    source = str(candidate.get("source") or candidate.get("proof_source") or "")
+    if source == "browser_rendered":
+        return "browser_rendered"
+    if source == "deterministic_streamlit_rendered":
+        return "deterministic_streamlit_rendered"
+    if source in {"rendered_app", "runtime_section_render", "runtime_render", "lower_artifact_rendered"}:
+        return "lower_artifact_rendered"
+    return source
 
 
 def _count_forbidden(text: str) -> int:
@@ -170,20 +216,36 @@ def _surface_rows() -> list[tuple[str, str]]:
     return [*PRIMARY_SURFACES, *ADDITIONAL_SURFACES]
 
 
-def build_browser_render_results(root: Path | str = ".", payloads: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def _profile_requires_real_render(profile: str) -> bool:
+    return profile in {"internal_live", "prod_candidate"}
+
+
+def build_browser_render_results(
+    root: Path | str = ".",
+    payloads: Mapping[str, Any] | None = None,
+    *,
+    launch_profile: str = "internal_fixture",
+) -> dict[str, Any]:
     root_path = Path(root).resolve()
     payloads = payloads or _load_payloads(
         root_path,
-        (RENDERED_FRAGMENTS_REL, f"{FULL_APP_VALIDATION_DIR}/view_results.json"),
+        (
+            BROWSER_SMOKE_RESULTS_REL,
+            DETERMINISTIC_RENDER_RESULTS_REL,
+            RENDERED_FRAGMENTS_REL,
+            f"{FULL_APP_VALIDATION_DIR}/view_results.json",
+        ),
     )
     snapshot_root = root_path / SNAPSHOT_DIR
     screenshot_root = root_path / SCREENSHOT_DIR
     snapshot_root.mkdir(parents=True, exist_ok=True)
     screenshot_root.mkdir(parents=True, exist_ok=True)
-    (screenshot_root / "SKIPPED.txt").write_text(
-        "Browser screenshots were not captured in this CI lane; deterministic HTML snapshots are present.\n",
-        encoding="utf-8",
-    )
+    skipped_path = screenshot_root / "SKIPPED.txt"
+    if not skipped_path.exists():
+        skipped_path.write_text(
+            "Browser screenshots were not captured in this CI lane; deterministic Streamlit render proof is required.\n",
+            encoding="utf-8",
+        )
 
     generated_at = _now()
     commit_sha = _git_commit(root_path)
@@ -192,26 +254,47 @@ def build_browser_render_results(root: Path | str = ".", payloads: Mapping[str, 
     failures: list[dict[str, Any]] = []
 
     for section, workflow in _surface_rows():
-        text = _first_viewport_from_payload(section, workflow, payloads)
-        snapshot_rel = f"{SNAPSHOT_DIR}/{_token(section)}_{_token(workflow)}.html"
-        snapshot_path = root_path / snapshot_rel
-        snapshot_path.write_text(_html_snapshot(section, workflow, text), encoding="utf-8")
-        action_count = len(ACTION_LABELS_BY_SURFACE.get(section, ()))
+        candidate = _rendered_candidate(section, payloads)
+        proof_source = _proof_source(candidate)
+        rendered = bool(candidate) and proof_source in RENDER_PROOF_SOURCES and bool(candidate.get("rendered", True))
+        skipped = not rendered
+        text = _first_viewport_from_candidate(candidate) if rendered else _synthetic_text_for_surface(section, workflow)
+        snapshot_rel = ""
+        snapshot_path = root_path / "_missing_browser_render_snapshot"
+        if rendered:
+            snapshot_rel = str(candidate.get("screenshot_or_snapshot_path") or candidate.get("snapshot_path") or "")
+            if not snapshot_rel:
+                snapshot_rel = f"{SNAPSHOT_DIR}/{_token(section)}_{_token(workflow)}.html"
+                snapshot_path = root_path / snapshot_rel
+                snapshot_path.write_text(_html_snapshot(section, workflow, text), encoding="utf-8")
+            else:
+                snapshot_path = root_path / snapshot_rel
+                if not snapshot_path.exists():
+                    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+                    snapshot_path.write_text(_html_snapshot(section, workflow, text), encoding="utf-8")
+        action_elements = _as_list(candidate.get("action_like_elements")) if candidate else []
+        action_count = len(action_elements) or len(ACTION_LABELS_BY_SURFACE.get(section, ()))
         raw_internal_token_count = _count_forbidden(text)
         is_primary = section in {surface for surface, _workflow in PRIMARY_SURFACES}
-        summary_board_count = 1 if is_primary else 0
+        summary_board_count = int(candidate.get("summary_board_count") or (1 if is_primary and rendered else 0))
         diagnostic_card_count = text.lower().count("diagnostic card")
         unavailable_tile_count = max(0, text.lower().count("summary unavailable") - 1)
         old_board_marker_count = sum(
             marker in text.lower()
             for marker in ("launchpad", "watch floor", "command deck", "lane board", "card wall")
         )
-        unclickable_action_count = 0 if action_count else 1
+        unclickable_action_count = int(candidate.get("unclickable_action_like_element_count") or 0)
         horizontal_overflow = False
         failure_reasons: list[str] = []
+        if not rendered:
+            proof_source = "synthetic_safe_fallback"
+            if _profile_requires_real_render(launch_profile):
+                failure_reasons.append("synthetic_render_requires_waiver")
+        if rendered and proof_source == "synthetic_safe_fallback":
+            failure_reasons.append("synthetic_safe_fallback_marked_rendered")
         if is_primary and summary_board_count != 1:
             failure_reasons.append("primary_summary_board_count_not_one")
-        if not snapshot_path.exists():
+        if rendered and not snapshot_path.exists():
             failure_reasons.append("snapshot_missing")
         if raw_internal_token_count:
             failure_reasons.append("raw_internal_token_visible")
@@ -221,7 +304,7 @@ def build_browser_render_results(root: Path | str = ".", payloads: Mapping[str, 
             failure_reasons.append("unavailable_tile_wall_visible")
         if old_board_marker_count:
             failure_reasons.append("old_board_marker_visible")
-        if unclickable_action_count:
+        if rendered and unclickable_action_count:
             failure_reasons.append("unclickable_action_like_element")
         if horizontal_overflow:
             failure_reasons.append("horizontal_overflow")
@@ -229,14 +312,20 @@ def build_browser_render_results(root: Path | str = ".", payloads: Mapping[str, 
         row = {
             "producer": "browser_render_gauntlet",
             "generated_at": generated_at,
-            "source": "deterministic_snapshot",
-            "fixture_mode": False,
-            "launch_profile": "internal_fixture",
+            "source": proof_source,
+            "proof_source": proof_source,
+            "provenance_origin": "producer",
+            "producer_signature": _signature("browser_render_gauntlet", section, workflow, commit_sha, proof_source),
+            "runtime_artifact_row_index": len(rows),
+            "fixture_mode": proof_source == "synthetic_safe_fallback",
+            "launch_profile": launch_profile,
             "commit_sha": commit_sha,
             "surface": section,
             "section": section,
             "workflow": workflow,
-            "rendered": True,
+            "rendered": rendered,
+            "skipped": skipped,
+            "skip_reason": "" if rendered else "no browser, deterministic, or lower rendered fragment was available",
             "screenshot_or_snapshot_path": snapshot_rel,
             "first_viewport_text": text,
             "summary_board_count": summary_board_count,
@@ -256,15 +345,23 @@ def build_browser_render_results(root: Path | str = ".", payloads: Mapping[str, 
             {
                 "producer": "browser_render_gauntlet",
                 "generated_at": generated_at,
-                "source": "deterministic_snapshot",
-                "fixture_mode": False,
-                "launch_profile": "internal_fixture",
+                "source": proof_source,
+                "proof_source": proof_source,
+                "provenance_origin": "producer",
+                "producer_signature": row["producer_signature"],
+                "runtime_artifact_row_index": len(fragments),
+                "fixture_mode": proof_source == "synthetic_safe_fallback",
+                "launch_profile": launch_profile,
                 "commit_sha": commit_sha,
                 "surface": section,
                 "section": section,
                 "workflow": workflow,
                 "text": text,
                 "snapshot_path": snapshot_rel,
+                "rendered": rendered,
+                "skipped": skipped,
+                "skip_reason": row["skip_reason"],
+                "action_like_elements": action_elements,
                 "admin_only": section == "Settings/Admin Setup Health",
                 "raw_sql_included": False,
             }
@@ -283,9 +380,12 @@ def build_browser_render_results(root: Path | str = ".", payloads: Mapping[str, 
         "source": "browser_render_results",
         "producer": "browser_render_gauntlet",
         "generated_at": generated_at,
-        "proof_source": "deterministic_snapshot",
+        "proof_source": "browser_or_rendered_app",
+        "launch_profile": launch_profile,
         "passed": not failures,
         "row_count": len(rows),
+        "rendered_surface_count": sum(1 for row in rows if bool(row.get("rendered"))),
+        "synthetic_fallback_count": sum(1 for row in rows if row.get("source") == "synthetic_safe_fallback"),
         "failure_count": len(failures),
         "failures": failures,
         "rows": rows,
@@ -298,11 +398,28 @@ def build_browser_render_results(root: Path | str = ".", payloads: Mapping[str, 
 
 def evaluate_browser_render_gate(payload: object) -> dict[str, Any]:
     results = _as_mapping(payload)
+    launch_profile = str(results.get("launch_profile") or "internal_fixture")
     rows = [_as_mapping(row) for row in _as_list(results.get("rows"))]
     failures = _as_list(results.get("failures"))
     if not rows:
         failures = [*failures, {"code": "BROWSER_RENDER_ROWS_MISSING"}]
     for row in rows:
+        source = str(row.get("source") or "")
+        rendered = bool(row.get("rendered"))
+        if source == "synthetic_safe_fallback" and rendered:
+            failures.append(
+                {
+                    "code": "SYNTHETIC_FALLBACK_MARKED_RENDERED",
+                    "surface": row.get("surface"),
+                }
+            )
+        if source == "synthetic_safe_fallback" and _profile_requires_real_render(launch_profile):
+            failures.append(
+                {
+                    "code": "SYNTHETIC_RENDER_REQUIRES_WAIVER",
+                    "surface": row.get("surface"),
+                }
+            )
         if not bool(row.get("passed", False)):
             failures.append(
                 {
@@ -325,7 +442,8 @@ def evaluate_browser_render_gate(payload: object) -> dict[str, Any]:
         "passed": bool(results.get("passed", False)) and not deduped,
         "failure_count": len(deduped),
         "failures": deduped,
-        "rendered_surface_count": len(rows),
+        "rendered_surface_count": sum(1 for row in rows if bool(row.get("rendered"))),
+        "synthetic_fallback_count": sum(1 for row in rows if row.get("source") == "synthetic_safe_fallback"),
         "raw_internal_token_count": sum(int(row.get("raw_internal_token_count") or 0) for row in rows),
         "unclickable_action_like_element_count": sum(
             int(row.get("unclickable_action_like_element_count") or 0) for row in rows
@@ -337,9 +455,11 @@ def evaluate_browser_render_gate(payload: object) -> dict[str, Any]:
 def write_browser_render_gauntlet_artifacts(
     root: Path | str = ".",
     payloads: Mapping[str, Any] | None = None,
+    *,
+    launch_profile: str = "internal_fixture",
 ) -> dict[str, Any]:
     root_path = Path(root).resolve()
-    results = build_browser_render_results(root_path, payloads)
+    results = build_browser_render_results(root_path, payloads, launch_profile=launch_profile)
     fragments = list(results.get("rendered_fragments") or [])
     gate = evaluate_browser_render_gate(results)
     artifacts: dict[str, Any] = {

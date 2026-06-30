@@ -75,6 +75,8 @@ jobs:
         run: |
           python -m unittest \
             tests.test_full_app_launch_gauntlet \
+            tests.test_deterministic_streamlit_render \
+            tests.test_browser_smoke_runner \
             tests.test_rendered_ui_leak_scan \
             tests.test_action_click_gauntlet \
             tests.test_export_download_gauntlet \
@@ -128,7 +130,7 @@ jobs:
         run: python -m unittest discover -s tests
 
       - name: Regenerate full app gauntlet proof artifacts
-        run: python -m unittest tests.test_full_app_gauntlet tests.test_browser_render_gauntlet tests.test_runtime_artifact_provenance
+        run: python -m unittest tests.test_full_app_gauntlet tests.test_deterministic_streamlit_render tests.test_browser_smoke_runner tests.test_browser_render_gauntlet tests.test_runtime_artifact_provenance
 
       - name: Regenerate launch readiness proof artifacts
         run: python -m unittest tests.test_launch_readiness

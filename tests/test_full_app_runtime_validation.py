@@ -166,7 +166,9 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             for workflow in workflows:
                 self.assertIn((section, workflow), rendered_pairs)
         for row in views:
-            self.assertEqual(row["source"], "runtime_section_render")
+            self.assertEqual(row["source"], "lower_artifact_rendered")
+            self.assertEqual(row["runtime_source"], "runtime_section_render")
+            self.assertEqual(row["provenance_origin"], "producer")
             self.assertEqual(row["proof_source"], "runtime_render")
             self.assertTrue(row["passed"], row)
             self.assertGreater(row["rendered_fragment_count"], 0, row)
@@ -179,7 +181,9 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         action_types = {row["action_type"] for row in buttons}
         self.assertTrue({"route", "refresh_packet", "evidence_load", "admin_load", "advanced_load"}.issubset(action_types))
         for row in buttons:
-            self.assertEqual(row["source"], "runtime_button_click")
+            self.assertEqual(row["source"], "clicked_action")
+            self.assertEqual(row["runtime_source"], "runtime_button_click")
+            self.assertEqual(row["provenance_origin"], "producer")
             self.assertEqual(row["proof_source"], "runtime_click")
             self.assertTrue(row["label"], row)
             self.assertTrue(row["key"], row)
@@ -198,7 +202,9 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
                 self.assertEqual(row["actual_snowflake_executions"], row["expected_snowflake_execution_count"], row)
 
         for row in exports:
-            self.assertEqual(row["source"], "runtime_export_payload")
+            self.assertEqual(row["source"], "clicked_action")
+            self.assertEqual(row["runtime_source"], "runtime_export_payload")
+            self.assertEqual(row["provenance_origin"], "producer")
             self.assertEqual(row["proof_source"], "runtime_export")
             self.assertNotIn("payload_text", row)
             self.assertGreater(row["content_length"], 0, row)
@@ -253,7 +259,9 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertTrue(required_query_cases.issubset(query_cases), query_cases)
         for row in query_search:
             if row["case"] in {"render_no_click", "text_contains_no_autorun", "warehouse_prefill_no_autorun"}:
-                self.assertEqual(row["source"], "runtime_query_search_render", row)
+                self.assertEqual(row["source"], "lower_artifact_rendered", row)
+                self.assertEqual(row["runtime_source"], "runtime_query_search_render", row)
+                self.assertEqual(row["provenance_origin"], "producer", row)
                 self.assertEqual(row["proof_source"], "runtime_render", row)
                 self.assertFalse(row["observed_contexts"], row)
                 self.assertFalse(row["observed_boundaries"], row)
@@ -261,14 +269,18 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
                 self.assertEqual(row["direct_sql_event_count"], 0, row)
                 self.assertEqual(row["snowflake_execution_count"], 0, row)
             elif row["case"] == "default_export_no_query_text":
-                self.assertEqual(row["source"], "runtime_query_search_click", row)
+                self.assertEqual(row["source"], "clicked_action", row)
+                self.assertEqual(row["runtime_source"], "runtime_query_search_click", row)
+                self.assertEqual(row["provenance_origin"], "producer", row)
                 self.assertEqual(row["proof_source"], "runtime_click", row)
                 self.assertGreater(row["export_count"], 0, row)
                 self.assertFalse(row["query_text_included"], row)
                 self.assertEqual(row["session_open_count"], 0, row)
                 self.assertEqual(row["direct_sql_event_count"], 0, row)
             else:
-                self.assertEqual(row["source"], "runtime_query_search_click", row)
+                self.assertEqual(row["source"], "clicked_action", row)
+                self.assertEqual(row["runtime_source"], "runtime_query_search_click", row)
+                self.assertEqual(row["provenance_origin"], "producer", row)
                 self.assertEqual(row["proof_source"], "runtime_click", row)
                 self.assertTrue(row["observed_contexts"], row)
                 self.assertTrue(row["observed_boundaries"] or row["case"] == "account_usage_fallback_unconfirmed", row)
@@ -298,7 +310,9 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertFalse(query_cases["permission_denied"]["raw_error_visible_daily"], query_cases["permission_denied"])
 
         for row in evidence:
-            self.assertEqual(row["source"], "runtime_real_loader_spy", row)
+            self.assertEqual(row["source"], "clicked_action", row)
+            self.assertEqual(row["runtime_source"], "runtime_real_loader_spy", row)
+            self.assertEqual(row["provenance_origin"], "producer", row)
             self.assertEqual(row["proof_source"], "runtime_click", row)
             self.assertTrue(row["loader_called"], row)
             self.assertTrue(row["real_loader_name"], row)
@@ -322,7 +336,9 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertTrue(evidence_matrix, evidence_matrix)
         matrix_by_section = {}
         for row in evidence_matrix:
-            self.assertEqual(row["source"], "runtime_real_loader_spy_matrix", row)
+            self.assertEqual(row["source"], "clicked_action", row)
+            self.assertEqual(row["runtime_source"], "runtime_real_loader_spy_matrix", row)
+            self.assertEqual(row["provenance_origin"], "producer", row)
             self.assertEqual(row["proof_source"], "runtime_click", row)
             self.assertTrue(row["expected_loader_name"], row)
             self.assertNotEqual(row["expected_loader_name"], "sections.security_posture_privilege_sprawl_view.run_query", row)

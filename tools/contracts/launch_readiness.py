@@ -82,6 +82,16 @@ from tools.contracts.browser_render_gauntlet import (
     BROWSER_RENDER_RESULTS_REL,
     evaluate_browser_render_gate,
 )
+from tools.contracts.browser_smoke_runner import (
+    BROWSER_SMOKE_GATE_REL,
+    BROWSER_SMOKE_RESULTS_REL,
+    evaluate_browser_smoke_gate,
+)
+from tools.contracts.deterministic_streamlit_render import (
+    DETERMINISTIC_RENDER_GATE_REL,
+    DETERMINISTIC_RENDER_RESULTS_REL,
+    evaluate_deterministic_render_gate,
+)
 from tools.contracts.export_download_gauntlet import evaluate_export_download_gate
 from tools.contracts.full_app_launch_gauntlet import (
     EXPORT_DOWNLOAD_GATE_REL,
@@ -167,6 +177,8 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/live_cost_reconciliation_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/daily_wording_gate_results.json",
     FULL_APP_LAUNCH_GATE_REL,
+    DETERMINISTIC_RENDER_GATE_REL,
+    BROWSER_SMOKE_GATE_REL,
     BROWSER_RENDER_GATE_REL,
     RUNTIME_ARTIFACT_PROVENANCE_GATE_REL,
     RENDERED_UI_LEAK_GATE_REL,
@@ -4464,6 +4476,8 @@ def _release_gate_matrix(
     live_cost_gate = _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results"))
     daily_wording_gate = _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
     full_app_launch_gate = _as_mapping(launch_artifacts.get("full_app_launch_gate_results"))
+    deterministic_render_gate = _as_mapping(launch_artifacts.get("deterministic_render_gate_results"))
+    browser_smoke_gate = _as_mapping(launch_artifacts.get("browser_smoke_gate_results"))
     browser_render_gate = _as_mapping(launch_artifacts.get("browser_render_gate_results"))
     runtime_provenance_gate = _as_mapping(launch_artifacts.get("runtime_artifact_provenance_gate_results"))
     rendered_ui_leak_gate = _as_mapping(launch_artifacts.get("rendered_ui_leak_gate_results"))
@@ -4522,6 +4536,18 @@ def _release_gate_matrix(
             "artifact": FULL_APP_LAUNCH_GATE_REL,
             "passed": bool(full_app_launch_gate.get("passed")),
             "failure_reason": "" if full_app_launch_gate.get("passed") else "Launch gauntlet found failed sections, actions, fallback states, or runtime checks.",
+        },
+        {
+            "gate": "deterministic_streamlit_render",
+            "artifact": DETERMINISTIC_RENDER_GATE_REL,
+            "passed": bool(deterministic_render_gate.get("passed")),
+            "failure_reason": "" if deterministic_render_gate.get("passed") else "Deterministic Streamlit render proof is missing, synthetic, or contains unsafe daily text.",
+        },
+        {
+            "gate": "browser_smoke",
+            "artifact": BROWSER_SMOKE_GATE_REL,
+            "passed": bool(browser_smoke_gate.get("passed")),
+            "failure_reason": "" if browser_smoke_gate.get("passed") else "Browser smoke proof is missing or profile skip policy failed.",
         },
         {
             "gate": "browser_render_gauntlet",
@@ -5041,6 +5067,10 @@ def evaluate_launch_readiness(
             source="full_app_launch_gate_results",
             artifact=FULL_APP_LAUNCH_RESULTS_REL,
         ),
+        "deterministic_render_gate_results": _as_mapping(launch_artifacts.get("deterministic_render_gate_results"))
+        or evaluate_deterministic_render_gate(payloads.get(DETERMINISTIC_RENDER_RESULTS_REL)),
+        "browser_smoke_gate_results": _as_mapping(launch_artifacts.get("browser_smoke_gate_results"))
+        or evaluate_browser_smoke_gate(payloads.get(BROWSER_SMOKE_RESULTS_REL)),
         "rendered_ui_leak_gate_results": _as_mapping(launch_artifacts.get("rendered_ui_leak_gate_results"))
         or evaluate_rendered_ui_leak_gate(_as_mapping(payloads.get(RENDERED_UI_LEAK_RESULTS_REL))),
         "settings_gate_results": _as_mapping(launch_artifacts.get("settings_gate_results"))
@@ -5150,6 +5180,8 @@ def evaluate_launch_readiness(
     live_cost_gate = _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results"))
     daily_wording_gate = _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
     full_app_launch_gate = _as_mapping(launch_artifacts.get("full_app_launch_gate_results"))
+    deterministic_render_gate = _as_mapping(launch_artifacts.get("deterministic_render_gate_results"))
+    browser_smoke_gate = _as_mapping(launch_artifacts.get("browser_smoke_gate_results"))
     browser_render_gate = _as_mapping(launch_artifacts.get("browser_render_gate_results"))
     runtime_provenance_gate = _as_mapping(launch_artifacts.get("runtime_artifact_provenance_gate_results"))
     rendered_ui_leak_gate = _as_mapping(launch_artifacts.get("rendered_ui_leak_gate_results"))
@@ -5230,9 +5262,15 @@ def evaluate_launch_readiness(
         "daily_wording_blocked_count": _as_int(daily_wording_gate.get("blocked_count")),
         "full_app_launch_gauntlet_passed": bool(full_app_launch_gate.get("passed")),
         "full_app_launch_gauntlet_failure_count": _as_int(full_app_launch_gate.get("failure_count")),
+        "deterministic_streamlit_render_passed": bool(deterministic_render_gate.get("passed")),
+        "deterministic_streamlit_render_failure_count": _as_int(deterministic_render_gate.get("failure_count")),
+        "deterministic_streamlit_render_synthetic_count": _as_int(deterministic_render_gate.get("synthetic_fallback_count")),
+        "browser_smoke_passed": bool(browser_smoke_gate.get("passed")),
+        "browser_smoke_failure_count": _as_int(browser_smoke_gate.get("failure_count")),
         "browser_render_gauntlet_passed": bool(browser_render_gate.get("passed")),
         "browser_render_failure_count": _as_int(browser_render_gate.get("failure_count")),
         "browser_rendered_surface_count": _as_int(browser_render_gate.get("rendered_surface_count")),
+        "synthetic_render_count": _as_int(browser_render_gate.get("synthetic_fallback_count")),
         "runtime_artifact_provenance_passed": bool(runtime_provenance_gate.get("passed")),
         "runtime_artifact_provenance_failure_count": _as_int(runtime_provenance_gate.get("failure_count")),
         "runtime_artifact_provenance_row_count": _as_int(runtime_provenance_gate.get("row_count")),
@@ -5599,6 +5637,12 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         _as_mapping(payloads.get(FULL_APP_LAUNCH_RESULTS_REL)),
         source="full_app_launch_gate_results",
         artifact=FULL_APP_LAUNCH_RESULTS_REL,
+    )
+    launch_artifacts["deterministic_render_gate_results"] = evaluate_deterministic_render_gate(
+        payloads.get(DETERMINISTIC_RENDER_RESULTS_REL)
+    )
+    launch_artifacts["browser_smoke_gate_results"] = evaluate_browser_smoke_gate(
+        payloads.get(BROWSER_SMOKE_RESULTS_REL)
     )
     launch_artifacts["browser_render_gate_results"] = evaluate_browser_render_gate(
         _as_mapping(payloads.get(BROWSER_RENDER_RESULTS_REL))

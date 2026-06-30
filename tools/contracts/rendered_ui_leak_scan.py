@@ -146,6 +146,32 @@ def scan_rendered_ui(payloads: Mapping[str, Any]) -> tuple[dict[str, Any], dict[
             }
         )
 
+    for rel, item_name in (
+        ("artifacts/full_app_validation/deterministic_streamlit_render_results.json", "deterministic_render"),
+        ("artifacts/full_app_validation/browser_smoke_results.json", "browser_smoke"),
+        ("artifacts/full_app_validation/browser_render_results.json", "browser_render"),
+    ):
+        for row in _as_list(_as_mapping(payloads.get(rel)).get("rows")):
+            mapping = _as_mapping(row)
+            text = "\n".join(str(mapping.get(key) or "") for key in ("first_viewport_text", "html_fragment", "text"))
+            surface = str(mapping.get("section") or mapping.get("surface") or item_name)
+            row_findings = _scan_text(
+                text,
+                surface=surface,
+                item=item_name,
+                admin_allowed=_is_admin_allowed(surface, mapping),
+            )
+            findings.extend(row_findings)
+            rows.append(
+                {
+                    "surface": surface,
+                    "item": item_name,
+                    "finding_count": len(row_findings),
+                    "passed": not row_findings,
+                    "raw_sql_included": False,
+                }
+            )
+
     for row in _as_list(payloads.get("artifacts/full_app_validation/export_results.json")):
         mapping = _as_mapping(row)
         text = "\n".join(str(mapping.get(key) or "") for key in ("content", "preview", "filename"))
@@ -207,6 +233,9 @@ def write_rendered_ui_leak_scan_artifacts(root: Path | str = ".", payloads: Mapp
             (
                 "artifacts/full_app_validation/view_results.json",
                 "artifacts/full_app_validation/rendered_fragments.json",
+                "artifacts/full_app_validation/deterministic_streamlit_render_results.json",
+                "artifacts/full_app_validation/browser_smoke_results.json",
+                "artifacts/full_app_validation/browser_render_results.json",
                 "artifacts/full_app_validation/export_results.json",
             ),
         )

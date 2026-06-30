@@ -1,8 +1,8 @@
 """Runtime artifact provenance gate for the full app launch bundle.
 
-The lower runtime harness produces render/click/export rows. This contract
-normalizes those rows into launch-proof evidence by stamping a consistent
-producer/source/profile/commit envelope and then validating that envelope.
+The lower runtime harness produces render/click/export rows. Producer-written
+provenance is required for live/prod launch proof; annotation is kept only as
+an internal-fixture repair path and is reported explicitly.
 """
 
 from __future__ import annotations
@@ -39,13 +39,16 @@ ALLOWED_RUNTIME_SOURCES = {
     "rendered_app",
     "clicked_action",
     "browser_snapshot",
-    "deterministic_snapshot",
+    "browser_rendered",
+    "deterministic_streamlit_rendered",
+    "lower_artifact_rendered",
+    "synthetic_safe_fallback",
     "fixture",
 }
 
 SOURCE_BY_ARTIFACT = {
     f"{FULL_APP_VALIDATION_DIR}/view_results.json": "rendered_app",
-    f"{FULL_APP_VALIDATION_DIR}/rendered_fragments.json": "deterministic_snapshot",
+    f"{FULL_APP_VALIDATION_DIR}/rendered_fragments.json": "deterministic_streamlit_rendered",
     f"{FULL_APP_VALIDATION_DIR}/button_click_results.json": "clicked_action",
     f"{FULL_APP_VALIDATION_DIR}/settings_action_results.json": "clicked_action",
     f"{FULL_APP_VALIDATION_DIR}/live_feature_results.json": "clicked_action",
@@ -54,7 +57,7 @@ SOURCE_BY_ARTIFACT = {
     f"{FULL_APP_VALIDATION_DIR}/case_payload_results.json": "clicked_action",
     f"{FULL_APP_VALIDATION_DIR}/query_search_results.json": "clicked_action",
     f"{FULL_APP_VALIDATION_DIR}/evidence_loader_call_matrix.json": "clicked_action",
-    f"{FULL_APP_VALIDATION_DIR}/stress_results.json": "deterministic_snapshot",
+    f"{FULL_APP_VALIDATION_DIR}/stress_results.json": "clicked_action",
     f"{FULL_APP_VALIDATION_DIR}/summary_board_results.json": "rendered_app",
 }
 
@@ -126,6 +129,22 @@ def _sanitize_source(value: object, rel: str) -> str:
     source = str(value or "").strip()
     if source in ALLOWED_RUNTIME_SOURCES:
         return source
+    if source in {
+        "runtime_section_render",
+        "runtime_settings_render",
+        "runtime_query_search_render",
+        "runtime_render",
+    }:
+        return "lower_artifact_rendered"
+    if source in {
+        "runtime_button_click",
+        "runtime_real_loader_spy",
+        "runtime_real_loader_spy_matrix",
+        "runtime_query_search_click",
+        "runtime_export_payload",
+        "runtime_stress_sequence",
+    }:
+        return "clicked_action"
     return SOURCE_BY_ARTIFACT.get(rel, "fixture")
 
 
@@ -139,6 +158,12 @@ def _profile_requires_live(profile: str) -> bool:
 
 def _has_profile_waiver() -> bool:
     return False
+
+
+def _signature(*parts: object) -> str:
+    import hashlib
+
+    return hashlib.sha256("|".join(str(part or "") for part in parts).encode("utf-8")).hexdigest()
 
 
 def stamp_runtime_artifact_payload(
@@ -160,16 +185,33 @@ def stamp_runtime_artifact_payload(
         next_row = dict(row)
         old_source = str(next_row.get("source") or "")
         source = _sanitize_source(old_source, rel)
+        source_changed = bool(old_source and old_source != source)
         if old_source and old_source != source:
             next_row.setdefault("runtime_source", old_source)
-        next_row["producer"] = str(next_row.get("producer") or "full_app_runtime_validation")
+        producer = str(next_row.get("producer") or "full_app_runtime_validation")
+        final_source = source or default_source
+        missing_fields = [
+            field
+            for field in ("producer", "generated_at", "source", "launch_profile", "commit_sha", "producer_signature")
+            if not next_row.get(field)
+        ]
+        next_row["producer"] = producer
         next_row["generated_at"] = str(next_row.get("generated_at") or generated_at)
-        next_row["source"] = source or default_source
-        next_row["fixture_mode"] = _is_fixture_mode(source, next_row)
+        next_row["source"] = final_source
+        next_row["fixture_mode"] = _is_fixture_mode(final_source, next_row)
         next_row["launch_profile"] = str(next_row.get("launch_profile") or launch_profile)
         next_row["commit_sha"] = str(next_row.get("commit_sha") or commit_sha)
         next_row["raw_sql_included"] = bool(next_row.get("raw_sql_included", False))
         next_row.setdefault("runtime_artifact_row_index", index)
+        next_row["provenance_origin"] = str(
+            next_row.get("provenance_origin")
+            or ("annotated" if missing_fields or source_changed else "producer")
+        )
+        next_row["producer_signature"] = str(
+            next_row.get("producer_signature")
+            or _signature(producer, final_source, rel, index, next_row.get("commit_sha"))
+        )
+        next_row["source_rewritten"] = source_changed
         stamped.append(next_row)
     return _replace_rows(payload, stamped, container_key)
 
@@ -254,11 +296,20 @@ def build_runtime_artifact_provenance(
             row_commit = str(row.get("commit_sha") or "")
             raw_sql_included = bool(row.get("raw_sql_included", False))
             fixture_mode = bool(row.get("fixture_mode", False))
+            provenance_origin = str(row.get("provenance_origin") or "missing")
+            producer_signature = str(row.get("producer_signature") or "")
+            source_rewritten = bool(row.get("source_rewritten"))
             row_failures: list[str] = []
             if not producer:
                 row_failures.append("missing_producer")
             if source not in ALLOWED_RUNTIME_SOURCES:
                 row_failures.append("invalid_source")
+            if provenance_origin == "missing":
+                row_failures.append("missing_provenance_origin")
+            if _profile_requires_live(launch_profile) and provenance_origin != "producer":
+                row_failures.append("provenance_annotation_requires_waiver")
+            if source_rewritten and _profile_requires_live(launch_profile):
+                row_failures.append("source_rewrite_requires_waiver")
             if _profile_requires_live(launch_profile) and fixture_mode and not _has_profile_waiver():
                 row_failures.append("fixture_only_runtime_artifact_requires_waiver")
             if raw_sql_included:
@@ -267,6 +318,8 @@ def build_runtime_artifact_provenance(
                 row_failures.append("commit_sha_mismatch")
             if not row_commit:
                 row_failures.append("missing_commit_sha")
+            if launch_profile == "prod_candidate" and not producer_signature:
+                row_failures.append("missing_producer_signature")
 
             passed = not row_failures
             failure_reason = "; ".join(row_failures)
@@ -280,6 +333,10 @@ def build_runtime_artifact_provenance(
                 "launch_profile": str(row.get("launch_profile") or launch_profile),
                 "commit_sha": row_commit,
                 "raw_sql_included": raw_sql_included,
+                "provenance_origin": provenance_origin,
+                "producer_signature": producer_signature,
+                "source_rewritten": source_rewritten,
+                "runtime_artifact_row_index": row.get("runtime_artifact_row_index", index),
                 "passed": passed,
                 "failure_reason": failure_reason,
             }
@@ -322,6 +379,12 @@ def evaluate_runtime_artifact_provenance_gate(payload: object) -> dict[str, Any]
         "row_count": int(results.get("row_count") or 0),
         "fixture_only_row_count": sum(
             1 for row in _as_list(results.get("rows")) if bool(_as_mapping(row).get("fixture_mode"))
+        ),
+        "annotated_row_count": sum(
+            1 for row in _as_list(results.get("rows")) if _as_mapping(row).get("provenance_origin") == "annotated"
+        ),
+        "source_rewrite_count": sum(
+            1 for row in _as_list(results.get("rows")) if bool(_as_mapping(row).get("source_rewritten"))
         ),
         "raw_sql_included": False,
     }

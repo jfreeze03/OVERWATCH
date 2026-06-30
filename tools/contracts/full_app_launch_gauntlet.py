@@ -9,6 +9,7 @@ release candidate consumes.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -540,23 +541,45 @@ def build_packet_fallback_ui_results(payloads: Mapping[str, Any]) -> dict[str, A
     }
 
 
-def build_download_results(payloads: Mapping[str, Any]) -> dict[str, Any]:
+def build_download_results(payloads: Mapping[str, Any], root: Path | str | None = None) -> dict[str, Any]:
+    root_path = Path(root).resolve() if root is not None else None
     exports = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/export_results.json"))]
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     for row in exports:
         payload_file = str(row.get("payload_file") or row.get("filename") or "")
+        payload_path = (root_path / payload_file) if root_path and payload_file else None
+        file_exists = bool(payload_path and payload_path.exists())
+        size_bytes = int(payload_path.stat().st_size) if payload_path and payload_path.exists() else int(row.get("size_bytes") or row.get("content_length") or 0)
+        actual_sha = ""
+        if payload_path and payload_path.exists():
+            actual_sha = hashlib.sha256(payload_path.read_bytes()).hexdigest()
+        expected_sha = str(row.get("sha256") or row.get("payload_hash") or "")
         row_count = _as_int(row.get("parsed_row_count") or row.get("row_count"))
         visible = _as_int(row.get("visible_row_count") or row.get("row_count"))
-        passed = bool(row.get("passed", True)) and bool(payload_file) and row_count == visible and not bool(row.get("query_text_included"))
+        intentional_empty = bool(row.get("intentional_empty"))
+        hash_matches = not expected_sha or not actual_sha or expected_sha == actual_sha
+        passed = (
+            bool(row.get("passed", True))
+            and bool(payload_file)
+            and (file_exists if root_path else True)
+            and (size_bytes > 0 or intentional_empty)
+            and row_count == visible
+            and hash_matches
+            and not bool(row.get("query_text_included"))
+        )
         result = {
             "section": str(row.get("section") or ""),
             "workflow": str(row.get("workflow") or ""),
             "filename": str(row.get("filename") or ""),
             "payload_file": payload_file,
+            "payload_file_exists": file_exists if root_path else bool(payload_file),
+            "size_bytes": size_bytes,
             "row_count": row_count,
             "visible_row_count": visible,
-            "sha256": str(row.get("sha256") or row.get("payload_hash") or ""),
+            "sha256": expected_sha or actual_sha,
+            "actual_sha256": actual_sha,
+            "hash_matches": hash_matches,
             "content_type": str(row.get("content_type") or ""),
             "admin_only": bool(row.get("admin_only")),
             "query_text_included": bool(row.get("query_text_included")),
@@ -656,7 +679,7 @@ def write_full_app_launch_gauntlet_artifacts(root: Path | str = ".", payloads: M
     packet_fallback = build_packet_fallback_ui_results(payloads)
     summary_visual = build_summary_board_visual_contract_results(payloads)
     settings_wording = build_settings_wording_results(root_path)
-    downloads = build_download_results(payloads)
+    downloads = build_download_results(payloads, root_path)
     artifacts: dict[str, Any] = {
         FULL_APP_LAUNCH_RESULTS_REL: results,
         FULL_APP_LAUNCH_FAILURES_REL: failures,

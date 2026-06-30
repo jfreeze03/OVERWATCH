@@ -43,3 +43,26 @@ class ActionClickGauntletTests(unittest.TestCase):
         )
 
         self.assertFalse(gate["passed"])
+
+    def test_rendered_action_without_click_result_fails(self):
+        from tools.contracts.action_click_gauntlet import build_action_click_results
+
+        _manifest, results = build_action_click_results(
+            {
+                "artifacts/full_app_validation/rendered_fragments.json": [
+                    {
+                        "section": "Executive Landing",
+                        "workflow": "Overview",
+                        "action_like_elements": [
+                            {"label": "View all priorities", "stable_key": "view_all_priorities"}
+                        ],
+                    }
+                ],
+                "artifacts/full_app_validation/button_click_results.json": [],
+            }
+        )
+
+        self.assertFalse(results["passed"])
+        self.assertTrue(
+            any(row.get("failure_reason") == "rendered_action_without_click_result" for row in results["failures"])
+        )

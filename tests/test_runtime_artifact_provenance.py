@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -34,7 +35,7 @@ class RuntimeArtifactProvenanceTests(unittest.TestCase):
         self.assertFalse(gate["passed"])
         self.assertIn("missing_producer", result["failures"][0]["failure_reason"])
 
-    def test_writer_stamps_runtime_artifacts(self):
+    def test_writer_marks_annotation_origin_in_internal_fixture(self):
         from tools.contracts.runtime_artifact_provenance import (
             annotate_runtime_artifacts,
             build_runtime_artifact_provenance,
@@ -55,8 +56,65 @@ class RuntimeArtifactProvenanceTests(unittest.TestCase):
                 required_rels=("artifacts/full_app_validation/view_results.json",),
             )
 
-        self.assertEqual(stamped[0]["source"], "rendered_app")
+        self.assertEqual(stamped[0]["source"], "lower_artifact_rendered")
         self.assertEqual(stamped[0]["runtime_source"], "runtime_render")
+        self.assertEqual(stamped[0]["provenance_origin"], "annotated")
+        self.assertTrue(result["passed"], result)
+
+    def test_after_the_fact_annotation_fails_under_internal_live(self):
+        from tools.contracts.runtime_artifact_provenance import annotate_runtime_artifacts, build_runtime_artifact_provenance
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            root = Path(tmp)
+            artifact = root / "artifacts/full_app_validation/view_results.json"
+            artifact.parent.mkdir(parents=True)
+            commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+            artifact.write_text(
+                json.dumps([{"section": "Executive Landing", "source": "runtime_render"}]),
+                encoding="utf-8",
+            )
+            annotate_runtime_artifacts(root, launch_profile="internal_live")
+            result = build_runtime_artifact_provenance(
+                root,
+                launch_profile="internal_live",
+                required_rels=("artifacts/full_app_validation/view_results.json",),
+            )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("provenance_annotation_requires_waiver", result["failures"][0]["failure_reason"])
+
+    def test_producer_written_provenance_passes(self):
+        from tools.contracts.runtime_artifact_provenance import build_runtime_artifact_provenance
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            root = Path(tmp)
+            artifact = root / "artifacts/full_app_validation/view_results.json"
+            artifact.parent.mkdir(parents=True)
+            commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+            artifact.write_text(
+                json.dumps(
+                    [
+                        {
+                            "producer": "full_app_runtime_validation",
+                            "generated_at": "2026-06-29T00:00:00Z",
+                            "source": "lower_artifact_rendered",
+                            "provenance_origin": "producer",
+                            "producer_signature": "sig",
+                            "fixture_mode": False,
+                            "launch_profile": "internal_live",
+                            "commit_sha": commit,
+                            "raw_sql_included": False,
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            result = build_runtime_artifact_provenance(
+                root,
+                launch_profile="internal_live",
+                required_rels=("artifacts/full_app_validation/view_results.json",),
+            )
+
         self.assertTrue(result["passed"], result)
 
     def test_internal_live_fixture_source_requires_waiver(self):

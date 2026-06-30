@@ -208,6 +208,10 @@ _SENSITIVE_KEY_MARKERS = (
 _SENSITIVE_EXACT_KEYS = {
     "BILLING_BRIDGE_STATUS",
     "BILLING_WINDOW_COMPLETE",
+    "SQL_BODY",
+}
+_SAFE_EXACT_KEYS = {
+    "raw_sql_included",
 }
 
 
@@ -215,6 +219,8 @@ def _redact_sensitive_payload(value: Any, key_hint: str = "") -> Any:
     key_text = str(key_hint or "")
     key_upper = key_text.upper()
     key_lower = key_text.lower()
+    if key_lower in _SAFE_EXACT_KEYS:
+        return value
     if key_upper in _SENSITIVE_EXACT_KEYS or any(marker in key_lower for marker in _SENSITIVE_KEY_MARKERS):
         return "[REDACTED]"
     if isinstance(value, Mapping):

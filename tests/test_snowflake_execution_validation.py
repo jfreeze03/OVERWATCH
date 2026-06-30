@@ -65,6 +65,19 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertTrue(phases["passed"], phases)
         self.assertEqual({row["phase"] for row in phases["phases"]}, set(REQUIRED_VALIDATION_PHASES))
 
+    def test_raw_sql_included_control_flag_is_not_redacted(self):
+        from tools.contracts import snowflake_execution_validation as validation
+
+        payload = {
+            "raw_sql_included": False,
+            "sql_body": "SELECT * FROM PRIVATE_TABLE",
+        }
+
+        sanitized = validation._redact_sensitive_payload(payload)
+
+        self.assertIs(sanitized["raw_sql_included"], False)
+        self.assertEqual(sanitized["sql_body"], "[REDACTED]")
+
     def test_statement_splitter_preserves_procedure_bodies(self):
         from tools.contracts.snowflake_execution_validation import split_sql_statements
 

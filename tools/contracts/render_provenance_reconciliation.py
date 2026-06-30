@@ -37,6 +37,7 @@ PRIMARY_SURFACES = (
 
 ADDITIONAL_SURFACES = (
     ("Query Search", "No click"),
+    ("Query Search", "Explicit search"),
     ("Advanced Scope", "Active filters"),
     ("Settings", "Default"),
     ("Settings/Admin Setup Health", "Setup Health"),
@@ -57,6 +58,7 @@ RECONCILIATION_PAYLOAD_RELS = (
     f"{FULL_APP_VALIDATION_DIR}/rendered_fragments.json",
     f"{FULL_APP_VALIDATION_DIR}/rendered_ui_leak_scan_results.json",
     f"{FULL_APP_VALIDATION_DIR}/runtime_artifact_provenance_results.json",
+    f"{FULL_APP_VALIDATION_DIR}/action_click_results.json",
 )
 
 
@@ -172,14 +174,10 @@ def _runtime_row(section: str, workflow: str, payloads: Mapping[str, Any]) -> Ma
     row = _find_section_row(view_rows, section, workflow)
     if row and _row_text(row):
         return row
-    deterministic_rows = _rows(_as_mapping(payloads.get(f"{FULL_APP_VALIDATION_DIR}/deterministic_streamlit_render_results.json")).get("rows"))
-    deterministic_row = _find_section_row(deterministic_rows, section, workflow)
-    if (
-        deterministic_row
-        and str(deterministic_row.get("runtime_source") or "") == "actual_section_render"
-        and bool(deterministic_row.get("rendered"))
-    ):
-        return deterministic_row
+    fragment_rows = _rows(payloads.get(f"{FULL_APP_VALIDATION_DIR}/rendered_fragments.json"))
+    fragment_row = _find_section_row(fragment_rows, section, workflow)
+    if fragment_row and _row_text(fragment_row):
+        return fragment_row
     if row:
         return row
     return {}
@@ -230,6 +228,47 @@ def _action_count(row: Mapping[str, Any]) -> int:
     return len(_as_list(row.get("action_like_elements")))
 
 
+def _action_click_count(runtime: Mapping[str, Any], payloads: Mapping[str, Any]) -> int:
+    payload = payloads.get(f"{FULL_APP_VALIDATION_DIR}/action_click_results.json")
+    rows = _rows(_as_mapping(payload).get("rows") if isinstance(payload, Mapping) else payload)
+    click_keys = {
+        str(row.get("stable_key") or row.get("control_key") or row.get("key") or row.get("action_key") or "").strip()
+        for row in rows
+        if bool(row.get("clicked"))
+    }
+    click_labels = {
+        str(row.get("label") or row.get("action_key") or "").strip()
+        for row in rows
+        if bool(row.get("clicked"))
+    }
+    rendered_actions = [
+        action for action in _as_list(runtime.get("action_like_elements"))
+        if isinstance(action, Mapping)
+    ]
+    if rendered_actions:
+        return sum(
+            1
+            for action in rendered_actions
+            if (
+                (key := str(action.get("stable_key") or action.get("key") or "").strip()) in click_keys
+                or any(click_key.startswith(key) or key.startswith(click_key) for click_key in click_keys if key)
+                or str(action.get("label") or "").strip() in click_labels
+            )
+        )
+    section = str(runtime.get("section") or "")
+    workflow = str(runtime.get("workflow") or "")
+    count = 0
+    for row in rows:
+        row_section = str(row.get("section") or "")
+        if row_section not in {section, "Workload Operations" if section == "Query Search" else section}:
+            continue
+        if not _workflow_matches(workflow, row.get("workflow")) and section != "Query Search":
+            continue
+        if bool(row.get("clicked")) or str(row.get("failure_reason") or "") == "rendered_action_without_click_result":
+            count += 1
+    return count
+
+
 def build_render_provenance_reconciliation(
     root: Path | str = ".",
     payloads: Mapping[str, Any] | None = None,
@@ -271,8 +310,21 @@ def build_render_provenance_reconciliation(
         runtime_action_count = _action_count(runtime)
         deterministic_action_count = _action_count(deterministic)
         browser_action_count = _action_count(browser)
+        action_click_row_count = _action_click_count(runtime, payloads)
         action_counts = [count for count in (runtime_action_count, deterministic_action_count, browser_action_count) if count]
         same_action_count = len(set(action_counts)) <= 1
+        synthetic_render_used = any(
+            str(item.get("source") or item.get("proof_source") or "") == "synthetic_safe_fallback"
+            for item in (runtime, deterministic, browser)
+            if item
+        )
+        fixture_only_used = any(bool(item.get("fixture_mode")) for item in (runtime, deterministic, browser, provenance) if item)
+        same_section_workflow = all(
+            str(item.get("section") or item.get("surface") or "") == section
+            and _workflow_matches(workflow, item.get("workflow"))
+            for item in (runtime, deterministic, browser, provenance)
+            if item and (item.get("section") or item.get("surface"))
+        )
         row_failures: list[str] = []
         if not runtime:
             row_failures.append("runtime_render_row_missing")
@@ -290,10 +342,16 @@ def build_render_provenance_reconciliation(
             row_failures.append("leak_scan_row_missing")
         if not same_commit:
             row_failures.append("commit_sha_mismatch")
+        if not same_section_workflow:
+            row_failures.append("section_workflow_mismatch")
         if not text_hash_reconciled:
             row_failures.append("rendered_text_hash_mismatch")
         if not same_action_count:
             row_failures.append("action_count_mismatch")
+        if runtime_action_count and action_click_row_count < runtime_action_count:
+            row_failures.append("visible_action_click_rows_missing")
+        if synthetic_render_used:
+            row_failures.append("synthetic_render_used")
         if any(bool(item.get("raw_sql_included")) for item in (runtime, deterministic, browser, provenance) if item):
             row_failures.append("raw_sql_included")
         row = {
@@ -313,11 +371,15 @@ def build_render_provenance_reconciliation(
             "browser_or_snapshot_row_exists": bool(browser or browser_snapshot),
             "provenance_row_exists": bool(provenance),
             "leak_scan_row_exists": bool(leak),
+            "action_click_row_count": action_click_row_count,
             "same_commit_sha": same_commit,
-            "same_section_workflow": True,
+            "same_section_workflow": same_section_workflow,
             "same_rendered_text_hash": text_hash_reconciled,
             "rendered_text_prefix_reconciled": text_hash_reconciled,
             "same_action_count": same_action_count,
+            "runtime_text_hash": runtime_hash,
+            "deterministic_text_hash": deterministic_hash,
+            "browser_text_hash": browser_hash,
             "runtime_rendered_text_hash": runtime_hash,
             "deterministic_rendered_text_hash": deterministic_hash,
             "browser_rendered_text_hash": browser_hash,
@@ -325,6 +387,8 @@ def build_render_provenance_reconciliation(
             "runtime_action_count": runtime_action_count,
             "deterministic_action_count": deterministic_action_count,
             "browser_action_count": browser_action_count,
+            "synthetic_render_used": synthetic_render_used,
+            "fixture_only_used": fixture_only_used,
             "render_call_path": str(deterministic.get("render_call_path") or runtime.get("render_call_path") or ""),
             "runtime_source": str(runtime.get("runtime_source") or deterministic.get("runtime_source") or ""),
             "passed": not row_failures,

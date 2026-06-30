@@ -37,6 +37,7 @@ PRIMARY_SURFACES = (
 
 ADDITIONAL_SURFACES = (
     ("Query Search", "No click"),
+    ("Query Search", "Explicit search"),
     ("Advanced Scope", "Active filters"),
     ("Settings", "Default"),
     ("Settings/Admin Setup Health", "Setup Health"),
@@ -144,11 +145,11 @@ def _account_usage_count(row: Mapping[str, Any]) -> int:
 
 
 def _row_text(row: Mapping[str, Any]) -> str:
-    text = " ".join(
-        str(row.get(key) or "")
-        for key in ("first_viewport_text", "text", "html_fragment", "rendered_text", "headline", "summary", "fallback_text")
-    ).strip()
-    return text[:12000]
+    for key in ("first_viewport_text", "text", "html_fragment", "rendered_text", "headline", "summary", "fallback_text"):
+        text = str(row.get(key) or "").strip()
+        if text:
+            return text[:12000]
+    return ""
 
 
 def _find_view(section: str, workflow: str, payloads: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -178,12 +179,18 @@ def _actions_for_surface(section: str, payloads: Mapping[str, Any]) -> list[dict
         for row in _as_list(payloads.get(rel)):
             mapping = _as_mapping(row)
             row_section = str(mapping.get("section") or ("Settings" if "settings" in rel else ""))
-            if row_section != section and not (section == "Settings" and row_section == "Settings/Admin Setup Health"):
+            if row_section != section:
                 continue
             label = str(mapping.get("label") or mapping.get("filename") or mapping.get("target") or mapping.get("control_key") or "")
             stable_key = str(mapping.get("key") or mapping.get("control_key") or mapping.get("filename") or label)
             if label or stable_key:
-                candidates.append({"label": label or stable_key, "stable_key": stable_key})
+                candidates.append(
+                    {
+                        "label": label or stable_key,
+                        "stable_key": stable_key,
+                        "action_area": str(mapping.get("action_area") or ""),
+                    }
+                )
     return candidates
 
 
@@ -194,6 +201,8 @@ def _fallback_text(surface: str, payloads: Mapping[str, Any]) -> tuple[str, bool
             mapping = _as_mapping(row)
             if str(mapping.get("case") or "") == "render_no_click":
                 return "Query Search rendered without auto-running a search.", False
+            if str(mapping.get("case") or "") == "text_contains_explicit_search":
+                return "Query Search explicit search requires runtime-rendered click proof.", False
     if surface == "Advanced Scope":
         for row in _as_list(payloads.get(f"{FULL_APP_VALIDATION_DIR}/stress_results.json")):
             mapping = _as_mapping(row)
@@ -270,6 +279,7 @@ def build_deterministic_streamlit_render_results(
             {
                 "label": str(action.get("label") or action.get("stable_key") or ""),
                 "stable_key": str(action.get("stable_key") or action.get("key") or action.get("label") or ""),
+                "action_area": str(action.get("action_area") or ""),
             }
             for action in _as_list(fragment.get("action_like_elements"))
             if isinstance(action, Mapping)
@@ -435,7 +445,6 @@ def write_deterministic_streamlit_render_artifacts(
     gate = evaluate_deterministic_render_gate(results)
     artifacts = {
         DETERMINISTIC_RENDER_RESULTS_REL: results,
-        RENDERED_FRAGMENTS_REL: results["rendered_fragments"],
         DETERMINISTIC_RENDER_GATE_REL: gate,
     }
     for rel, payload in artifacts.items():

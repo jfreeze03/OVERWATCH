@@ -72,20 +72,46 @@ def build_action_click_results(payloads: Mapping[str, Any]) -> tuple[dict[str, A
                         "action_area": action.get("action_area") or "rendered_action",
                     }
                 )
-    click_keys = {
-        str(row.get("stable_key") or row.get("control_key") or row.get("key") or row.get("action_key") or "").strip()
-        for row in actions
-        if bool(row.get("clicked"))
-    }
-    click_labels = {
-        str(row.get("label") or row.get("action_key") or "").strip()
-        for row in actions
-        if bool(row.get("clicked"))
-    }
+    click_by_key: dict[str, list[Mapping[str, Any]]] = {}
+    click_by_label: dict[str, list[Mapping[str, Any]]] = {}
+    for row in actions:
+        if not bool(row.get("clicked")):
+            continue
+        key = str(row.get("stable_key") or row.get("control_key") or row.get("key") or row.get("action_key") or "").strip()
+        label = str(row.get("label") or row.get("action_key") or "").strip()
+        if key:
+            click_by_key.setdefault(key, []).append(row)
+        if label:
+            click_by_label.setdefault(label, []).append(row)
+
+    def _select_click(candidates: list[Mapping[str, Any]], rendered_area: str) -> Mapping[str, Any] | None:
+        if not candidates:
+            return None
+        for candidate in candidates:
+            if str(candidate.get("action_area") or "").strip() == rendered_area:
+                return candidate
+        return candidates[0]
     for rendered_action in rendered_actions:
         stable_key = str(rendered_action.get("stable_key") or "").strip()
         label = str(rendered_action.get("label") or "").strip()
-        matched = bool(stable_key and stable_key in click_keys) or bool(label and label in click_labels)
+        rendered_area = str(rendered_action.get("action_area") or "").strip()
+        candidates = list(click_by_key.get(stable_key, [])) if stable_key else []
+        if not candidates and label:
+            candidates = list(click_by_label.get(label, []))
+        if not candidates and stable_key:
+            candidates = [
+                row
+                for key, rows in click_by_key.items()
+                if key.startswith(stable_key) or stable_key.startswith(key)
+                for row in rows
+            ]
+        matched_click = _select_click(candidates, rendered_area)
+        matched = bool(matched_click)
+        area_matches = (
+            not matched_click
+            or not rendered_area
+            or str(matched_click.get("action_area") or "").strip() == rendered_area
+        )
         if not matched:
             actions.append(
                 {
@@ -103,6 +129,26 @@ def build_action_click_results(payloads: Mapping[str, Any]) -> tuple[dict[str, A
                     "account_usage_count": 0,
                     "passed": False,
                     "failure_reason": "rendered_action_without_click_result",
+                    "raw_sql_included": False,
+                }
+            )
+        elif not area_matches:
+            actions.append(
+                {
+                    "area": "rendered_action",
+                    "action_area": rendered_area,
+                    "section": rendered_action.get("section", ""),
+                    "workflow": rendered_action.get("workflow", ""),
+                    "action_key": stable_key or label or "rendered_action",
+                    "expected_behavior": "rendered action area matches click artifact area",
+                    "observed_behavior": str(matched_click.get("action_area") or ""),
+                    "clicked": True,
+                    "query_count": 0,
+                    "session_open_count": 0,
+                    "direct_sql_count": 0,
+                    "account_usage_count": 0,
+                    "passed": False,
+                    "failure_reason": "rendered_action_area_mismatch",
                     "raw_sql_included": False,
                 }
             )

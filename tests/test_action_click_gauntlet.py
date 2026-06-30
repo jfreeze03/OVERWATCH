@@ -9,6 +9,51 @@ if str(ROOT) not in sys.path:
 
 
 class ActionClickGauntletTests(unittest.TestCase):
+    def test_button_action_area_classification_is_exact(self):
+        sys.path.insert(0, str(ROOT / ".overwatch_final"))
+        from sections.button_action_contracts import resolve_button_action_contract
+
+        cases = [
+            {
+                "section": "Executive Landing",
+                "workflow": "Overview",
+                "label": "Executive Landing",
+                "key": "nav_btn_MONITORING CORE_Executive Landing",
+                "area": "sidebar_navigation",
+            },
+            {
+                "section": "Advanced Scope",
+                "workflow": "Active filters",
+                "label": "Advanced Scope",
+                "key": "sidebar_panel_advanced_scope",
+                "area": "sidebar_panel_toggle",
+            },
+            {
+                "section": "Settings",
+                "workflow": "Default",
+                "label": "Open Setup Health",
+                "key": "settings_open_setup_health",
+                "area": "setup_health_admin",
+            },
+            {
+                "section": "Workload Operations",
+                "workflow": "Query Investigation",
+                "label": "Search deep history fallback",
+                "key": "qs_account_usage_fallback",
+                "area": "live_feature",
+            },
+        ]
+        for case in cases:
+            with self.subTest(case=case):
+                contract = resolve_button_action_contract(
+                    section=case["section"],
+                    workflow=case["workflow"],
+                    label=case["label"],
+                    key=case["key"],
+                )
+                self.assertIsNotNone(contract)
+                self.assertEqual(contract.to_artifact()["action_area"], case["area"])
+
     def test_unclicked_visible_button_fails_gate(self):
         from tools.contracts.action_click_gauntlet import build_action_click_results, evaluate_action_click_gate
 
@@ -72,3 +117,38 @@ class ActionClickGauntletTests(unittest.TestCase):
         )
         self.assertTrue(any(row.get("action_key") == "view_all_priorities" for row in results["rows"]))
         self.assertTrue(any(row.get("action_area") == "route_action" for row in results["rows"]))
+
+    def test_rendered_action_area_mismatch_fails(self):
+        from tools.contracts.action_click_gauntlet import build_action_click_results
+
+        _manifest, results = build_action_click_results(
+            {
+                "artifacts/full_app_validation/rendered_fragments.json": [
+                    {
+                        "section": "Settings",
+                        "workflow": "Default",
+                        "action_like_elements": [
+                            {
+                                "label": "Open Setup Health",
+                                "stable_key": "settings_open_setup_health",
+                                "action_area": "setup_health_admin",
+                            }
+                        ],
+                    }
+                ],
+                "artifacts/full_app_validation/settings_action_results.json": [
+                    {
+                        "section": "Settings",
+                        "workflow": "Default",
+                        "label": "Open Setup Health",
+                        "stable_key": "settings_open_setup_health",
+                        "action_area": "settings_control",
+                        "clicked": True,
+                        "passed": True,
+                    }
+                ],
+            }
+        )
+
+        self.assertFalse(results["passed"])
+        self.assertTrue(any(row.get("failure_reason") == "rendered_action_area_mismatch" for row in results["failures"]))

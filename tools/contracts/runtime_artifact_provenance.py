@@ -52,7 +52,7 @@ ALLOWED_RUNTIME_SOURCES = {
 
 SOURCE_BY_ARTIFACT = {
     f"{FULL_APP_VALIDATION_DIR}/view_results.json": "rendered_app",
-    f"{FULL_APP_VALIDATION_DIR}/rendered_fragments.json": "deterministic_streamlit_rendered",
+    f"{FULL_APP_VALIDATION_DIR}/rendered_fragments.json": "lower_artifact_rendered",
     f"{FULL_APP_VALIDATION_DIR}/deterministic_streamlit_render_results.json": "deterministic_streamlit_rendered",
     f"{FULL_APP_VALIDATION_DIR}/browser_render_results.json": "browser_rendered",
     f"{FULL_APP_VALIDATION_DIR}/browser_smoke_results.json": "browser_rendered",

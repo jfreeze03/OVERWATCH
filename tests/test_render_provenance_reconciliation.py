@@ -19,14 +19,34 @@ class RenderProvenanceReconciliationTests(unittest.TestCase):
         commit = self._commit()
         surfaces = [*PRIMARY_SURFACES, *ADDITIONAL_SURFACES]
         deterministic_rows = []
+        runtime_fragments = []
         browser_rows = []
         provenance_rows = []
         leak_rows = []
+        action_rows = []
         for index, (section, workflow) in enumerate(surfaces):
             text = f"{section} {workflow} rendered from runtime"
             deterministic_text = "synthetic placeholder" if synthetic and index == 0 else text
             browser_text = f"{text} mismatch" if text_mismatch and index == 0 else deterministic_text
             source = "synthetic_safe_fallback" if synthetic and index == 0 else "deterministic_streamlit_rendered"
+            runtime_fragments.append(
+                {
+                    "producer": "full_app_runtime_validation",
+                    "source": "lower_artifact_rendered",
+                    "provenance_origin": "producer",
+                    "commit_sha": commit,
+                    "section": section,
+                    "workflow": workflow,
+                    "runtime_source": "actual_section_render",
+                    "render_call_path": f"runtime.sections.{index}.render",
+                    "text": text,
+                    "action_like_elements": [
+                        {"label": "Action A", "stable_key": f"{section}-{workflow}-a", "action_area": "route_action"},
+                        {"label": "Action B", "stable_key": f"{section}-{workflow}-b", "action_area": "evidence_action"},
+                    ],
+                    "raw_sql_included": False,
+                }
+            )
             deterministic_rows.append(
                 {
                     "producer": "deterministic_streamlit_render",
@@ -82,12 +102,34 @@ class RenderProvenanceReconciliationTests(unittest.TestCase):
                     "raw_sql_included": False,
                 }
             )
+            action_rows.extend(
+                [
+                    {
+                        "section": section,
+                        "workflow": workflow,
+                        "stable_key": f"{section}-{workflow}-a",
+                        "action_area": "route_action",
+                        "clicked": True,
+                        "passed": True,
+                    },
+                    {
+                        "section": section,
+                        "workflow": workflow,
+                        "stable_key": f"{section}-{workflow}-b",
+                        "action_area": "evidence_action",
+                        "clicked": True,
+                        "passed": True,
+                    },
+                ]
+            )
         return {
             "artifacts/full_app_validation/view_results.json": [],
+            "artifacts/full_app_validation/rendered_fragments.json": runtime_fragments,
             "artifacts/full_app_validation/deterministic_streamlit_render_results.json": {"rows": deterministic_rows},
             "artifacts/full_app_validation/browser_render_results.json": {"rows": browser_rows},
             "artifacts/full_app_validation/runtime_artifact_provenance_results.json": {"rows": provenance_rows},
             "artifacts/full_app_validation/rendered_ui_leak_scan_results.json": {"rows": leak_rows},
+            "artifacts/full_app_validation/action_click_results.json": {"rows": action_rows},
         }
 
     def test_matching_runtime_deterministic_browser_and_provenance_pass(self):
@@ -118,6 +160,26 @@ class RenderProvenanceReconciliationTests(unittest.TestCase):
 
         self.assertFalse(results["passed"])
         self.assertIn("rendered_text_hash_mismatch", results["failures"][0]["failure_reason"])
+
+    def test_deterministic_without_runtime_render_fails(self):
+        from tools.contracts.render_provenance_reconciliation import build_render_provenance_reconciliation
+
+        payloads = self._payloads()
+        payloads["artifacts/full_app_validation/rendered_fragments.json"] = []
+        results = build_render_provenance_reconciliation(ROOT, payloads)
+
+        self.assertFalse(results["passed"])
+        self.assertIn("runtime_render_row_missing", results["failures"][0]["failure_reason"])
+
+    def test_rendered_actions_without_click_rows_fail(self):
+        from tools.contracts.render_provenance_reconciliation import build_render_provenance_reconciliation
+
+        payloads = self._payloads()
+        payloads["artifacts/full_app_validation/action_click_results.json"] = {"rows": []}
+        results = build_render_provenance_reconciliation(ROOT, payloads)
+
+        self.assertFalse(results["passed"])
+        self.assertIn("visible_action_click_rows_missing", results["failures"][0]["failure_reason"])
 
 
 if __name__ == "__main__":

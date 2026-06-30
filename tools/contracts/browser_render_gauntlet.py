@@ -31,7 +31,6 @@ BROWSER_SMOKE_RESULTS_REL = f"{FULL_APP_VALIDATION_DIR}/browser_smoke_results.js
 
 BROWSER_RENDER_ARTIFACTS = {
     BROWSER_RENDER_RESULTS_REL,
-    RENDERED_FRAGMENTS_REL,
 }
 
 PRIMARY_SURFACES = (
@@ -44,8 +43,9 @@ PRIMARY_SURFACES = (
 )
 
 ADDITIONAL_SURFACES = (
-    ("Query Search", "Default"),
-    ("Advanced Scope", "Default"),
+    ("Query Search", "No click"),
+    ("Query Search", "Explicit search"),
+    ("Advanced Scope", "Active filters"),
     ("Settings", "Default"),
     ("Settings/Admin Setup Health", "Setup Health"),
 )
@@ -152,16 +152,32 @@ def _payload_rows(payload: object) -> list[Mapping[str, Any]]:
     return [_as_mapping(row) for row in _as_list(payload)]
 
 
-def _rendered_candidate(section: str, payloads: Mapping[str, Any]) -> Mapping[str, Any]:
+def _workflow_matches(requested: str, observed: object) -> bool:
+    observed_text = str(observed or "")
+    if not requested:
+        return True
+    if requested == observed_text:
+        return True
+    return requested in {"Overview", "Open"} and bool(observed_text)
+
+
+def _candidate_text(mapping: Mapping[str, Any]) -> str:
+    for key in ("first_viewport_text", "text", "rendered_text", "html_fragment", "headline", "summary", "fallback_text"):
+        text = str(mapping.get(key) or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _rendered_candidate(section: str, workflow: str, payloads: Mapping[str, Any]) -> Mapping[str, Any]:
     for rel in (BROWSER_SMOKE_RESULTS_REL, DETERMINISTIC_RENDER_RESULTS_REL, RENDERED_FRAGMENTS_REL):
         for row in _payload_rows(payloads.get(rel)):
             mapping = _as_mapping(row)
             if str(mapping.get("section") or mapping.get("surface") or "") != section:
                 continue
-            text = " ".join(
-                str(mapping.get(key) or "")
-                for key in ("first_viewport_text", "text", "rendered_text", "headline", "summary", "fallback_text")
-            ).strip()
+            if not _workflow_matches(workflow, mapping.get("workflow")):
+                continue
+            text = _candidate_text(mapping)
             if text and bool(mapping.get("rendered", True)):
                 return mapping
     for rel in (f"{FULL_APP_VALIDATION_DIR}/view_results.json",):
@@ -169,15 +185,14 @@ def _rendered_candidate(section: str, payloads: Mapping[str, Any]) -> Mapping[st
             mapping = _as_mapping(row)
             if str(mapping.get("section") or mapping.get("surface") or "") != section:
                 continue
+            if not _workflow_matches(workflow, mapping.get("workflow")):
+                continue
             return mapping
     return {}
 
 
 def _first_viewport_from_candidate(candidate: Mapping[str, Any]) -> str:
-    return " ".join(
-        str(candidate.get(key) or "")
-        for key in ("first_viewport_text", "text", "rendered_text", "html_fragment", "headline", "summary", "fallback_text")
-    ).strip()[:2000]
+    return _candidate_text(candidate)[:2000]
 
 
 def _proof_source(candidate: Mapping[str, Any]) -> str:
@@ -254,7 +269,7 @@ def build_browser_render_results(
     failures: list[dict[str, Any]] = []
 
     for section, workflow in _surface_rows():
-        candidate = _rendered_candidate(section, payloads)
+        candidate = _rendered_candidate(section, workflow, payloads)
         proof_source = _proof_source(candidate)
         rendered = bool(candidate) and proof_source in RENDER_PROOF_SOURCES and bool(candidate.get("rendered", True))
         skipped = not rendered
@@ -460,11 +475,9 @@ def write_browser_render_gauntlet_artifacts(
 ) -> dict[str, Any]:
     root_path = Path(root).resolve()
     results = build_browser_render_results(root_path, payloads, launch_profile=launch_profile)
-    fragments = list(results.get("rendered_fragments") or [])
     gate = evaluate_browser_render_gate(results)
     artifacts: dict[str, Any] = {
         BROWSER_RENDER_RESULTS_REL: results,
-        RENDERED_FRAGMENTS_REL: fragments,
         BROWSER_RENDER_GATE_REL: gate,
     }
     for rel, payload in artifacts.items():

@@ -8,8 +8,10 @@ release candidate consumes.
 
 from __future__ import annotations
 
+import csv
 from datetime import UTC, datetime
 import hashlib
+import io
 import json
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -41,6 +43,43 @@ PRIMARY_SECTIONS = (
     "Workload Operations",
     "Security Monitoring",
 )
+
+FORBIDDEN_EXPORT_TOKENS = (
+    "ACCOUNT_USAGE",
+    "INFORMATION_SCHEMA",
+    "SNOWFLAKE.ACCOUNT_USAGE",
+    "MART_",
+    "FACT_",
+    "SP_",
+    "CREATE OR REPLACE",
+    "SELECT *",
+    "CALL SP_",
+    "Traceback",
+    "StreamlitAPIException",
+    "SnowflakeSQLException",
+    "fixture",
+    "mock",
+    "proof",
+    "internal test",
+)
+
+COST_EXPORT_REQUIRED_COLUMNS = {
+    "ACCOUNT_BILLED_COST_USD",
+    "WAREHOUSE_CREDITS",
+    "SERVICE_OTHER_CREDITS",
+    "BILLING_BRIDGE_DELTA_CREDITS",
+    "BILLING_BRIDGE_STATUS",
+}
+
+COST_ADVISOR_REQUIRED_COLUMNS = {
+    "VALUE_AT_RISK_USD",
+    "QUEUE_PRESSURE_SECONDS",
+    "LOCAL_SPILL_BYTES",
+    "REMOTE_SPILL_BYTES",
+    "SAVINGS_ESTIMATE_STATUS",
+    "IMPACT_FORMULA",
+    "IMPACT_REASON",
+}
 
 FULL_APP_LAUNCH_ARTIFACTS = {
     FULL_APP_LAUNCH_RESULTS_REL,
@@ -75,6 +114,26 @@ def _as_int(value: object) -> int:
     except (TypeError, ValueError):
         return 0
     return 0
+
+
+def _csv_columns(text: str) -> list[str]:
+    try:
+        reader = csv.reader(io.StringIO(text))
+        return [str(column or "").strip() for column in next(reader, [])]
+    except csv.Error:
+        return []
+
+
+def _forbidden_export_tokens(text: str) -> list[str]:
+    upper_text = text.upper()
+    lower_text = text.lower()
+    findings: list[str] = []
+    for token in FORBIDDEN_EXPORT_TOKENS:
+        haystack = upper_text if token.isupper() or "_" in token else lower_text
+        needle = token if token.isupper() or "_" in token else token.lower()
+        if needle in haystack:
+            findings.append(token)
+    return findings
 
 
 def _write_json(path: Path, payload: Any) -> None:
@@ -292,10 +351,15 @@ def build_action_manifest(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
         control_key = str(row.get("control_key_clicked") or "")
         no_click = case in {"render_no_click", "text_contains_no_autorun", "warehouse_prefill_no_autorun"}
         passed = bool(row.get("passed", True)) and (not no_click or _query_count(row) == 0)
+        action_area = "query_search"
+        if control_key.startswith("dl_"):
+            action_area = "export_download"
+        elif control_key == "qs_account_usage_fallback":
+            action_area = "live_feature"
         rows.append(
             _launch_row(
                 area="query_search",
-                action_area="query_search",
+                action_area=action_area,
                 section="Workload Operations",
                 workflow="Query Search",
                 action_key=control_key or case,
@@ -571,21 +635,37 @@ def build_download_results(payloads: Mapping[str, Any], root: Path | str | None 
         file_exists = bool(payload_path and payload_path.exists())
         size_bytes = int(payload_path.stat().st_size) if payload_path and payload_path.exists() else int(row.get("size_bytes") or row.get("content_length") or 0)
         actual_sha = ""
+        payload_text = ""
         if payload_path and payload_path.exists():
-            actual_sha = hashlib.sha256(payload_path.read_bytes()).hexdigest()
+            payload_bytes = payload_path.read_bytes()
+            actual_sha = hashlib.sha256(payload_bytes).hexdigest()
+            payload_text = payload_bytes.decode("utf-8", errors="replace")
         expected_sha = str(row.get("sha256") or row.get("payload_hash") or "")
         row_count = _as_int(row.get("parsed_row_count") or row.get("row_count"))
         visible = _as_int(row.get("visible_row_count") or row.get("row_count"))
         intentional_empty = bool(row.get("intentional_empty"))
-        hash_matches = not expected_sha or not actual_sha or expected_sha == actual_sha
+        hash_matches = bool(expected_sha and actual_sha and expected_sha == actual_sha)
+        metadata_columns = row.get("payload_columns")
+        payload_columns = _csv_columns(payload_text) if payload_text else (
+            [str(column) for column in metadata_columns] if isinstance(metadata_columns, list) else []
+        )
+        column_set = {column.upper() for column in payload_columns}
+        forbidden_tokens = _forbidden_export_tokens(payload_text) if payload_text else []
+        cost_required_missing = sorted(COST_EXPORT_REQUIRED_COLUMNS - column_set) if str(row.get("section") or "") == "Cost & Contract" else []
+        advisor_surface = "advisor" in " ".join(str(row.get(key) or "") for key in ("workflow", "filename", "target_label")).lower()
+        advisor_required_missing = sorted(COST_ADVISOR_REQUIRED_COLUMNS - column_set) if advisor_surface else []
         passed = (
             bool(row.get("passed", True))
             and bool(payload_file)
-            and (file_exists if root_path else True)
+            and bool(root_path)
+            and file_exists
             and (size_bytes > 0 or intentional_empty)
             and row_count == visible
             and hash_matches
             and not bool(row.get("query_text_included"))
+            and not forbidden_tokens
+            and not cost_required_missing
+            and not advisor_required_missing
         )
         result = {
             "section": str(row.get("section") or ""),
@@ -602,6 +682,11 @@ def build_download_results(payloads: Mapping[str, Any], root: Path | str | None 
             "content_type": str(row.get("content_type") or ""),
             "admin_only": bool(row.get("admin_only")),
             "query_text_included": bool(row.get("query_text_included")),
+            "payload_columns": payload_columns,
+            "forbidden_token_count": len(forbidden_tokens),
+            "forbidden_tokens": forbidden_tokens,
+            "cost_required_missing": cost_required_missing,
+            "cost_advisor_required_missing": advisor_required_missing,
             "passed": passed,
             "failure_reason": "" if passed else "download_payload_contract_failed",
             "raw_sql_included": False,

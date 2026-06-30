@@ -14,7 +14,6 @@ class BrowserRenderGauntletTests(unittest.TestCase):
         from tools.contracts.browser_render_gauntlet import (
             BROWSER_RENDER_GATE_REL,
             BROWSER_RENDER_RESULTS_REL,
-            RENDERED_FRAGMENTS_REL,
             write_browser_render_gauntlet_artifacts,
         )
 
@@ -51,7 +50,6 @@ class BrowserRenderGauntletTests(unittest.TestCase):
             results = artifacts[BROWSER_RENDER_RESULTS_REL]
 
             self.assertIn(BROWSER_RENDER_GATE_REL, artifacts)
-            self.assertIn(RENDERED_FRAGMENTS_REL, artifacts)
             self.assertTrue(results["passed"], results)
             for row in results["rows"]:
                 self.assertTrue((root / row["screenshot_or_snapshot_path"]).exists(), row)

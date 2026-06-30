@@ -95,6 +95,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
 
         summary = json.loads((ROOT / "artifacts/full_app_validation/app_validation_summary.json").read_text())
         views = json.loads((ROOT / "artifacts/full_app_validation/view_results.json").read_text())
+        rendered_fragments = json.loads((ROOT / "artifacts/full_app_validation/rendered_fragments.json").read_text())
         buttons = json.loads((ROOT / "artifacts/full_app_validation/button_results.json").read_text())
         exports = json.loads((ROOT / "artifacts/full_app_validation/export_results.json").read_text())
         query_search = json.loads((ROOT / "artifacts/full_app_validation/query_search_results.json").read_text())
@@ -255,7 +256,10 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             self.assertTrue(row["passed"], row)
 
         query_cases = {row["case"]: row for row in query_search}
+        rendered_surfaces = {(row.get("section"), row.get("workflow")) for row in rendered_fragments}
         self.assertTrue(query_cases)
+        self.assertIn(("Query Search", "No click"), rendered_surfaces)
+        self.assertIn(("Query Search", "Explicit search"), rendered_surfaces)
         required_query_cases = {
             "render_no_click",
             "exact_query_id",
@@ -273,6 +277,11 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             "permission_denied",
         }
         self.assertTrue(required_query_cases.issubset(query_cases), query_cases)
+        self.assertTrue(query_cases["text_contains_explicit_search"]["first_viewport_text"])
+        self.assertEqual(
+            query_cases["text_contains_explicit_search"]["render_call_path"],
+            "sections.query_search.render(explicit_search)",
+        )
         for row in query_search:
             if row["case"] in {"render_no_click", "text_contains_no_autorun", "warehouse_prefill_no_autorun"}:
                 self.assertEqual(row["source"], "lower_artifact_rendered", row)

@@ -214,6 +214,12 @@ def _action_area_for_row(row: Mapping[str, Any]) -> str:
         return "sidebar_navigation"
     if key.startswith("sidebar_panel_"):
         return "sidebar_panel_toggle"
+    if key.startswith("qs_account_usage_fallback"):
+        return "live_feature"
+    if key.startswith("qs_"):
+        return "query_search"
+    if key.startswith("dl_"):
+        return "export_download"
     if section == "Settings" and action_type in {"local_state", "setup_health"}:
         return "settings_control" if action_type == "local_state" else "setup_health_admin"
     if section == "Settings/Admin Setup Health":
@@ -232,6 +238,17 @@ def _action_area_for_row(row: Mapping[str, Any]) -> str:
         "setup_health": "setup_health_admin",
         "account_usage_fallback": "live_feature",
     }.get(action_type, "export_download" if "export" in key.lower() or "download" in key.lower() else "route_action")
+
+
+def _action_like_elements_from_buttons(buttons: Iterable[Mapping[str, Any]]) -> list[dict[str, str]]:
+    return [
+        {
+            "label": str(button.get("label") or ""),
+            "stable_key": str(button.get("key") or button.get("stable_key") or ""),
+            "action_area": _action_area_for_row(button),
+        }
+        for button in buttons
+    ]
 
 
 def _stable_key_for_row(row: Mapping[str, Any]) -> str:
@@ -273,7 +290,7 @@ def _enrich_render_row(stamped: dict[str, Any]) -> None:
         normalized = {
             "label": str(action.get("label") or action.get("stable_key") or action.get("key") or ""),
             "stable_key": str(action.get("stable_key") or action.get("key") or action.get("label") or ""),
-            "action_area": str(action.get("action_area") or "rendered_action"),
+            "action_area": str(action.get("action_area") or _action_area_for_row(action)),
         }
         normalized_actions.append(normalized)
     if normalized_actions:
@@ -2054,10 +2071,7 @@ class RuntimeValidationHarness:
             "render_call_path": "sections.query_search.render",
             "first_viewport_text": render_html,
             "html_fragment": render_html,
-            "action_like_elements": [
-                {"label": str(button.get("label") or ""), "stable_key": str(button.get("key") or "")}
-                for button in render_capture.buttons
-            ],
+            "action_like_elements": _action_like_elements_from_buttons(render_capture.buttons),
             "control_key_clicked": "",
             "observed_contexts": [str(context.get("name") or "") for context in render_contexts],
             "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in render_events)),
@@ -2118,12 +2132,24 @@ class RuntimeValidationHarness:
             state = _base_state("Workload Operations", "Query Investigation")
             state.update(state_update)
             capture, contexts = self.render_query_search(state=state, click_key=click_key)
+            click_html = "\n".join(capture.fragments)[:12000]
             events = _state_events(capture.state, UI_QUERY_EVENTS_KEY)
             execs = _state_events(capture.state, SNOWFLAKE_EXECUTION_EVENTS_KEY)
             cases.append({
                 "case": name,
                 "source": "runtime_query_search_click",
                 "proof_source": "runtime_click",
+                "render_call_path": "sections.query_search.render(explicit_search)",
+                "first_viewport_text": click_html,
+                "html_fragment": click_html,
+                "action_like_elements": [
+                    {
+                        "label": str(button.get("label") or ""),
+                        "stable_key": str(button.get("key") or ""),
+                        "action_area": str(button.get("action_area") or "query_search"),
+                    }
+                    for button in capture.buttons
+                ],
                 "control_key_clicked": click_key,
                 "observed_contexts": [str(context.get("name") or "") for context in contexts],
                 "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in events)),
@@ -2402,13 +2428,7 @@ class RuntimeValidationHarness:
                     "diagnostic_card_count": row["diagnostic_card_count"],
                     "unavailable_tile_count": row["unavailable_tile_count"],
                     "old_board_marker_count": row["old_board_marker_count"],
-                    "action_like_elements": [
-                        {
-                            "label": str(button.get("label") or ""),
-                            "stable_key": str(button.get("key") or ""),
-                        }
-                        for button in capture.buttons
-                    ],
+                    "action_like_elements": _action_like_elements_from_buttons(capture.buttons),
                     "text": html[:12000],
                 })
                 for control in capture.controls:
@@ -2536,10 +2556,7 @@ class RuntimeValidationHarness:
                     "diagnostic_card_count": click_html.lower().count("diagnostic card"),
                     "unavailable_tile_count": max(0, click_html.lower().count("summary unavailable") - 1),
                     "old_board_marker_count": 0,
-                    "action_like_elements": [
-                        {"label": str(item.get("label") or ""), "stable_key": str(item.get("key") or "")}
-                        for item in click_capture.buttons
-                    ],
+                    "action_like_elements": _action_like_elements_from_buttons(click_capture.buttons),
                     "text": click_html,
                 }
             if action_type == "evidence_load":
@@ -2557,10 +2574,7 @@ class RuntimeValidationHarness:
                         "diagnostic_card_count": click_html.lower().count("diagnostic card"),
                         "unavailable_tile_count": max(0, click_html.lower().count("summary unavailable") - 1),
                         "old_board_marker_count": 0,
-                        "action_like_elements": [
-                            {"label": str(item.get("label") or ""), "stable_key": str(item.get("key") or "")}
-                            for item in click_capture.buttons
-                        ],
+                        "action_like_elements": _action_like_elements_from_buttons(click_capture.buttons),
                         "text": click_html,
                     },
                 )
@@ -2579,10 +2593,7 @@ class RuntimeValidationHarness:
                             "diagnostic_card_count": click_html.lower().count("diagnostic card"),
                             "unavailable_tile_count": max(0, click_html.lower().count("summary unavailable") - 1),
                             "old_board_marker_count": 0,
-                            "action_like_elements": [
-                                {"label": str(item.get("label") or ""), "stable_key": str(item.get("key") or "")}
-                                for item in click_capture.buttons
-                            ],
+                            "action_like_elements": _action_like_elements_from_buttons(click_capture.buttons),
                             "text": click_html,
                         },
                     )
@@ -2693,10 +2704,7 @@ class RuntimeValidationHarness:
                 "diagnostic_card_count": settings_sidebar_html.lower().count("diagnostic card"),
                 "unavailable_tile_count": max(0, settings_sidebar_html.lower().count("summary unavailable") - 1),
                 "old_board_marker_count": 0,
-                "action_like_elements": [
-                    {"label": str(button.get("label") or ""), "stable_key": str(button.get("key") or "")}
-                    for button in settings_sidebar_capture.buttons
-                ],
+                "action_like_elements": _action_like_elements_from_buttons(settings_sidebar_capture.buttons),
                 "text": settings_sidebar_html,
             }
         )
@@ -2715,10 +2723,7 @@ class RuntimeValidationHarness:
                 "diagnostic_card_count": advanced_scope_html.lower().count("diagnostic card"),
                 "unavailable_tile_count": max(0, advanced_scope_html.lower().count("summary unavailable") - 1),
                 "old_board_marker_count": 0,
-                "action_like_elements": [
-                    {"label": str(button.get("label") or ""), "stable_key": str(button.get("key") or "")}
-                    for button in advanced_scope_capture.buttons
-                ],
+                "action_like_elements": _action_like_elements_from_buttons(advanced_scope_capture.buttons),
                 "text": advanced_scope_html,
             }
         )
@@ -2792,10 +2797,7 @@ class RuntimeValidationHarness:
                     "diagnostic_card_count": fallback_html.lower().count("diagnostic card"),
                     "unavailable_tile_count": max(0, fallback_html.lower().count("summary unavailable") - 1),
                     "old_board_marker_count": 0,
-                    "action_like_elements": [
-                        {"label": str(button.get("label") or ""), "stable_key": str(button.get("key") or "")}
-                        for button in fallback_capture.buttons
-                    ],
+                    "action_like_elements": _action_like_elements_from_buttons(fallback_capture.buttons),
                     "text": fallback_html,
                 }
             )
@@ -2866,10 +2868,7 @@ class RuntimeValidationHarness:
                 "diagnostic_card_count": settings_admin_html.lower().count("diagnostic card"),
                 "unavailable_tile_count": max(0, settings_admin_html.lower().count("summary unavailable") - 1),
                 "old_board_marker_count": 0,
-                "action_like_elements": [
-                    {"label": str(button.get("label") or ""), "stable_key": str(button.get("key") or "")}
-                    for button in settings_capture.buttons
-                ],
+                "action_like_elements": _action_like_elements_from_buttons(settings_capture.buttons),
                 "admin_only": True,
                 "text": settings_admin_html,
             }
@@ -3104,6 +3103,27 @@ class RuntimeValidationHarness:
                     "render_call_path": "sections.query_search.render",
                     "section": "Query Search",
                     "workflow": "No click",
+                    "summary_board_count": 0,
+                    "diagnostic_card_count": query_text.lower().count("diagnostic card"),
+                    "unavailable_tile_count": max(0, query_text.lower().count("summary unavailable") - 1),
+                    "old_board_marker_count": 0,
+                    "action_like_elements": query_case.get("action_like_elements") or [],
+                    "text": query_text,
+                }
+            )
+        for query_case in query_search_results:
+            if str(query_case.get("case") or "") != "text_contains_explicit_search":
+                continue
+            query_text = str(query_case.get("html_fragment") or query_case.get("first_viewport_text") or "")[:12000]
+            rendered_fragments.append(
+                {
+                    "id": "query_search::explicit_search",
+                    "source": "runtime_query_search_click",
+                    "proof_source": "runtime_click",
+                    "runtime_source": "actual_section_render",
+                    "render_call_path": "sections.query_search.render(explicit_search)",
+                    "section": "Query Search",
+                    "workflow": "Explicit search",
                     "summary_board_count": 0,
                     "diagnostic_card_count": query_text.lower().count("diagnostic card"),
                     "unavailable_tile_count": max(0, query_text.lower().count("summary unavailable") - 1),

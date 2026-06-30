@@ -133,6 +133,7 @@ def build_action_click_results(payloads: Mapping[str, Any]) -> tuple[dict[str, A
                 }
             )
         elif not area_matches:
+            observed_area = str(matched_click.get("action_area") or "") if matched_click is not None else ""
             actions.append(
                 {
                     "area": "rendered_action",
@@ -141,7 +142,7 @@ def build_action_click_results(payloads: Mapping[str, Any]) -> tuple[dict[str, A
                     "workflow": rendered_action.get("workflow", ""),
                     "action_key": stable_key or label or "rendered_action",
                     "expected_behavior": "rendered action area matches click artifact area",
-                    "observed_behavior": str(matched_click.get("action_area") or ""),
+                    "observed_behavior": observed_area,
                     "clicked": True,
                     "query_count": 0,
                     "session_open_count": 0,

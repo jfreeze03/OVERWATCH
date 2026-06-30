@@ -18,6 +18,11 @@ from typing import Any, Iterable, Mapping
 from tools.contracts.cleanup_inventory import write_cleanup_artifacts
 from tools.contracts.direct_sql_contract import direct_sql_scan_artifact, scan_direct_sql_usage
 from tools.contracts.action_click_gauntlet import write_action_click_gauntlet_artifacts
+from tools.contracts.browser_render_gauntlet import (
+    BROWSER_RENDER_ARTIFACTS,
+    BROWSER_RENDER_GATE_REL,
+    write_browser_render_gauntlet_artifacts,
+)
 from tools.contracts.export_download_gauntlet import write_export_download_artifacts
 from tools.contracts.full_app_launch_gauntlet import (
     FULL_APP_LAUNCH_ARTIFACTS,
@@ -28,6 +33,11 @@ from tools.contracts.full_app_validation_inventory import write_full_app_contrac
 from tools.contracts.rendered_ui_leak_scan import (
     RENDERED_UI_LEAK_ARTIFACTS,
     write_rendered_ui_leak_scan_artifacts,
+)
+from tools.contracts.runtime_artifact_provenance import (
+    RUNTIME_ARTIFACT_PROVENANCE_GATE_REL,
+    RUNTIME_ARTIFACT_PROVENANCE_REL,
+    write_runtime_artifact_provenance_artifacts,
 )
 from tools.contracts.session_open_contract import scan_session_open_usage, session_open_scan_artifact
 from tools.contracts.source_internal_leak_scan import (
@@ -98,7 +108,11 @@ REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
     "artifacts/sql_performance_lint_file_inventory.json",
     "artifacts/query_search_proof.json",
     *FULL_APP_LAUNCH_ARTIFACTS,
+    *BROWSER_RENDER_ARTIFACTS,
     *RENDERED_UI_LEAK_ARTIFACTS,
+    RUNTIME_ARTIFACT_PROVENANCE_REL,
+    RUNTIME_ARTIFACT_PROVENANCE_GATE_REL,
+    BROWSER_RENDER_GATE_REL,
     "artifacts/full_app_validation/action_click_manifest.json",
     "artifacts/full_app_validation/action_click_results.json",
     "artifacts/full_app_validation/download_results.json",
@@ -1174,6 +1188,7 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
     cleanup_artifacts = write_cleanup_artifacts(root_path)
     inventory_artifacts = write_full_app_contract_inventory_artifacts(root_path)
     validation_artifacts = write_full_app_validation_artifacts(root_path)
+    browser_render_artifacts = write_browser_render_gauntlet_artifacts(root_path)
     summary_board_artifacts = _write_summary_board_contract_artifacts(root_path)
     metric_semantic_artifact = _write_metric_semantic_artifact(root_path)
     formula_consistency_artifacts = _write_formula_consistency_artifacts(root_path)
@@ -1186,10 +1201,12 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
     source_leak_artifacts = write_source_internal_leak_scan_artifacts(root_path)
     sql_value_artifacts = write_sql_value_inventory_artifacts(root_path)
     sql_dead_code_artifacts = write_sql_dead_code_scan_artifacts(root_path)
+    runtime_provenance_artifacts = write_runtime_artifact_provenance_artifacts(root_path)
     artifacts = {
         **cleanup_artifacts,
         **inventory_artifacts,
         **validation_artifacts,
+        **browser_render_artifacts,
         **summary_board_artifacts,
         **metric_semantic_artifact,
         **formula_consistency_artifacts,
@@ -1202,6 +1219,7 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
         **source_leak_artifacts,
         **sql_value_artifacts,
         **sql_dead_code_artifacts,
+        **runtime_provenance_artifacts,
     }
     _ensure_manifest_entries(
         root_path,
@@ -1215,6 +1233,8 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             "artifacts/full_app_validation/rendered_formula_results.json",
             "artifacts/full_app_validation/summary_metric_consistency_results.json",
             "artifacts/full_app_validation/workload_formula_results.json",
+            *BROWSER_RENDER_ARTIFACTS,
+            BROWSER_RENDER_GATE_REL,
             *FULL_APP_LAUNCH_ARTIFACTS,
             *RENDERED_UI_LEAK_ARTIFACTS,
             "artifacts/full_app_validation/action_click_manifest.json",
@@ -1224,6 +1244,8 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             SOURCE_INTERNAL_LEAK_RESULTS_REL,
             SQL_VALUE_INVENTORY_REL,
             SQL_DEAD_CODE_SCAN_REL,
+            RUNTIME_ARTIFACT_PROVENANCE_REL,
+            RUNTIME_ARTIFACT_PROVENANCE_GATE_REL,
         },
     )
     cleanup_manifest = _ensure_manifest_entries(
@@ -1260,6 +1282,8 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             "artifacts/full_app_validation/rendered_formula_results.json",
             "artifacts/full_app_validation/summary_metric_consistency_results.json",
             "artifacts/full_app_validation/workload_formula_results.json",
+            *BROWSER_RENDER_ARTIFACTS,
+            BROWSER_RENDER_GATE_REL,
             *FULL_APP_LAUNCH_ARTIFACTS,
             *RENDERED_UI_LEAK_ARTIFACTS,
             "artifacts/full_app_validation/action_click_manifest.json",
@@ -1269,6 +1293,8 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             SOURCE_INTERNAL_LEAK_RESULTS_REL,
             SQL_VALUE_INVENTORY_REL,
             SQL_DEAD_CODE_SCAN_REL,
+            RUNTIME_ARTIFACT_PROVENANCE_REL,
+            RUNTIME_ARTIFACT_PROVENANCE_GATE_REL,
             "artifacts/direct_sql_static_scan.json",
             "artifacts/session_open_static_scan.json",
             "artifacts/sql_performance_lint_findings.json",

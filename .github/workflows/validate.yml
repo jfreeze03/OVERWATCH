@@ -128,7 +128,7 @@ jobs:
         run: python -m unittest discover -s tests
 
       - name: Regenerate full app gauntlet proof artifacts
-        run: python -m unittest tests.test_full_app_gauntlet
+        run: python -m unittest tests.test_full_app_gauntlet tests.test_browser_render_gauntlet tests.test_runtime_artifact_provenance
 
       - name: Regenerate launch readiness proof artifacts
         run: python -m unittest tests.test_launch_readiness

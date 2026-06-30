@@ -115,7 +115,12 @@ def _row_container(payload: Any) -> tuple[list[dict[str, Any]], str]:
         for key in ("rows", "results", "actions", "checks", "features", "cases"):
             rows = payload.get(key)
             if isinstance(rows, list):
-                return [dict(row) for row in rows if isinstance(row, Mapping)], key
+                machine_rows = [dict(row) for row in rows if isinstance(row, Mapping)]
+                if machine_rows:
+                    return machine_rows, key
+                if any(payload.get(field) is not None for field in ("producer", "source", "skipped", "passed")):
+                    return [dict(payload)], "self"
+                return [], key
         return [dict(payload)], "self"
     return [], "none"
 

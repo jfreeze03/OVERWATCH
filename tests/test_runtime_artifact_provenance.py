@@ -157,6 +157,40 @@ class RuntimeArtifactProvenanceTests(unittest.TestCase):
         self.assertEqual(result["rows"][0]["section"], "Executive Landing")
         self.assertEqual(result["rows"][0]["workflow"], "Overview")
 
+    def test_skipped_browser_smoke_top_level_proof_is_machine_readable(self):
+        from tools.contracts.runtime_artifact_provenance import (
+            annotate_runtime_artifacts,
+            build_runtime_artifact_provenance,
+        )
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            root = Path(tmp)
+            artifact = root / "artifacts/full_app_validation/browser_smoke_results.json"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text(
+                json.dumps(
+                    {
+                        "producer": "browser_smoke_runner",
+                        "source": "browser_smoke_results",
+                        "proof_source": "browser_skipped",
+                        "rows": [],
+                        "skipped": True,
+                        "passed": True,
+                        "raw_sql_included": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            annotate_runtime_artifacts(root)
+            result = build_runtime_artifact_provenance(
+                root,
+                required_rels=("artifacts/full_app_validation/browser_smoke_results.json",),
+            )
+
+        self.assertTrue(result["passed"], result)
+        self.assertEqual(result["row_count"], 1)
+        self.assertEqual(result["rows"][0]["producer"], "browser_smoke_runner")
+
     def test_internal_live_fixture_source_requires_waiver(self):
         from tools.contracts.runtime_artifact_provenance import build_runtime_artifact_provenance
 

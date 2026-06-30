@@ -465,7 +465,7 @@ def _account_usage_fallback_contract(section: str) -> ButtonActionContract:
         section=section,
         workflow="",
         key_pattern=r"account_usage_fallback",
-        label_pattern=r"\b(Search Account Usage fallback|Account Usage fallback)\b",
+        label_pattern=r"\b(Search Account Usage fallback|Account Usage fallback|Search deep history fallback|deep history fallback)\b",
         action_type="account_usage_fallback",
         expected_artifact="explicit_account_usage_fallback_query",
         heavy_query_allowed=True,
@@ -635,6 +635,21 @@ def _active_detail_action_contracts() -> Iterable[ButtonActionContract]:
             expected_snowflake_execution_count=1,
         )
     yield ButtonActionContract(
+        section="Settings",
+        workflow="Default",
+        exact_key="settings_open_setup_health",
+        label_pattern=r"\bOpen Setup Health\b",
+        action_type="setup_health",
+        expected_artifact="setup_health_panel_state",
+        requires_admin=True,
+        expected_rerun=False,
+        expected_query_count=0,
+        expected_session_open_count=0,
+        expected_direct_sql_count=0,
+        expected_metadata_probe_count=0,
+        expected_snowflake_execution_count=0,
+    )
+    yield ButtonActionContract(
         section="Settings/Admin Setup Health",
         workflow="Setup Health",
         exact_key="decision_setup_health_refresh",
@@ -667,6 +682,51 @@ def iter_button_action_contracts() -> Iterable[ButtonActionContract]:
         yield _account_usage_fallback_contract(section)
         yield _admin_contract(section)
         yield _advanced_contract(section)
+    for group, section in (
+        ("MONITORING CORE", "Executive Landing"),
+        ("MONITORING CORE", "DBA Control Room"),
+        ("MONITORING CORE", "Alert Center"),
+        ("FINANCIAL CONTROL", "Cost & Contract"),
+        ("OPERATIONS", "Workload Operations"),
+        ("SECURITY", "Security Monitoring"),
+    ):
+        yield ButtonActionContract(
+            section="Settings",
+            workflow="Default",
+            exact_key=f"nav_btn_{group}_{section}",
+            label_pattern=rf"\b{re.escape(section)}\b",
+            action_type="route",
+            expected_target_section=section,
+            expected_state_updates={"nav_section": section},
+            exact_route_key=_key_token(section),
+            expected_query_budget_context="route_action",
+            expected_budget=0,
+            expected_actual_boundaries={},
+            expected_query_count=0,
+            expected_session_open_count=0,
+            expected_direct_sql_count=0,
+            expected_metadata_probe_count=0,
+            expected_snowflake_execution_count=0,
+            expected_rerun=False,
+        )
+    for panel_key, label in (
+        ("sidebar_panel_advanced_scope", "Advanced Scope"),
+        ("sidebar_panel_settings", "Settings"),
+    ):
+        yield ButtonActionContract(
+            section="Settings",
+            workflow="Default",
+            exact_key=panel_key,
+            label_pattern=rf"\b{re.escape(label)}\b",
+            action_type="local_state",
+            expected_state_updates={"sidebar_panel": panel_key.removeprefix("sidebar_panel_")},
+            expected_query_count=0,
+            expected_session_open_count=0,
+            expected_direct_sql_count=0,
+            expected_metadata_probe_count=0,
+            expected_snowflake_execution_count=0,
+            expected_rerun=False,
+        )
     yield from _active_detail_action_contracts()
     yield ButtonActionContract(
         section="*",

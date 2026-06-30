@@ -481,3 +481,7 @@ __all__ = [
     "evaluate_browser_render_gate",
     "write_browser_render_gauntlet_artifacts",
 ]
+
+
+if __name__ == "__main__":
+    write_browser_render_gauntlet_artifacts()

@@ -64,6 +64,11 @@ from runtime_state import (
     set_state,
     sync_exceptions_only_mode,
 )
+from sections.decision_workspace_setup_health import (
+    SETUP_HEALTH_PANEL_OPEN_KEY,
+    open_decision_setup_health,
+    render_decision_setup_health_panel,
+)
 from theme import render_theme_picker
 from utils.cache import clear_all_cache
 from utils.company_filter import get_environment_label
@@ -401,6 +406,16 @@ def render_sidebar(
                 key=IDLE_TIMEOUT_SECONDS,
                 help="Pauses OVERWATCH Snowflake queries after inactivity. Resume keeps Live Monitor auto-refresh off.",
             )
+            if admin_access_allowed:
+                st.button(
+                    "Open Setup Health",
+                    key="settings_open_setup_health",
+                    type="secondary",
+                    width="stretch",
+                    on_click=open_decision_setup_health,
+                )
+                if bool(get_state(SETUP_HEALTH_PANEL_OPEN_KEY, False)):
+                    render_decision_setup_health_panel(session=get_state(SF_SESSION))
 
     return SidebarState(
         active_company=active_company,

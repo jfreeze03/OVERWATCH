@@ -192,7 +192,7 @@ def render():
         st.session_state["qs_autorun"] = target_kind in {"query_id", "query_signature"}
 
     st.subheader("Query Search & History")
-    st.caption("Search recent mart-backed query detail first. Account Usage fallback runs only after explicit request.")
+    st.caption("Search recent query detail first. Deep history fallback runs only after explicit request.")
     if target_warehouse:
         st.caption(f"Focused on finding target: warehouse {target_warehouse}")
         st.session_state.setdefault("qs_warehouse", target_warehouse)
@@ -220,7 +220,7 @@ def render():
     st.caption(
         "Exact query ID is the cheapest path. Prefix search avoids a leading wildcard. "
         "Contains search is capped at 7 days to avoid broad query-text scans. "
-        "Snowflake Search Optimization does not accelerate ACCOUNT_USAGE query-text history."
+        "Deep history search is slower and loads only after confirmation."
     )
     global_date_label = _global_date_label()
     if global_date_label:
@@ -229,22 +229,22 @@ def render():
     autorun = bool(st.session_state.pop("qs_autorun", False))
     explicit_search = st.button("Search recent mart detail", key="qs_run")
     account_usage_fallback = False
-    with st.expander("Advanced Account Usage fallback", expanded=False):
+    with st.expander("Advanced deep history fallback", expanded=False):
         st.warning(
-            "Account Usage fallback can scan Snowflake history and may be slower or costlier. "
-            "Use recent mart detail first unless an admin specifically needs older proof."
+            "Deep history fallback may be slower or costlier. "
+            "Use recent query detail first unless an administrator specifically needs older evidence."
         )
         fallback_confirmed = os.environ.get("OVERWATCH_TEST_MODE") == "1" or st.checkbox(
-            "I understand this may scan Account Usage.",
+            "I understand this may scan deeper history.",
             key="qs_account_usage_fallback_confirmed",
         )
         account_usage_requested = st.button(
-            "Search Account Usage fallback",
+            "Search deep history fallback",
             key="qs_account_usage_fallback",
         )
         if account_usage_requested and not fallback_confirmed:
             with query_budget_context("account_usage_fallback", section="Workload Operations", workflow="Query Investigation", budget=1):
-                st.warning("Confirm Account Usage fallback before running this slower history search.")
+                st.warning("Confirm deep history fallback before running this slower search.")
             account_usage_fallback = False
         else:
             account_usage_fallback = bool(account_usage_requested)

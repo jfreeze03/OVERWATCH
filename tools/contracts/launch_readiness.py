@@ -1816,6 +1816,17 @@ def _settings_live_closure_results(payloads: Mapping[str, Any]) -> dict[str, Any
     settings_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/settings_action_results.json"))]
     live_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/live_feature_results.json"))]
 
+    def settings_row_requires_admin_gate(row: Mapping[str, Any]) -> bool:
+        action_type = str(row.get("action_type") or "")
+        section = str(row.get("section") or "")
+        return (
+            section == "Settings/Admin Setup Health"
+            or action_type in {"admin_load", "advanced_load", "setup_health", "account_usage_fallback"}
+            or bool(row.get("requires_admin"))
+            or bool(row.get("heavy_query_allowed"))
+            or bool(row.get("account_usage_allowed"))
+        )
+
     def row_passed(row: Mapping[str, Any]) -> bool:
         clicked_or_skipped = bool(row.get("clicked")) or bool(row.get("skip_reason"))
         observed_contexts = _as_list(
@@ -1824,11 +1835,13 @@ def _settings_live_closure_results(payloads: Mapping[str, Any]) -> dict[str, Any
             or row.get("observed_query_budget_contexts")
             or row.get("marker_budget_runtime_contexts")
         )
-        budget_ok = bool(observed_contexts) or bool(row.get("skip_reason"))
+        expected_context = str(row.get("expected_query_budget_context") or "")
+        budget_ok = bool(observed_contexts) or not expected_context or bool(row.get("skip_reason"))
+        admin_ok = (not settings_row_requires_admin_gate(row)) or bool(row.get("admin_or_advanced_gated", True))
         return (
             clicked_or_skipped
             and budget_ok
-            and bool(row.get("admin_or_advanced_gated", True))
+            and admin_ok
             and row.get("raw_error_visible_daily") is not True
         )
 
@@ -2305,9 +2318,23 @@ def _product_gauntlet_release_results(root: Path, payloads: Mapping[str, Any], l
         or not bool(row.get("threshold_passed", True))
         or _as_list(row.get("threshold_failures"))
     ]
+    def settings_row_requires_admin_gate(row: Mapping[str, Any]) -> bool:
+        action_type = str(row.get("action_type") or "")
+        section = str(row.get("section") or "")
+        return (
+            section == "Settings/Admin Setup Health"
+            or action_type in {"admin_load", "advanced_load", "setup_health", "account_usage_fallback"}
+            or bool(row.get("requires_admin"))
+            or bool(row.get("heavy_query_allowed"))
+            or bool(row.get("account_usage_allowed"))
+        )
+
     settings_gaps = [
         row for row in settings_rows
-        if not bool(row.get("admin_or_advanced_gated"))
+        if (
+            settings_row_requires_admin_gate(row)
+            and not bool(row.get("admin_or_advanced_gated"))
+        )
         or bool(row.get("raw_error_visible_daily"))
         or not bool(row.get("sanitized_error_state", True))
         or not _owner_skipped(row) and not bool(row.get("clicked"))
@@ -2985,13 +3012,32 @@ def _raw_invariant_artifacts(root: Path, payloads: Mapping[str, Any]) -> tuple[d
             case_failures.append({"section": row.get("section"), "reason": "row_count_mismatch"})
     add_check("case_payload_fields_and_rows", not case_failures, "Case payloads must include release fields and match visible row counts.", count=len(case_failures), details=case_failures)
 
+    def settings_row_requires_admin_gate(row: Mapping[str, Any]) -> bool:
+        action_type = str(row.get("action_type") or "")
+        section = str(row.get("section") or "")
+        return (
+            section == "Settings/Admin Setup Health"
+            or action_type in {"admin_load", "advanced_load", "setup_health", "account_usage_fallback"}
+            or bool(row.get("requires_admin"))
+            or bool(row.get("heavy_query_allowed"))
+            or bool(row.get("account_usage_allowed"))
+        )
+
     settings_failures = [
         row for row in settings_rows
         if not (
             bool(row.get("clicked"))
             or _owner_skipped(row)
         )
-        or (bool(row.get("clicked")) and not _raw_observed_contexts(row))
+        or (
+            bool(row.get("clicked"))
+            and str(row.get("expected_query_budget_context") or "")
+            and not _raw_observed_contexts(row)
+        )
+        or (
+            settings_row_requires_admin_gate(row)
+            and not bool(row.get("admin_or_advanced_gated", True))
+        )
         or row.get("raw_error_visible_daily") is True
     ]
     add_check("settings_actions_clicked_or_owner_skipped", not settings_failures, "Settings/Admin actions must be clicked or owner-skipped, budgeted, and sanitized.", count=len(settings_failures))

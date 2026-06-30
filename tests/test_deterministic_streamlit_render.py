@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 class DeterministicStreamlitRenderTests(unittest.TestCase):
     def test_primary_sections_render_from_runtime_payloads(self):
         from tools.contracts.deterministic_streamlit_render import (
+            ADDITIONAL_SURFACES,
             build_deterministic_streamlit_render_results,
             evaluate_deterministic_render_gate,
         )
@@ -34,7 +35,13 @@ class DeterministicStreamlitRenderTests(unittest.TestCase):
                 )
             ],
             "artifacts/full_app_validation/rendered_fragments.json": [
-                {"section": section, "workflow": "Overview", "text": f"{section} summary board"}
+                {
+                    "section": section,
+                    "workflow": "Overview",
+                    "text": f"{section} summary board",
+                    "render_call_path": f"sections.{section}.render",
+                    "runtime_source": "actual_section_render",
+                }
                 for section in (
                     "Executive Landing",
                     "DBA Control Room",
@@ -43,6 +50,16 @@ class DeterministicStreamlitRenderTests(unittest.TestCase):
                     "Workload Operations",
                     "Security Monitoring",
                 )
+            ]
+            + [
+                {
+                    "section": section,
+                    "workflow": workflow,
+                    "text": f"{section} {workflow} rendered",
+                    "render_call_path": f"runtime.{section}.{workflow}",
+                    "runtime_source": "actual_section_render",
+                }
+                for section, workflow in ADDITIONAL_SURFACES
             ],
             "artifacts/full_app_validation/query_search_results.json": [
                 {"case": "render_no_click", "passed": True}
@@ -59,6 +76,7 @@ class DeterministicStreamlitRenderTests(unittest.TestCase):
         self.assertTrue(gate["passed"], gate)
         self.assertEqual(results["synthetic_fallback_count"], 0)
         self.assertTrue(all(row["source"] == "deterministic_streamlit_rendered" for row in results["rows"]))
+        self.assertTrue(all(row["render_call_path"] for row in results["rows"]))
 
     def test_missing_runtime_fragment_is_not_synthetic_success(self):
         from tools.contracts.deterministic_streamlit_render import build_deterministic_streamlit_render_results

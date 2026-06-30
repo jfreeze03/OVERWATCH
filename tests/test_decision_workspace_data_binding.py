@@ -2516,9 +2516,9 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertNotIn("qs_autorun", warehouse_block)
         self.assertNotIn("filter_existing_columns(", source)
         self.assertNotIn("get_session()", source)
-        self.assertIn('with st.expander("Advanced Account Usage fallback"', source)
-        self.assertIn('"I understand this may scan Account Usage."', source)
-        self.assertIn('"Search Account Usage fallback"', source)
+        self.assertIn('with st.expander("Advanced deep history fallback"', source)
+        self.assertIn('"I understand this may scan deeper history."', source)
+        self.assertIn('"Search deep history fallback"', source)
         self.assertIn("ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED", source)
         self.assertIn('query_boundary="account_usage"', source)
 

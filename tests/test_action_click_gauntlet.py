@@ -66,3 +66,4 @@ class ActionClickGauntletTests(unittest.TestCase):
         self.assertTrue(
             any(row.get("failure_reason") == "rendered_action_without_click_result" for row in results["failures"])
         )
+        self.assertTrue(any(row.get("action_key") == "view_all_priorities" for row in results["rows"]))

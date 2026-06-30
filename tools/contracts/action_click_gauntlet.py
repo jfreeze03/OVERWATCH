@@ -122,8 +122,11 @@ def build_action_click_results(payloads: Mapping[str, Any]) -> tuple[dict[str, A
         "generated_at": manifest["generated_at"],
         "passed": not failures,
         "failure_count": len(failures),
+        "action_count": len(actions),
         "clicked_count": sum(1 for row in actions if bool(row.get("clicked"))),
         "failed_action_count": len(failures),
+        "rows": actions,
+        "actions": actions,
         "failures": failures,
         "raw_sql_included": False,
     }
@@ -191,3 +194,7 @@ __all__ = [
     "evaluate_live_feature_gate",
     "write_action_click_gauntlet_artifacts",
 ]
+
+
+if __name__ == "__main__":
+    write_action_click_gauntlet_artifacts()

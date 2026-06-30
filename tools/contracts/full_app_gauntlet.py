@@ -800,12 +800,27 @@ def recompute_full_app_invariants(payloads: Mapping[str, Any], *, root: Path | N
 
     _unclicked_without_current_skip(settings_rows, "recomputed_settings_click_or_skip", "Settings/Admin action")
     _unclicked_without_current_skip(live_rows, "recomputed_live_click_or_skip", "Live feature")
+    def _settings_row_requires_admin_gate(row: Any) -> bool:
+        mapping = _as_mapping(row)
+        action_type = str(mapping.get("action_type") or "")
+        section = str(mapping.get("section") or "")
+        return (
+            section == "Settings/Admin Setup Health"
+            or action_type in {"admin_load", "advanced_load", "setup_health", "account_usage_fallback"}
+            or bool(mapping.get("requires_admin"))
+            or bool(mapping.get("heavy_query_allowed"))
+            or bool(mapping.get("account_usage_allowed"))
+        )
+
     settings_budget_failures = [
         row for row in settings_rows
         if bool(_as_mapping(row).get("clicked"))
         and (
             not str(_as_mapping(row).get("control_key") or "")
-            or not bool(_as_mapping(row).get("admin_or_advanced_gated", True))
+            or (
+                _settings_row_requires_admin_gate(row)
+                and not bool(_as_mapping(row).get("admin_or_advanced_gated", True))
+            )
             or not bool(_as_mapping(row).get("sanitized_error_state", True))
             or bool(_as_mapping(row).get("raw_error_visible_daily"))
             or (

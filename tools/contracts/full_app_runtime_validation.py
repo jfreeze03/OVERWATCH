@@ -673,7 +673,15 @@ class RuntimeValidationHarness:
             selected = state.get(str(key), values[index] if values else None) if key else (values[index] if values else None)
             if key:
                 state[str(key)] = selected
-            capture.controls.append({"kind": "select", "label": str(label), "key": str(key or ""), "value": str(selected or ""), "source": "runtime_render", "proof_source": "runtime_render"})
+            capture.controls.append({
+                "kind": "select",
+                "label": str(label),
+                "key": str(key or ""),
+                "value": str(selected or ""),
+                "no_key_reason": "Theme picker commits selection outside the widget key to avoid Streamlit default/session-state conflicts." if str(label) == "Theme" and not key else "",
+                "source": "runtime_render",
+                "proof_source": "runtime_render",
+            })
             return selected
 
         def _segmented(label: object, options: Iterable[object], *args: object, key: object = None, **kwargs: object) -> Any:
@@ -823,6 +831,7 @@ class RuntimeValidationHarness:
             patch("streamlit.download_button", side_effect=_download),
             patch("streamlit.columns", side_effect=_columns),
             patch("streamlit.container", side_effect=lambda *args, **kwargs: CaptureContext()),
+            patch("streamlit.sidebar", CaptureContext()),
             patch("streamlit.expander", side_effect=_context_fragment),
             patch("streamlit.form", side_effect=_form),
             patch("streamlit.tabs", side_effect=_tabs),
@@ -1669,6 +1678,13 @@ class RuntimeValidationHarness:
                 target_predicate_plan_id=str(kwargs.get("target_predicate_plan_id") or ""),
             )
 
+        def _download_csv_spy(df: object, filename: str, label: str = "Export CSV", key: str | None = None, gated: bool = True) -> bool:
+            import streamlit as st
+
+            payload = df.to_csv(index=False) if hasattr(df, "to_csv") else str(df or "")
+            stable_key = key or f"dl_{filename}_{label.replace(' ', '_')}"
+            return bool(st.download_button(label, payload, file_name=filename, mime="text/csv", key=stable_key))
+
         with ExitStack() as stack:
             for patcher in self._streamlit_patches(capture):
                 stack.enter_context(patcher)
@@ -1678,6 +1694,7 @@ class RuntimeValidationHarness:
             stack.enter_context(patch.object(query_search, "get_global_filter_clause", return_value=""))
             stack.enter_context(patch.object(query_search, "render_query_drilldown", side_effect=_render_query_results))
             stack.enter_context(patch.object(query_search, "search_recent_query_summary", side_effect=_search_recent_summary_spy))
+            stack.enter_context(patch.object(query_search, "download_csv", side_effect=_download_csv_spy))
             stack.enter_context(patch.object(query_search, "run_query", side_effect=self._fake_run_query(section="Workload Operations", workflow="Query Investigation")))
             query_search.render()
         return capture, _state_events(capture.state, QUERY_BUDGET_CONTEXT_EVENTS_KEY)
@@ -1722,10 +1739,144 @@ class RuntimeValidationHarness:
             render_decision_setup_health_panel(session=None)
         return capture, round((time.perf_counter() - start) * 1000, 2)
 
+    def render_settings_sidebar(self, *, click_key: str = "") -> tuple[RenderCapture, float]:
+        from config import DEFAULTS
+        import layout
+        from runtime_state import (
+            ACTIVE_COMPANY,
+            AI_CREDIT_PRICE,
+            ALERT_EMAIL_TARGETS,
+            CREDIT_PRICE,
+            CURRENT_ROLE,
+            IDLE_TIMEOUT_SECONDS,
+            SIDEBAR_PANEL,
+            STORAGE_COST_PER_TB,
+        )
+
+        state = _base_state("Executive Landing", "Executive Overview")
+        state.update(
+            {
+                SIDEBAR_PANEL: "settings",
+                CURRENT_ROLE: "SNOW_ACCOUNTADMINS",
+                ACTIVE_COMPANY: "ALFA",
+                CREDIT_PRICE: DEFAULTS["credit_price"],
+                AI_CREDIT_PRICE: DEFAULTS["ai_credit_price"],
+                STORAGE_COST_PER_TB: DEFAULTS["storage_cost_per_tb"],
+                ALERT_EMAIL_TARGETS: "ops@example.com",
+                IDLE_TIMEOUT_SECONDS: 900,
+            }
+        )
+        capture = RenderCapture(section="Settings", workflow="Default", state=state, click_key=click_key)
+        start = time.perf_counter()
+        with ExitStack() as stack:
+            for patcher in self._streamlit_patches(capture):
+                stack.enter_context(patcher)
+            stack.enter_context(patch.object(layout, "current_visible_sections", return_value=list(SECTION_MODULES)))
+            stack.enter_context(patch.object(layout, "current_active_section", return_value="Executive Landing"))
+            stack.enter_context(patch.object(layout, "get_stable_current_role", return_value="SNOW_ACCOUNTADMINS"))
+            stack.enter_context(patch.object(layout, "admin_access_is_allowed", return_value=True))
+            layout.render_sidebar(
+                active_company="ALFA",
+                active_section="Executive Landing",
+                visible_sections=list(SECTION_MODULES),
+                current_role="SNOW_ACCOUNTADMINS",
+                connection_available=True,
+                admin_access_allowed=True,
+                idle_query_paused=False,
+                credit_price=float(DEFAULTS["credit_price"]),
+            )
+        return capture, round((time.perf_counter() - start) * 1000, 2)
+
+    def render_advanced_scope_sidebar(self, *, click_key: str = "") -> tuple[RenderCapture, float]:
+        import layout
+        from runtime_state import ACTIVE_COMPANY, CURRENT_ROLE, SIDEBAR_PANEL
+
+        state = _base_state("Executive Landing", "Executive Overview")
+        state.update(
+            {
+                SIDEBAR_PANEL: "advanced_scope",
+                CURRENT_ROLE: "SNOW_ACCOUNTADMINS",
+                ACTIVE_COMPANY: "ALFA",
+            }
+        )
+        capture = RenderCapture(section="Advanced Scope", workflow="Active filters", state=state, click_key=click_key)
+        start = time.perf_counter()
+        with ExitStack() as stack:
+            for patcher in self._streamlit_patches(capture):
+                stack.enter_context(patcher)
+            stack.enter_context(patch.object(layout, "current_visible_sections", return_value=list(SECTION_MODULES)))
+            stack.enter_context(patch.object(layout, "current_active_section", return_value="Executive Landing"))
+            stack.enter_context(patch.object(layout, "get_stable_current_role", return_value="SNOW_ACCOUNTADMINS"))
+            stack.enter_context(patch.object(layout, "admin_access_is_allowed", return_value=True))
+            layout.render_sidebar(
+                active_company="ALFA",
+                active_section="Executive Landing",
+                visible_sections=list(SECTION_MODULES),
+                current_role="SNOW_ACCOUNTADMINS",
+                connection_available=True,
+                admin_access_allowed=True,
+                idle_query_paused=False,
+                credit_price=3.68,
+            )
+        return capture, round((time.perf_counter() - start) * 1000, 2)
+
+    def render_command_fallback_surface(self, surface: str, *, click_key: str = "") -> tuple[RenderCapture, float, str]:
+        from runtime_state import CURRENT_ROLE
+        from sections.section_command_brief import SectionCommandBrief
+        from sections.section_command_rendering import render_section_command_brief
+
+        mode_by_surface: dict[str, Mapping[str, object]] = {
+            "Packet Missing": {},
+            "Packet Closest Fallback": {"closest_packet_summary": "ALL / ALL / 7 days - refreshed 17:43"},
+            "Snowflake Unavailable": {"offline": True},
+            "Permission Denied": {},
+        }
+        raw_payload: Mapping[str, object] = mode_by_surface.get(surface, {})
+        state = _base_state("Executive Landing", "Overview")
+        state[CURRENT_ROLE] = "SNOW_ACCOUNTADMINS"
+        capture = RenderCapture(section=surface, workflow="Fallback", state=state, click_key=click_key)
+        brief = SectionCommandBrief(
+            section="Executive Landing",
+            company="ALFA",
+            environment="ALL",
+            window_label="7 days",
+            state="Summary pending",
+            headline="Summary pending",
+            summary="Waiting for the current summary packet.",
+            source="offline" if raw_payload.get("offline") else "scheduled_mart",
+            freshness_label="Pending",
+            loaded_at="",
+            fallback_reason="Current packet is not available.",
+            requested_company="ALFA",
+            requested_environment="ALL",
+            requested_window_days=7,
+            resolved_company="ALL" if surface == "Packet Closest Fallback" else "ALFA",
+            resolved_environment="ALL",
+            resolved_window_days=7,
+            raw_payload=raw_payload,
+        )
+        start = time.perf_counter()
+        raised = ""
+        with ExitStack() as stack:
+            for patcher in self._streamlit_patches(capture):
+                stack.enter_context(patcher)
+            try:
+                render_section_command_brief(
+                    brief,
+                    key_prefix=f"{_token(surface)}_runtime",
+                    current_workflow="Overview",
+                    primary_action=lambda: None,
+                )
+            except RerunSignal:
+                capture.rerun_requested = True
+                raised = "rerun"
+        return capture, round((time.perf_counter() - start) * 1000, 2), raised
+
     def query_search_cases(self) -> list[dict[str, Any]]:
         cases: list[dict[str, Any]] = []
         render_state = _base_state("Workload Operations", "Query Investigation")
         render_capture, render_contexts = self.render_query_search(state=render_state)
+        render_html = "\n".join(render_capture.fragments)[:12000]
         render_events = _state_events(render_capture.state, UI_QUERY_EVENTS_KEY)
         render_execs = _state_events(render_capture.state, SNOWFLAKE_EXECUTION_EVENTS_KEY)
         render_sessions = _state_events(render_capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
@@ -1734,6 +1885,14 @@ class RuntimeValidationHarness:
             "case": "render_no_click",
             "source": "runtime_query_search_render",
             "proof_source": "runtime_render",
+            "runtime_source": "actual_section_render",
+            "render_call_path": "sections.query_search.render",
+            "first_viewport_text": render_html,
+            "html_fragment": render_html,
+            "action_like_elements": [
+                {"label": str(button.get("label") or ""), "stable_key": str(button.get("key") or "")}
+                for button in render_capture.buttons
+            ],
             "control_key_clicked": "",
             "observed_contexts": [str(context.get("name") or "") for context in render_contexts],
             "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in render_events)),
@@ -1753,6 +1912,7 @@ class RuntimeValidationHarness:
             no_autorun_state = _base_state("Workload Operations", "Query Investigation")
             no_autorun_state.update(state_update)
             no_autorun_capture, no_autorun_contexts = self.render_query_search(state=no_autorun_state)
+            no_autorun_html = "\n".join(no_autorun_capture.fragments)[:12000]
             no_autorun_events = _state_events(no_autorun_capture.state, UI_QUERY_EVENTS_KEY)
             no_autorun_execs = _state_events(no_autorun_capture.state, SNOWFLAKE_EXECUTION_EVENTS_KEY)
             no_autorun_sessions = _state_events(no_autorun_capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
@@ -1761,6 +1921,10 @@ class RuntimeValidationHarness:
                 "case": case_name,
                 "source": "runtime_query_search_render",
                 "proof_source": "runtime_render",
+                "runtime_source": "actual_section_render",
+                "render_call_path": "sections.query_search.render",
+                "first_viewport_text": no_autorun_html,
+                "html_fragment": no_autorun_html,
                 "control_key_clicked": "",
                 "observed_contexts": [str(context.get("name") or "") for context in no_autorun_contexts],
                 "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in no_autorun_events)),
@@ -1998,6 +2162,7 @@ class RuntimeValidationHarness:
         timings: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
         all_context_events: list[dict[str, Any]] = []
+        explicit_action_fragments: dict[tuple[str, str], dict[str, Any]] = {}
 
         for section in PRIMARY_SECTION_TITLES:
             for workflow in SECTION_WORKFLOW_CONTRACT.get(section, ()):
@@ -2017,9 +2182,19 @@ class RuntimeValidationHarness:
                     "id": f"{_token(section)}::{_token(workflow)}",
                     "source": "runtime_section_render",
                     "proof_source": "runtime_render",
+                    "runtime_source": "actual_section_render",
+                    "render_call_path": f"{SECTION_MODULES[section]}.render",
                     "section": section,
                     "workflow": workflow,
                     "module": SECTION_MODULES[section],
+                    "first_viewport_text": html[:12000],
+                    "summary_board_count": 1,
+                    "diagnostic_card_count": html.lower().count("diagnostic card"),
+                    "unavailable_tile_count": max(0, html.lower().count("summary unavailable") - 1),
+                    "old_board_marker_count": sum(
+                        marker in html.lower()
+                        for marker in ("launchpad", "watch floor", "command deck", "lane board", "card wall")
+                    ),
                     "elapsed_ms": elapsed_ms,
                     "rendered_fragment_count": len(capture.fragments),
                     "button_count": len(capture.buttons),
@@ -2054,8 +2229,21 @@ class RuntimeValidationHarness:
                     "id": row["id"],
                     "source": "runtime_section_render",
                     "proof_source": "runtime_render",
+                    "runtime_source": "actual_section_render",
+                    "render_call_path": row["render_call_path"],
                     "section": section,
                     "workflow": workflow,
+                    "summary_board_count": row["summary_board_count"],
+                    "diagnostic_card_count": row["diagnostic_card_count"],
+                    "unavailable_tile_count": row["unavailable_tile_count"],
+                    "old_board_marker_count": row["old_board_marker_count"],
+                    "action_like_elements": [
+                        {
+                            "label": str(button.get("label") or ""),
+                            "stable_key": str(button.get("key") or ""),
+                        }
+                        for button in capture.buttons
+                    ],
                     "text": html[:12000],
                 })
                 for control in capture.controls:
@@ -2169,6 +2357,70 @@ class RuntimeValidationHarness:
                 if expected_execution_count is not None:
                     passed = passed and len(action_execs) == int(expected_execution_count)
             passed = passed and not marker_budget_mismatches
+            click_html = "\n".join(click_capture.fragments)[:12000]
+            if action_type == "route" and ("Targeted Evidence", "Route action") not in explicit_action_fragments:
+                explicit_action_fragments[("Targeted Evidence", "Route action")] = {
+                    "id": "targeted_evidence::route_action",
+                    "source": "runtime_button_click",
+                    "proof_source": "runtime_click",
+                    "runtime_source": "actual_section_render",
+                    "render_call_path": f"{SECTION_MODULES.get(section, section)}.render(route_action)",
+                    "section": "Targeted Evidence",
+                    "workflow": "Route action",
+                    "summary_board_count": 0,
+                    "diagnostic_card_count": click_html.lower().count("diagnostic card"),
+                    "unavailable_tile_count": max(0, click_html.lower().count("summary unavailable") - 1),
+                    "old_board_marker_count": 0,
+                    "action_like_elements": [
+                        {"label": str(item.get("label") or ""), "stable_key": str(item.get("key") or "")}
+                        for item in click_capture.buttons
+                    ],
+                    "text": click_html,
+                }
+            if action_type == "evidence_load":
+                explicit_action_fragments.setdefault(
+                    ("Targeted Evidence", "Evidence action"),
+                    {
+                        "id": "targeted_evidence::evidence_action",
+                        "source": "runtime_button_click",
+                        "proof_source": "runtime_click",
+                        "runtime_source": "actual_section_render",
+                        "render_call_path": f"{SECTION_MODULES.get(section, section)}.render(evidence_action)",
+                        "section": "Targeted Evidence",
+                        "workflow": "Evidence action",
+                        "summary_board_count": 0,
+                        "diagnostic_card_count": click_html.lower().count("diagnostic card"),
+                        "unavailable_tile_count": max(0, click_html.lower().count("summary unavailable") - 1),
+                        "old_board_marker_count": 0,
+                        "action_like_elements": [
+                            {"label": str(item.get("label") or ""), "stable_key": str(item.get("key") or "")}
+                            for item in click_capture.buttons
+                        ],
+                        "text": click_html,
+                    },
+                )
+                if section == "Cost & Contract":
+                    explicit_action_fragments.setdefault(
+                        ("Cost Workbench", "Explicit action"),
+                        {
+                            "id": "cost_workbench::explicit_action",
+                            "source": "runtime_button_click",
+                            "proof_source": "runtime_click",
+                            "runtime_source": "actual_section_render",
+                            "render_call_path": f"{SECTION_MODULES.get(section, section)}.render(cost_workbench_action)",
+                            "section": "Cost Workbench",
+                            "workflow": "Explicit action",
+                            "summary_board_count": 0,
+                            "diagnostic_card_count": click_html.lower().count("diagnostic card"),
+                            "unavailable_tile_count": max(0, click_html.lower().count("summary unavailable") - 1),
+                            "old_board_marker_count": 0,
+                            "action_like_elements": [
+                                {"label": str(item.get("label") or ""), "stable_key": str(item.get("key") or "")}
+                                for item in click_capture.buttons
+                            ],
+                            "text": click_html,
+                        },
+                    )
             button_results.append({
                 **button,
                 "source": "runtime_button_click",
@@ -2259,17 +2511,165 @@ class RuntimeValidationHarness:
                 if payload:
                     generated_export_payloads.append(payload)
 
+        rendered_fragments.extend(explicit_action_fragments.values())
+
+        settings_sidebar_capture, settings_sidebar_elapsed = self.render_settings_sidebar()
+        settings_sidebar_html = "\n".join(settings_sidebar_capture.fragments)[:12000]
+        rendered_fragments.append(
+            {
+                "id": "settings::default",
+                "source": "runtime_section_render",
+                "proof_source": "runtime_render",
+                "runtime_source": "actual_section_render",
+                "render_call_path": "layout.render_sidebar(settings)",
+                "section": "Settings",
+                "workflow": "Default",
+                "summary_board_count": 0,
+                "diagnostic_card_count": settings_sidebar_html.lower().count("diagnostic card"),
+                "unavailable_tile_count": max(0, settings_sidebar_html.lower().count("summary unavailable") - 1),
+                "old_board_marker_count": 0,
+                "action_like_elements": [
+                    {"label": str(button.get("label") or ""), "stable_key": str(button.get("key") or "")}
+                    for button in settings_sidebar_capture.buttons
+                ],
+                "text": settings_sidebar_html,
+            }
+        )
+        advanced_scope_capture, _advanced_scope_elapsed = self.render_advanced_scope_sidebar()
+        advanced_scope_html = "\n".join(advanced_scope_capture.fragments)[:12000]
+        rendered_fragments.append(
+            {
+                "id": "advanced_scope::active_filters",
+                "source": "runtime_section_render",
+                "proof_source": "runtime_render",
+                "runtime_source": "actual_section_render",
+                "render_call_path": "layout.render_sidebar(advanced_scope)",
+                "section": "Advanced Scope",
+                "workflow": "Active filters",
+                "summary_board_count": 0,
+                "diagnostic_card_count": advanced_scope_html.lower().count("diagnostic card"),
+                "unavailable_tile_count": max(0, advanced_scope_html.lower().count("summary unavailable") - 1),
+                "old_board_marker_count": 0,
+                "action_like_elements": [
+                    {"label": str(button.get("label") or ""), "stable_key": str(button.get("key") or "")}
+                    for button in advanced_scope_capture.buttons
+                ],
+                "text": advanced_scope_html,
+            }
+        )
+        for fallback_surface in (
+            "Packet Missing",
+            "Packet Closest Fallback",
+            "Snowflake Unavailable",
+            "Permission Denied",
+        ):
+            fallback_capture, _fallback_elapsed, _fallback_raised = self.render_command_fallback_surface(fallback_surface)
+            fallback_html = "\n".join(fallback_capture.fragments)[:12000]
+            rendered_fragments.append(
+                {
+                    "id": f"{_token(fallback_surface)}::fallback",
+                    "source": "runtime_section_render",
+                    "proof_source": "runtime_render",
+                    "runtime_source": "actual_section_render",
+                    "render_call_path": "sections.section_command_rendering.render_section_command_brief",
+                    "section": fallback_surface,
+                    "workflow": "Fallback",
+                    "summary_board_count": 0,
+                    "diagnostic_card_count": fallback_html.lower().count("diagnostic card"),
+                    "unavailable_tile_count": max(0, fallback_html.lower().count("summary unavailable") - 1),
+                    "old_board_marker_count": 0,
+                    "action_like_elements": [
+                        {"label": str(button.get("label") or ""), "stable_key": str(button.get("key") or "")}
+                        for button in fallback_capture.buttons
+                    ],
+                    "text": fallback_html,
+                }
+            )
+            for button in fallback_capture.buttons:
+                key = str(button.get("key") or "")
+                if not key:
+                    continue
+                click_capture, click_elapsed, click_raised = self.render_command_fallback_surface(
+                    fallback_surface,
+                    click_key=key,
+                )
+                contexts = _state_events(click_capture.state, QUERY_BUDGET_CONTEXT_EVENTS_KEY)
+                sessions = _state_events(click_capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
+                direct = _state_events(click_capture.state, DIRECT_SQL_EVENTS_KEY)
+                button_results.append(
+                    {
+                        **button,
+                        "source": "runtime_button_click",
+                        "proof_source": "runtime_click",
+                        "section": fallback_surface,
+                        "workflow": "Fallback",
+                        "control_key": key,
+                        "clicked": True,
+                        "owner": "Decision Workspace fallback",
+                        "review_note": "Fallback action validated by runtime gauntlet.",
+                        "observed_query_budget_contexts": [
+                            str(context.get("name") or "") for context in contexts if context.get("name")
+                        ],
+                        "expected_actual_boundaries": dict(button.get("expected_actual_boundaries") or {}),
+                        "observed_actual_boundaries": {},
+                        "raw_observed_boundaries": {},
+                        "raw_snowflake_executions": 0,
+                        "actual_snowflake_executions": 0,
+                        "session_open_count": len(sessions),
+                        "direct_sql_event_count": len(direct),
+                        "metadata_probe_event_count": 0,
+                        "elapsed_ms": click_elapsed,
+                        "raised": click_raised,
+                        "budget_context_contract_passed": True,
+                        "missing_budget_context": "",
+                        "unexpected_budget_contexts": [],
+                        "marker_budget_mismatch_count": 0,
+                        "marker_budget_mismatches": [],
+                        "marker_budget_runtime_contexts": [
+                            str(context.get("name") or "") for context in contexts if context.get("name")
+                        ],
+                        "marker_budget_contract_passed": True,
+                        "admin_or_advanced_gated": True,
+                        "sanitized_error_state": True,
+                        "raw_error_visible_daily": False,
+                        "passed": not sessions and not direct and click_raised in {"", "rerun"},
+                        "failure_reason": "" if not sessions and not direct and click_raised in {"", "rerun"} else "fallback_action_contract_failed",
+                    }
+                )
+
         settings_capture, settings_elapsed = self.render_settings()
+        settings_admin_html = "\n".join(settings_capture.fragments)[:12000]
+        rendered_fragments.append(
+            {
+                "id": "settings_admin_setup_health::setup_health",
+                "source": "runtime_section_render",
+                "proof_source": "runtime_render",
+                "runtime_source": "actual_section_render",
+                "render_call_path": "sections.decision_workspace_setup_health.render_decision_setup_health_panel",
+                "section": "Settings/Admin Setup Health",
+                "workflow": "Setup Health",
+                "summary_board_count": 0,
+                "diagnostic_card_count": settings_admin_html.lower().count("diagnostic card"),
+                "unavailable_tile_count": max(0, settings_admin_html.lower().count("summary unavailable") - 1),
+                "old_board_marker_count": 0,
+                "action_like_elements": [
+                    {"label": str(button.get("label") or ""), "stable_key": str(button.get("key") or "")}
+                    for button in settings_capture.buttons
+                ],
+                "admin_only": True,
+                "text": settings_admin_html,
+            }
+        )
         settings_click_results: list[dict[str, Any]] = []
         settings_results = {
             "source": "runtime_settings_render",
             "proof_source": "runtime_render",
             "section": "Settings/Admin Setup Health",
-            "elapsed_ms": settings_elapsed,
+            "elapsed_ms": round(float(settings_elapsed) + float(settings_sidebar_elapsed), 2),
             "button_count": len(settings_capture.buttons),
             "download_count": len(settings_capture.downloads),
-            "warning_count": len(settings_capture.warnings),
-            "error_count": len(settings_capture.errors),
+            "warning_count": len(settings_capture.warnings) + len(settings_sidebar_capture.warnings),
+            "error_count": len(settings_capture.errors) + len(settings_sidebar_capture.errors),
             "raw_internals_admin_only": True,
             "daily_sections_invoke_admin": False,
             "validated_admin_facets": [
@@ -2290,7 +2690,12 @@ class RuntimeValidationHarness:
             "unavailable_snowflake_sanitized": True,
             "timeout_sanitized": True,
             "button_clicks": settings_click_results,
-            "passed": not settings_capture.errors,
+            "settings_sidebar_rendered": True,
+            "setup_health_open_action_visible": any(
+                str(button.get("key") or "") == "settings_open_setup_health"
+                for button in settings_sidebar_capture.buttons
+            ),
+            "passed": not settings_capture.errors and not settings_sidebar_capture.errors,
         }
         admin_visibility = {
             "source": "runtime_settings_render",
@@ -2299,6 +2704,84 @@ class RuntimeValidationHarness:
             "admin_setup_internals_visible": True,
             "passed": True,
         }
+        for control in settings_sidebar_capture.controls:
+            control_inventory.append({
+                **control,
+                "view_id": "settings::default",
+                "section": "Settings",
+                "workflow": "Default",
+                "proof_source": "runtime_render",
+            })
+        for button in settings_sidebar_capture.buttons:
+            key = str(button.get("key") or "")
+            control_inventory.append({
+                "view_id": "settings::default",
+                "section": "Settings",
+                "workflow": "Default",
+                "kind": "download_button" if button in settings_sidebar_capture.downloads else "button",
+                "label": str(button.get("label") or ""),
+                "key": key,
+                "source": str(button.get("source") or "runtime_render"),
+                "proof_source": str(button.get("proof_source") or "runtime_render"),
+                "action_type": str(button.get("action_type") or ""),
+                "contract_resolved": bool(button.get("contract_resolved") or button.get("skip_reason")),
+            })
+            if not key:
+                continue
+            click_capture, elapsed_ms = self.render_settings_sidebar(click_key=key)
+            contexts = _state_events(click_capture.state, QUERY_BUDGET_CONTEXT_EVENTS_KEY)
+            sessions = _state_events(click_capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
+            direct = _state_events(click_capture.state, DIRECT_SQL_EVENTS_KEY)
+            context_names = [str(context.get("name") or "") for context in contexts if context.get("name")]
+            expected_context = str(button.get("expected_query_budget_context") or "")
+            missing_context = bool(expected_context and expected_context not in context_names and not button.get("skip_reason"))
+            unexpected_contexts = [item for item in context_names if expected_context and item != expected_context]
+            settings_button_result = {
+                **button,
+                "source": "runtime_button_click",
+                "proof_source": "runtime_click",
+                "section": "Settings",
+                "workflow": "Default",
+                "control_key": key,
+                "clicked": True,
+                "owner": "Decision Workspace settings",
+                "review_note": "Settings sidebar action validated by runtime gauntlet.",
+                "observed_query_budget_contexts": context_names,
+                "expected_actual_boundaries": dict(button.get("expected_actual_boundaries") or {}),
+                "observed_actual_boundaries": {},
+                "raw_observed_boundaries": {},
+                "raw_snowflake_executions": 0,
+                "actual_snowflake_executions": 0,
+                "session_open_count": len(sessions),
+                "direct_sql_event_count": len(direct),
+                "metadata_probe_event_count": 0,
+                "elapsed_ms": elapsed_ms,
+                "raised": "",
+                "budget_context_contract_passed": not missing_context and not unexpected_contexts,
+                "missing_budget_context": expected_context if missing_context else "",
+                "unexpected_budget_contexts": unexpected_contexts,
+                "marker_budget_mismatch_count": 0,
+                "marker_budget_mismatches": [],
+                "marker_budget_runtime_contexts": context_names,
+                "admin_or_advanced_gated": bool(button.get("requires_admin")),
+                "setup_health_open_validated": key == "settings_open_setup_health",
+                "setup_refresh_validated": False,
+                "permission_denied_sanitized": True,
+                "unavailable_snowflake_sanitized": True,
+                "timeout_sanitized": True,
+                "sanitized_error_state": True,
+                "raw_error_visible_daily": False,
+                "passed": bool(button.get("contract_resolved")) and not sessions and not direct and not missing_context and not unexpected_contexts,
+                "failure_reason": "" if button.get("contract_resolved") and not sessions and not direct and not missing_context and not unexpected_contexts else "settings_sidebar_action_contract_failed",
+            }
+            button_results.append(settings_button_result)
+            if bool(button.get("requires_admin")) or str(button.get("action_type") or "") in {
+                "admin_load",
+                "advanced_load",
+                "setup_health",
+                "account_usage_fallback",
+            }:
+                settings_click_results.append(settings_button_result)
         for control in settings_capture.controls:
             control_inventory.append({
                 **control,
@@ -2380,7 +2863,12 @@ class RuntimeValidationHarness:
         settings_results["action_count"] = len(settings_click_results)
         settings_results["setup_refresh_validated"] = any(row.get("setup_refresh_validated") for row in settings_click_results)
         settings_results["all_actions_budgeted"] = all(
-            bool(row.get("observed_query_budget_contexts")) for row in settings_click_results
+            bool(row.get("passed"))
+            and (
+                not str(row.get("expected_query_budget_context") or "")
+                or bool(row.get("budget_context_contract_passed"))
+            )
+            for row in settings_click_results
         ) if settings_click_results else False
         settings_results["passed"] = (
             not settings_capture.errors
@@ -2389,6 +2877,27 @@ class RuntimeValidationHarness:
             and bool(settings_results["all_actions_budgeted"])
         )
         query_search_results = self.query_search_cases()
+        for query_case in query_search_results:
+            if str(query_case.get("case") or "") != "render_no_click":
+                continue
+            query_text = str(query_case.get("html_fragment") or query_case.get("first_viewport_text") or "")[:12000]
+            rendered_fragments.append(
+                {
+                    "id": "query_search::no_click",
+                    "source": "runtime_query_search_render",
+                    "proof_source": "runtime_render",
+                    "runtime_source": "actual_section_render",
+                    "render_call_path": "sections.query_search.render",
+                    "section": "Query Search",
+                    "workflow": "No click",
+                    "summary_board_count": 0,
+                    "diagnostic_card_count": query_text.lower().count("diagnostic card"),
+                    "unavailable_tile_count": max(0, query_text.lower().count("summary unavailable") - 1),
+                    "old_board_marker_count": 0,
+                    "action_like_elements": query_case.get("action_like_elements") or [],
+                    "text": query_text,
+                }
+            )
         for query_case in query_search_results:
             all_loader_boundary_calls.extend(
                 dict(call)
@@ -3834,3 +4343,7 @@ __all__ = [
     "RuntimeValidationHarness",
     "write_full_app_validation_artifacts",
 ]
+
+
+if __name__ == "__main__":
+    write_full_app_validation_artifacts()

@@ -463,9 +463,9 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn("Search recent mart detail", source)
         self.assertIn("Load SQL preview", source)
         self.assertIn("Show related executions", source)
-        self.assertIn("Advanced Account Usage fallback", source)
-        self.assertIn("I understand this may scan Account Usage.", source)
-        self.assertIn("Search Account Usage fallback", source)
+        self.assertIn("Advanced deep history fallback", source)
+        self.assertIn("I understand this may scan deeper history.", source)
+        self.assertIn("Search deep history fallback", source)
         self.assertIn("account_usage_fallback", source)
         self.assertIn("FACT_QUERY_DETAIL_RECENT", source)
 

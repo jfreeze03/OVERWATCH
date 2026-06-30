@@ -121,14 +121,21 @@ class FullAppLaunchGauntletTests(unittest.TestCase):
         self.assertFalse(results["passed"])
         self.assertTrue(any(row["failure_reason"] == "missing_primary_section" for row in failures["failures"]))
 
-    def test_settings_wording_is_compact_and_setup_health_not_sidebar_default(self):
+    def test_settings_wording_is_compact_and_setup_health_admin_gated(self):
         from tools.contracts.full_app_launch_gauntlet import build_settings_wording_results
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             layout = root / ".overwatch_final/layout.py"
             layout.parent.mkdir(parents=True)
-            layout.write_text('st.caption("Cost estimates use configured credit rates.")\n', encoding="utf-8")
+            layout.write_text(
+                'st.caption("Cost estimates use configured credit rates.")\n'
+                'if admin_access_allowed:\n'
+                '    st.button("Open Setup Health", key="settings_open_setup_health")\n'
+                '    if st.session_state.get(SETUP_HEALTH_PANEL_OPEN_KEY):\n'
+                '        render_decision_setup_health_panel()\n',
+                encoding="utf-8",
+            )
             admin = root / ".overwatch_final" / "sections" / "decision_workspace_setup_health.py"
             admin.parent.mkdir(parents=True, exist_ok=True)
             admin.write_text(

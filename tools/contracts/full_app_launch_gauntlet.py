@@ -482,9 +482,16 @@ def build_settings_wording_results(root: Path) -> dict[str, Any]:
             "recommendation": "Preserve Setup Health diagnostics behind the admin renderer.",
         },
         {
-            "check_name": "setup_health_not_rendered_by_sidebar_default",
-            "passed": "render_decision_setup_health_panel" not in layout_text,
-            "recommendation": "Do not mount diagnostic cards in the normal Settings sidebar.",
+            "check_name": "setup_health_action_present",
+            "passed": "Open Setup Health" in layout_text and "settings_open_setup_health" in layout_text,
+            "recommendation": "Expose Setup Health through a stable Settings action.",
+        },
+        {
+            "check_name": "setup_health_render_admin_gated",
+            "passed": "if admin_access_allowed" in layout_text
+            and "SETUP_HEALTH_PANEL_OPEN_KEY" in layout_text
+            and "render_decision_setup_health_panel" in layout_text,
+            "recommendation": "Render setup diagnostics only after the admin-gated Settings action opens them.",
         },
     ]
     failures = [row for row in checks if not bool(row.get("passed"))]
@@ -727,3 +734,7 @@ __all__ = [
     "evaluate_simple_gate",
     "write_full_app_launch_gauntlet_artifacts",
 ]
+
+
+if __name__ == "__main__":
+    write_full_app_launch_gauntlet_artifacts()

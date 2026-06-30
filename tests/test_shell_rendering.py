@@ -45,11 +45,13 @@ class ShellRenderingTests(unittest.TestCase):
         after_widget_block = filters_text[filters_text.index("date_range = _normalize_date_range_value(date_range)") :]
         self.assertNotIn("set_state(GLOBAL_DATE_RANGE_INPUT", after_widget_block)
 
-    def test_daily_sidebar_settings_do_not_render_setup_health_panel(self):
+    def test_daily_sidebar_settings_mounts_setup_health_behind_admin_action(self):
         layout_text = (APP_ROOT / "layout.py").read_text(encoding="utf-8")
 
-        self.assertNotIn("render_decision_setup_health_panel", layout_text)
         settings_block = layout_text.split('sidebar_panel_toggle("Settings", "settings")', 1)[1]
+        self.assertIn('"Open Setup Health"', settings_block)
+        self.assertIn("admin_access_allowed", settings_block)
+        self.assertIn("render_decision_setup_health_panel", settings_block)
         self.assertNotIn("Decision Summary Setup Health", settings_block)
 
 

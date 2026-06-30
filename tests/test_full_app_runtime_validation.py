@@ -167,7 +167,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
                 self.assertIn((section, workflow), rendered_pairs)
         for row in views:
             self.assertEqual(row["source"], "lower_artifact_rendered")
-            self.assertEqual(row["runtime_source"], "runtime_section_render")
+            self.assertEqual(row["runtime_source"], "actual_section_render")
             self.assertEqual(row["provenance_origin"], "producer")
             self.assertEqual(row["proof_source"], "runtime_render")
             self.assertTrue(row["passed"], row)
@@ -260,7 +260,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         for row in query_search:
             if row["case"] in {"render_no_click", "text_contains_no_autorun", "warehouse_prefill_no_autorun"}:
                 self.assertEqual(row["source"], "lower_artifact_rendered", row)
-                self.assertEqual(row["runtime_source"], "runtime_query_search_render", row)
+                self.assertEqual(row["runtime_source"], "actual_section_render", row)
                 self.assertEqual(row["provenance_origin"], "producer", row)
                 self.assertEqual(row["proof_source"], "runtime_render", row)
                 self.assertFalse(row["observed_contexts"], row)

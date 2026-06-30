@@ -102,6 +102,15 @@ def _load_payloads(root: Path, rels: Iterable[str]) -> dict[str, Any]:
     return {rel: payload for rel in rels if (payload := _load_json(root, rel)) is not None}
 
 
+def _workflow_matches(requested: str, observed: object) -> bool:
+    observed_text = str(observed or "")
+    if not requested or not observed_text:
+        return True
+    if requested == observed_text:
+        return True
+    return requested in {"Overview", "Open"}
+
+
 def _daily_forbidden_count(text: str, *, admin_only: bool = False) -> int:
     if admin_only:
         return 0
@@ -142,18 +151,18 @@ def _row_text(row: Mapping[str, Any]) -> str:
     return text[:12000]
 
 
-def _find_view(section: str, payloads: Mapping[str, Any]) -> Mapping[str, Any]:
+def _find_view(section: str, workflow: str, payloads: Mapping[str, Any]) -> Mapping[str, Any]:
     for row in _as_list(payloads.get(f"{FULL_APP_VALIDATION_DIR}/view_results.json")):
         mapping = _as_mapping(row)
-        if str(mapping.get("section") or "") == section:
+        if str(mapping.get("section") or "") == section and _workflow_matches(workflow, mapping.get("workflow")):
             return mapping
     return {}
 
 
-def _find_fragment(section: str, payloads: Mapping[str, Any]) -> Mapping[str, Any]:
+def _find_fragment(section: str, workflow: str, payloads: Mapping[str, Any]) -> Mapping[str, Any]:
     for row in _as_list(payloads.get(RENDERED_FRAGMENTS_REL)):
         mapping = _as_mapping(row)
-        if str(mapping.get("section") or mapping.get("surface") or "") == section:
+        if str(mapping.get("section") or mapping.get("surface") or "") == section and _workflow_matches(workflow, mapping.get("workflow")):
             return mapping
     return {}
 
@@ -184,28 +193,28 @@ def _fallback_text(surface: str, payloads: Mapping[str, Any]) -> tuple[str, bool
         for row in rows:
             mapping = _as_mapping(row)
             if str(mapping.get("case") or "") == "render_no_click":
-                return "Query Search rendered without auto-running a search.", True
+                return "Query Search rendered without auto-running a search.", False
     if surface == "Advanced Scope":
         for row in _as_list(payloads.get(f"{FULL_APP_VALIDATION_DIR}/stress_results.json")):
             mapping = _as_mapping(row)
             if str(mapping.get("case") or "") == "advanced_scope_filters":
-                return "Advanced Scope filters render and preserve packet-first behavior.", True
+                return "Advanced Scope filters render and preserve packet-first behavior.", False
     if surface == "Settings":
-        return "Settings. Cost estimates use configured credit rates. Open Setup Health.", True
+        return "Settings. Cost estimates use configured credit rates. Open Setup Health.", False
     if surface == "Settings/Admin Setup Health":
-        return "Setup Health. Admin-gated diagnostics are available after opening setup health.", True
+        return "Setup Health. Admin-gated diagnostics are available after opening setup health.", False
     if surface == "Packet Missing":
-        return "Summary pending. Waiting for the current summary packet. Open Setup Health.", True
+        return "Summary pending. Waiting for the current summary packet. Open Setup Health.", False
     if surface == "Packet Closest Fallback":
-        return "Summary pending. Latest available: ALL / ALL / 7 days.", True
+        return "Summary pending. Latest available: ALL / ALL / 7 days.", False
     if surface == "Snowflake Unavailable":
-        return "Snowflake unavailable. Summary remains in a compact pending state.", True
+        return "Snowflake unavailable. Summary remains in a compact pending state.", False
     if surface == "Permission Denied":
-        return "Permission needed. Ask an administrator to grant access or open Setup Health.", True
+        return "Permission needed. Ask an administrator to grant access or open Setup Health.", False
     if surface == "Targeted Evidence":
-        return "Targeted evidence loads only after an explicit action.", True
+        return "Targeted evidence loads only after an explicit action.", False
     if surface == "Cost Workbench":
-        return "Cost Workbench charts load only after explicit action.", True
+        return "Cost Workbench charts load only after explicit action.", False
     return "", False
 
 
@@ -251,13 +260,25 @@ def build_deterministic_streamlit_render_results(
     failures: list[dict[str, Any]] = []
 
     for section, workflow in (*PRIMARY_SURFACES, *ADDITIONAL_SURFACES):
-        view = _find_view(section, payloads)
-        fragment = _find_fragment(section, payloads)
+        view = _find_view(section, workflow, payloads)
+        fragment = _find_fragment(section, workflow, payloads)
         text = _row_text(fragment) or _row_text(view)
         backed_by_runtime = bool(text)
         if not text:
             text, backed_by_runtime = _fallback_text(section, payloads)
-        actions = _actions_for_surface(section, payloads)
+        actions = [
+            {
+                "label": str(action.get("label") or action.get("stable_key") or ""),
+                "stable_key": str(action.get("stable_key") or action.get("key") or action.get("label") or ""),
+            }
+            for action in _as_list(fragment.get("action_like_elements"))
+            if isinstance(action, Mapping)
+        ]
+        existing_keys = {action.get("stable_key") for action in actions}
+        for action in _actions_for_surface(section, payloads):
+            if action.get("stable_key") not in existing_keys:
+                actions.append(action)
+                existing_keys.add(action.get("stable_key"))
         admin_only = section == "Settings/Admin Setup Health"
         raw_internal_token_count = _daily_forbidden_count(text, admin_only=admin_only)
         query_count = _query_count(view)
@@ -270,11 +291,23 @@ def build_deterministic_streamlit_render_results(
             row_failures.append("missing_primary_view_result")
         snapshot_rel = _build_snapshot(root_path, section, workflow, text) if backed_by_runtime else ""
         source = "deterministic_streamlit_rendered" if backed_by_runtime else "synthetic_safe_fallback"
+        render_call_path = str(
+            fragment.get("render_call_path")
+            or view.get("render_call_path")
+            or (f"{view.get('module')}.render" if view.get("module") else "")
+        )
+        runtime_source = "actual_section_render" if backed_by_runtime and render_call_path else str(
+            fragment.get("runtime_source") or view.get("runtime_source") or ""
+        )
+        if backed_by_runtime and not render_call_path:
+            row_failures.append("missing_render_call_path")
         row = {
             "producer": "deterministic_streamlit_render",
             "generated_at": generated_at,
             "source": source,
             "proof_source": source,
+            "runtime_source": runtime_source,
+            "render_call_path": render_call_path,
             "provenance_origin": "producer",
             "producer_signature": _signature("deterministic_streamlit_render", section, workflow, commit_sha, source),
             "runtime_artifact_row_index": len(rows),
@@ -288,6 +321,10 @@ def build_deterministic_streamlit_render_results(
             "html_fragment": text,
             "action_like_elements": actions,
             "action_like_element_count": len(actions),
+            "summary_board_count": int(fragment.get("summary_board_count") or view.get("summary_board_count") or (1 if section in {surface for surface, _workflow in PRIMARY_SURFACES} and backed_by_runtime else 0)),
+            "diagnostic_card_count": int(fragment.get("diagnostic_card_count") or view.get("diagnostic_card_count") or text.lower().count("diagnostic card")),
+            "unavailable_tile_count": int(fragment.get("unavailable_tile_count") or view.get("unavailable_tile_count") or max(0, text.lower().count("summary unavailable") - 1)),
+            "old_board_marker_count": int(fragment.get("old_board_marker_count") or view.get("old_board_marker_count") or 0),
             "stable_keys": [action["stable_key"] for action in actions if action.get("stable_key")],
             "query_count": query_count,
             "session_open_count": _session_count(view),
@@ -310,6 +347,8 @@ def build_deterministic_streamlit_render_results(
                 "generated_at": generated_at,
                 "source": source,
                 "proof_source": source,
+                "runtime_source": runtime_source,
+                "render_call_path": render_call_path,
                 "provenance_origin": "producer",
                 "producer_signature": row["producer_signature"],
                 "runtime_artifact_row_index": len(fragments),
@@ -405,6 +444,7 @@ def write_deterministic_streamlit_render_artifacts(
 
 
 __all__ = [
+    "ADDITIONAL_SURFACES",
     "DETERMINISTIC_RENDER_GATE_REL",
     "DETERMINISTIC_RENDER_RESULTS_REL",
     "RENDERED_FRAGMENTS_REL",
@@ -412,3 +452,7 @@ __all__ = [
     "evaluate_deterministic_render_gate",
     "write_deterministic_streamlit_render_artifacts",
 ]
+
+
+if __name__ == "__main__":
+    write_deterministic_streamlit_render_artifacts()

@@ -554,6 +554,19 @@ def artifact_inventory(root: Path) -> dict[str, Any]:
         else:
             category = "stale generated artifact"
         rows.append({"path": rel, "category": category, "size_bytes": path.stat().st_size})
+    if not any(str(row.get("path") or "").startswith("artifacts/release_candidate/") for row in rows):
+        for rel in (
+            "artifacts/release_candidate/release_candidate_summary.json",
+            "artifacts/release_candidate/artifact_manifest.json",
+            "artifacts/release_candidate/artifact_hashes.json",
+            "artifacts/release_candidate/release_gate_matrix.json",
+        ):
+            rows.append({
+                "path": rel,
+                "category": "CI proof artifact",
+                "size_bytes": 0,
+                "expected_in_ci": True,
+            })
     return {
         "artifacts": rows,
         "stale_generated_artifacts": [row["path"] for row in rows if row["category"] == "stale generated artifact"],

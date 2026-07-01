@@ -2685,6 +2685,7 @@ def _release_candidate_summary_bundle(
         "credential_expiring_30d_count": _as_int(launch_summary.get("credential_expiring_30d_count")),
         "credential_expired_count": _as_int(launch_summary.get("credential_expired_count")),
         "credential_next_expiration_days": _as_int(launch_summary.get("credential_next_expiration_days")),
+        "credential_source_confirmed_zero": bool(launch_summary.get("credential_source_confirmed_zero")),
         "credential_live_validation_status": str(launch_summary.get("credential_live_validation_status") or ""),
         "user_display_name_gate_passed": bool(launch_summary.get("user_display_name_gate_passed")),
         "user_display_name_live_gate_passed": bool(launch_summary.get("user_display_name_live_gate_passed")),
@@ -5622,6 +5623,7 @@ def evaluate_launch_readiness(
         "credential_expiring_30d_count": _as_int(security_credential_gate.get("credential_expiring_30d_count")),
         "credential_expired_count": _as_int(security_credential_gate.get("credential_expired_count")),
         "credential_next_expiration_days": _as_int(security_credential_gate.get("credential_next_expiration_days")),
+        "credential_source_confirmed_zero": bool(security_credential_gate.get("credential_source_confirmed_zero")),
         "credential_live_validation_status": str(
             security_credential_live_gate.get("live_validation_status")
             or security_credential_gate.get("credential_live_validation_status")

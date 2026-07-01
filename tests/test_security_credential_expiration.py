@@ -81,6 +81,9 @@ class SecurityCredentialExpirationTests(unittest.TestCase):
         self.assertEqual(summary["SECURITY_CREDENTIALS_EXPIRED_COUNT"], 1)
         self.assertEqual(summary["SECURITY_CREDENTIALS_EXPIRING_7D_COUNT"], 1)
         self.assertEqual(summary["SECURITY_CREDENTIALS_EXPIRING_30D_COUNT"], 2)
+        self.assertEqual(summary["SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT"], 3)
+        self.assertFalse(summary["SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO"])
+        self.assertEqual(summary["SECURITY_CREDENTIAL_SOURCE_STATUS"], "available")
         self.assertEqual(summary["SECURITY_CREDENTIAL_NEXT_EXPIRATION_USER"], "Jane Doe")
         self.assertEqual(summary["SECURITY_CREDENTIAL_EXPIRATION_STATUS"], "due_or_expired")
 
@@ -94,6 +97,8 @@ class SecurityCredentialExpirationTests(unittest.TestCase):
         due = credential_expiration_tile_from_packet(
             {
                 "SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO": True,
+                "SECURITY_CREDENTIAL_SOURCE_STATUS": "available",
+                "SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT": 3,
                 "SECURITY_CREDENTIALS_EXPIRED_COUNT": 1,
                 "SECURITY_CREDENTIALS_EXPIRING_7D_COUNT": 1,
                 "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT": 2,
@@ -159,6 +164,9 @@ class SecurityCredentialExpirationTests(unittest.TestCase):
         self.assertIn("MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT", setup_sql)
         self.assertIn("CREDENTIAL_EXPIRING::", setup_sql)
         self.assertIn("CREDENTIAL_EXPIRATIONS", setup_sql)
+        self.assertIn("SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT", setup_sql)
+        self.assertIn("SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO", setup_sql)
+        self.assertIn("SECURITY_CREDENTIAL_SOURCE_STATUS", setup_sql)
         self.assertIn("ROTATE OR RENEW CREDENTIAL BEFORE EXPIRATION", setup_sql)
         self.assertIn("DUE WITHIN 30D", setup_sql)
 
@@ -171,6 +179,7 @@ class SecurityCredentialExpirationTests(unittest.TestCase):
         semantic = get_metric_semantic("Security Monitoring", "credential_expirations")
         self.assertIsNotNone(semantic)
         self.assertEqual(semantic.source_family, "credential_expiration")
+        self.assertEqual(semantic.packet_field, "SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT")
 
         brief = SectionCommandBrief(
             "Security Monitoring",
@@ -199,6 +208,9 @@ class SecurityCredentialExpirationTests(unittest.TestCase):
                 SectionCommandMetric(key="sharing_exposure", label="Sharing Exposure", value="", numeric_value=4),
             ),
             raw_payload={
+                "SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT": 3,
+                "SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO": False,
+                "SECURITY_CREDENTIAL_SOURCE_STATUS": "available",
                 "SECURITY_CREDENTIALS_EXPIRED_COUNT": 1,
                 "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT": 2,
                 "SECURITY_CREDENTIAL_NEXT_EXPIRATION_USER": "Jane Doe",

@@ -124,8 +124,13 @@ class SnowflakeCredentialValidationTests(unittest.TestCase):
         required_tokens = [
             "MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT",
             "MART_USER_DIM_CURRENT",
+            "SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT",
             "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT",
             "SECURITY_CREDENTIAL_EXPIRATION_FINDINGS",
+            "SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO",
+            "SECURITY_CREDENTIAL_SOURCE_STATUS",
+            "SECURITY_CREDENTIAL_SOURCE_FRESHNESS_TS",
+            "SECURITY_CREDENTIAL_SOURCE_LATENCY_NOTE",
             "USER_DISPLAY_NAME",
             "USER_CHART_LABEL",
         ]
@@ -150,6 +155,8 @@ class SnowflakeCredentialValidationTests(unittest.TestCase):
             "credential_expiration_live_validation",
             "cortex_user_label_source",
             "cortex_user_label_export_sanitizer",
+            "security_credential_render_tile",
+            "security_credential_case_payload",
         ):
             with self.subTest(path_id=path_id):
                 self.assertIn(path_id, rows)

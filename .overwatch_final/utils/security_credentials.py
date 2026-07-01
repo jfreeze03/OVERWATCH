@@ -106,11 +106,16 @@ def credential_expiration_summary(frame: pd.DataFrame, *, now: datetime | None =
     enriched = enrich_credential_expiration_rows(frame, now=now)
     if enriched.empty:
         return {
+            "SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT": 0,
             "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT": 0,
             "SECURITY_CREDENTIALS_EXPIRING_7D_COUNT": 0,
             "SECURITY_CREDENTIALS_EXPIRED_COUNT": 0,
-            "SECURITY_CREDENTIAL_EXPIRATION_STATUS": "no_credentials_due",
+            "SECURITY_CREDENTIAL_EXPIRATION_STATUS": "source_pending",
             "SECURITY_CREDENTIAL_EXPIRATION_FINDINGS": [],
+            "SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO": False,
+            "SECURITY_CREDENTIAL_SOURCE_STATUS": "pending",
+            "SECURITY_CREDENTIAL_SOURCE_FRESHNESS_TS": None,
+            "SECURITY_CREDENTIAL_SOURCE_LATENCY_NOTE": "Credential expiration source pending",
         }
     due_or_expired = enriched[
         enriched["CREDENTIAL_EXPIRING_30D_FLAG"].fillna(False)
@@ -119,15 +124,30 @@ def credential_expiration_summary(frame: pd.DataFrame, *, now: datetime | None =
     if not due_or_expired.empty:
         due_or_expired = due_or_expired.sort_values("DAYS_TO_EXPIRATION", ascending=True, kind="mergesort")
     next_row = due_or_expired.iloc[0].to_dict() if not due_or_expired.empty else {}
+    expired_count = int(enriched["CREDENTIAL_EXPIRED_FLAG"].sum())
+    due_30_count = int(enriched["CREDENTIAL_EXPIRING_30D_FLAG"].sum())
+    risk_count = expired_count + due_30_count
+    freshness = None
+    for column in ("LOAD_TS", "SNAPSHOT_TS"):
+        if column in enriched.columns:
+            values = pd.to_datetime(enriched[column], errors="coerce", utc=True)
+            if values.notna().any():
+                current = values.max().to_pydatetime()
+                freshness = max(freshness, current) if freshness is not None else current
     return {
-        "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT": int(enriched["CREDENTIAL_EXPIRING_30D_FLAG"].sum()),
+        "SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT": risk_count,
+        "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT": due_30_count,
         "SECURITY_CREDENTIALS_EXPIRING_7D_COUNT": int(enriched["CREDENTIAL_EXPIRING_7D_FLAG"].sum()),
-        "SECURITY_CREDENTIALS_EXPIRED_COUNT": int(enriched["CREDENTIAL_EXPIRED_FLAG"].sum()),
+        "SECURITY_CREDENTIALS_EXPIRED_COUNT": expired_count,
         "SECURITY_CREDENTIAL_NEXT_EXPIRATION_TS": next_row.get("EXPIRATION_DATE"),
         "SECURITY_CREDENTIAL_NEXT_EXPIRATION_USER": next_row.get("USER_DISPLAY_NAME"),
         "SECURITY_CREDENTIAL_NEXT_EXPIRATION_TYPE": next_row.get("TYPE"),
         "SECURITY_CREDENTIAL_EXPIRATION_STATUS": "due_or_expired" if not due_or_expired.empty else "no_credentials_due",
         "SECURITY_CREDENTIAL_EXPIRATION_FINDINGS": due_or_expired.to_dict(orient="records"),
+        "SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO": risk_count == 0,
+        "SECURITY_CREDENTIAL_SOURCE_STATUS": "available",
+        "SECURITY_CREDENTIAL_SOURCE_FRESHNESS_TS": freshness,
+        "SECURITY_CREDENTIAL_SOURCE_LATENCY_NOTE": "Credential expiration source current",
     }
 
 
@@ -136,12 +156,15 @@ def credential_expiration_tile_from_packet(packet: dict[str, Any]) -> dict[str, 
 
     status = str(packet.get("SECURITY_CREDENTIAL_EXPIRATION_STATUS") or "").strip().lower()
     source_confirmed_zero = bool(packet.get("SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO"))
+    source_status = str(packet.get("SECURITY_CREDENTIAL_SOURCE_STATUS") or status).strip().lower()
+    risk_raw = packet.get("SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT")
     expired_raw = packet.get("SECURITY_CREDENTIALS_EXPIRED_COUNT")
     due_30_raw = packet.get("SECURITY_CREDENTIALS_EXPIRING_30D_COUNT")
     due_7_raw = packet.get("SECURITY_CREDENTIALS_EXPIRING_7D_COUNT")
     if (
-        status in {"pending", "unavailable", "source_pending"}
-        or (expired_raw is None and due_30_raw is None and due_7_raw is None)
+        (not source_confirmed_zero and status in {"pending", "unavailable", "source_pending"})
+        or (not source_confirmed_zero and source_status in {"pending", "unavailable", "source_pending"})
+        or (risk_raw is None and expired_raw is None and due_30_raw is None and due_7_raw is None)
     ):
         return {
             "title": "Credential expirations",
@@ -154,12 +177,13 @@ def credential_expiration_tile_from_packet(packet: dict[str, Any]) -> dict[str, 
     expired = int(float(expired_raw or 0))
     due_30 = int(float(due_30_raw or 0))
     due_7 = int(float(due_7_raw or 0))
+    risk = int(float(risk_raw if risk_raw is not None else expired + due_30))
     next_user = str(packet.get("SECURITY_CREDENTIAL_NEXT_EXPIRATION_USER") or "").strip()
     next_type = str(packet.get("SECURITY_CREDENTIAL_NEXT_EXPIRATION_TYPE") or "credential").strip()
     next_ts = packet.get("SECURITY_CREDENTIAL_NEXT_EXPIRATION_TS")
     days_left = days_to_expiration(next_ts)
 
-    if expired <= 0 and due_30 <= 0 and not source_confirmed_zero and status not in {"no_credentials_due", "clear"}:
+    if risk <= 0 and not source_confirmed_zero and status not in {"no_credentials_due", "clear"}:
         return {
             "title": "Credential expirations",
             "value": "Credential expiration source pending",
@@ -192,7 +216,7 @@ def credential_expiration_tile_from_packet(packet: dict[str, Any]) -> dict[str, 
         "detail": detail,
         "severity": severity,
         "available": True,
-        "numeric_value": expired + due_30,
+        "numeric_value": risk,
     }
 
 

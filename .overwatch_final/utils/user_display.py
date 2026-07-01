@@ -90,13 +90,13 @@ def user_display_name(row: Mapping[str, Any]) -> str:
     return (
         full_name(row)
         or _safe_name(_first(row, "DISPLAY_NAME"))
-        or _first_safe(row, "NAME", "USER_NAME", "LOGIN_NAME")
+        or _first_safe(row, "NAME", "LOGIN_NAME")
         or UNKNOWN_USER_LABEL
     )
 
 
 def user_chart_label(row: Mapping[str, Any]) -> str:
-    return full_name(row) or _first_safe(row, "NAME", "USER_NAME", "LOGIN_NAME") or UNKNOWN_USER_LABEL
+    return full_name(row) or _first_safe(row, "NAME", "LOGIN_NAME") or UNKNOWN_USER_LABEL
 
 
 def user_admin_label(row: Mapping[str, Any]) -> str:
@@ -130,6 +130,12 @@ def sanitize_user_columns_for_export(frame: pd.DataFrame, *, admin_only: bool = 
         result = result.drop(columns=[column for column in result.columns if column.upper() in USER_ID_COLUMNS], errors="ignore")
         admin_columns = [column for column in result.columns if column.upper() == "USER_ADMIN_LABEL"]
         result = result.drop(columns=admin_columns, errors="ignore")
+        for column in ("USER_DISPLAY_NAME", "USER_CHART_LABEL"):
+            if column in result.columns:
+                result[column] = [
+                    value if not looks_like_user_id(value) else UNKNOWN_USER_LABEL
+                    for value in result[column].tolist()
+                ]
         if "USER_NAME" in result.columns:
             result["USER_NAME"] = [
                 value if not looks_like_user_id(value) else UNKNOWN_USER_LABEL

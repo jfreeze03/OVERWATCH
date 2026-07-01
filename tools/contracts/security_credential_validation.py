@@ -53,6 +53,7 @@ SECURITY_CREDENTIAL_RENDERED_LEAK_GATE_REL = (
 )
 
 SECURITY_CREDENTIAL_PACKET_FIELDS = (
+    "SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT",
     "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT",
     "SECURITY_CREDENTIALS_EXPIRING_7D_COUNT",
     "SECURITY_CREDENTIALS_EXPIRED_COUNT",
@@ -61,6 +62,10 @@ SECURITY_CREDENTIAL_PACKET_FIELDS = (
     "SECURITY_CREDENTIAL_NEXT_EXPIRATION_TYPE",
     "SECURITY_CREDENTIAL_EXPIRATION_STATUS",
     "SECURITY_CREDENTIAL_EXPIRATION_FINDINGS",
+    "SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO",
+    "SECURITY_CREDENTIAL_SOURCE_STATUS",
+    "SECURITY_CREDENTIAL_SOURCE_FRESHNESS_TS",
+    "SECURITY_CREDENTIAL_SOURCE_LATENCY_NOTE",
 )
 
 
@@ -258,6 +263,7 @@ def build_credential_expiration_validation(root: Path) -> dict[str, Any]:
         "credential_expiring_30d_count": None,
         "credential_expired_count": None,
         "credential_next_expiration_days": None,
+        "credential_source_confirmed_zero": None,
         "live_validation_status": "not_executed_static_contract",
         "packet_fields": list(SECURITY_CREDENTIAL_PACKET_FIELDS),
         "rows": rows,
@@ -366,6 +372,7 @@ def _surface_row(
     user_display_name_used: bool,
     total_value_before_label_join: float | int = 100,
     total_value_after_label_join: float | int = 100,
+    source_artifact: str = "source_static_contract",
     admin_only: bool = False,
     user_id_allowed: bool = False,
     failure_reason: str = "",
@@ -392,6 +399,7 @@ def _surface_row(
         "user_display_name_used": bool(user_display_name_used),
         "total_value_before_label_join": total_value_before_label_join,
         "total_value_after_label_join": total_value_after_label_join,
+        "source_artifact": source_artifact,
         "admin_only": bool(admin_only),
         "passed": bool(passed),
         "failure_reason": ""
@@ -513,7 +521,7 @@ def build_security_credential_render_results(root: Path) -> dict[str, Any]:
         _row(
             "security_credential_tile_packet_backed",
             _contains(proc_sql, "'credential_expirations'")
-            and _contains(proc_sql, "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT")
+            and _contains(proc_sql, "SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT")
             and _contains(view_model, '"credential_expirations"'),
             evidence="Security primary metric reads credential_expirations from command brief packet metrics.",
             recommendation="Render Credential expirations from the Security packet, not optional evidence dataframes.",
@@ -683,6 +691,8 @@ def build_credential_sql_inventory_gate(root: Path) -> dict[str, Any]:
         "user_display_dimension_refresh_source",
         "cortex_user_label_source",
         "cortex_user_label_export_sanitizer",
+        "security_credential_render_tile",
+        "security_credential_case_payload",
     )
     failures = []
     for path_id in required:
@@ -1026,6 +1036,7 @@ def evaluate_security_credential_expiration_gate(payload: Mapping[str, Any]) -> 
         "credential_expiring_30d_count": payload.get("credential_expiring_30d_count"),
         "credential_expired_count": payload.get("credential_expired_count"),
         "credential_next_expiration_days": payload.get("credential_next_expiration_days"),
+        "credential_source_confirmed_zero": payload.get("credential_source_confirmed_zero"),
         "credential_live_validation_status": payload.get("live_validation_status"),
         "failures": failures,
         "raw_sql_included": False,

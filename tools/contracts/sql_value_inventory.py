@@ -210,6 +210,18 @@ def _supplemental_overwatch_rows(root: Path) -> list[dict[str, Any]]:
             row_limit="one active packet row per scope",
             pruning_predicate="active packet logical key",
         )
+        add(
+            "security_credential_render_tile",
+            purpose="Render the packet-backed credential-expiration tile on Security Monitoring first paint.",
+            user_visible_feature="Security Monitoring credential expirations tile",
+            source_family="daily_first_paint_packet",
+            account_usage_use="none",
+            admin_only=False,
+            daily_safe=True,
+            value_to_app="Shows expired and expiring credential risk without querying credential source metadata.",
+            row_limit="one active packet metric row per scope",
+            pruning_predicate="active packet logical key",
+        )
     if "SECURITY_CREDENTIAL_EXPIRATION" in setup_text and "CREDENTIAL_EXPIRING::" in setup_text:
         add(
             "credential_expiration_alert_action",
@@ -222,6 +234,18 @@ def _supplemental_overwatch_rows(root: Path) -> list[dict[str, Any]]:
             value_to_app="Makes credential expiration actionable with route/evidence context.",
             row_limit="one finding/action per active packet candidate",
             pruning_predicate="expired or expiring credential counts > 0",
+        )
+        add(
+            "security_credential_case_payload",
+            purpose="Build sanitized credential-expiration case payloads from compact evidence rows.",
+            user_visible_feature="Security credential expiration case payload",
+            source_family="targeted_evidence",
+            account_usage_use="none",
+            admin_only=False,
+            daily_safe=True,
+            value_to_app="Lets users route and package credential remediation context without raw credential identifiers.",
+            row_limit="visible credential evidence rows",
+            pruning_predicate="route target and compact evidence filters",
         )
     if "MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT" in validation_text:
         add(

@@ -27,6 +27,7 @@ class UserDisplaySurfaceAuditTests(unittest.TestCase):
             self.assertIn(expected, surfaces)
         for row in results["rows"]:
             self.assertIn("stable_user_key_column", row)
+            self.assertIn("source_artifact", row)
             self.assertIn("total_value_before_label_join", row)
             self.assertIn("total_value_after_label_join", row)
             self.assertEqual(row["total_value_before_label_join"], row["total_value_after_label_join"])

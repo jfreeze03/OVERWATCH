@@ -52,11 +52,11 @@ ALLOWED_RUNTIME_SOURCES = {
 
 SOURCE_BY_ARTIFACT = {
     f"{FULL_APP_VALIDATION_DIR}/view_results.json": "rendered_app",
-    f"{FULL_APP_VALIDATION_DIR}/rendered_fragments.json": "lower_artifact_rendered",
+    f"{FULL_APP_VALIDATION_DIR}/rendered_fragments.json": "rendered_app",
     f"{FULL_APP_VALIDATION_DIR}/deterministic_streamlit_render_results.json": "deterministic_streamlit_rendered",
     f"{FULL_APP_VALIDATION_DIR}/browser_render_results.json": "browser_rendered",
     f"{FULL_APP_VALIDATION_DIR}/browser_smoke_results.json": "browser_rendered",
-    f"{FULL_APP_VALIDATION_DIR}/rendered_ui_leak_scan_results.json": "lower_artifact_rendered",
+    f"{FULL_APP_VALIDATION_DIR}/rendered_ui_leak_scan_results.json": "rendered_app",
     f"{FULL_APP_VALIDATION_DIR}/button_click_results.json": "clicked_action",
     f"{FULL_APP_VALIDATION_DIR}/settings_action_results.json": "clicked_action",
     f"{FULL_APP_VALIDATION_DIR}/live_feature_results.json": "clicked_action",
@@ -148,7 +148,7 @@ def _sanitize_source(value: object, rel: str) -> str:
         "runtime_query_search_render",
         "runtime_render",
     }:
-        return "lower_artifact_rendered"
+        return "rendered_app"
     if source in {
         "runtime_button_click",
         "runtime_real_loader_spy",

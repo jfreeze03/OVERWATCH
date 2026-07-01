@@ -21,6 +21,29 @@ LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
 SETTINGS_LIVE_FEATURE_RESULTS_REL = f"{FULL_APP_VALIDATION_DIR}/settings_live_feature_results.json"
 SETTINGS_LIVE_FEATURE_GATE_REL = f"{LAUNCH_READINESS_DIR}/settings_live_feature_gate_results.json"
 
+REQUIRED_SETTINGS_CONTROLS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
+    ("theme_picker", ("settings_theme_picker",), ("theme",)),
+    ("compute_credit_price", ("_credit_price_input", "credit_price"), ("$/credit (compute)", "compute credit")),
+    ("ai_credit_price", ("_ai_credit_price_input", "ai_credit_price"), ("$/AI credit (Cortex)", "AI credit")),
+    ("storage_cost", ("_storage_cost_input", "storage_cost"), ("$/TB/month (storage)", "storage")),
+    ("alert_email_recipients", ("_alert_email_targets_input", "alert_email"), ("Alert email recipients",)),
+    ("live_refresh_interval", ("rt_interval", "live_refresh_interval"), ("Live refresh interval",)),
+    ("idle_query_pause", ("overwatch_idle_timeout_seconds", "idle_timeout"), ("Idle query pause",)),
+    ("open_setup_health", ("settings_open_setup_health",), ("Open Setup Health",)),
+)
+
+REQUIRED_LIVE_FEATURES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("setup_validation", ("decision_setup_health_refresh", "setup validation")),
+    ("fast_refresh_validation", ("fast_refresh", "FAST refresh")),
+    ("full_dry_run_validation", ("full_refresh_dry_run", "FULL dry-run")),
+    ("snowflake_cli_live_validation", ("snowflake_cli_live", "Snowflake CLI")),
+    ("query_history_proof", ("query_history", "Query history")),
+    ("live_diagnostics", ("advanced_diagnostics", "Live diagnostics")),
+    ("account_usage_fallback", ("account_usage_fallback", "Account Usage fallback")),
+    ("cost_workbench_live_load", ("cost_workbench", "Cost Workbench")),
+    ("query_search_live_search", ("query_search", "Query Search live")),
+)
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -67,6 +90,18 @@ def _stable_key(row: Mapping[str, Any]) -> str:
         or row.get("action_key")
         or ""
     ).strip()
+
+
+def _label(row: Mapping[str, Any]) -> str:
+    return str(row.get("label") or row.get("name") or row.get("feature") or _stable_key(row) or "").strip()
+
+
+def _matches_need(row: Mapping[str, Any], key_needles: tuple[str, ...], label_needles: tuple[str, ...]) -> bool:
+    haystack_key = _stable_key(row).lower()
+    haystack_label = _label(row).lower()
+    return any(needle.lower() in haystack_key for needle in key_needles) or any(
+        needle.lower() in haystack_label for needle in label_needles
+    )
 
 
 def _query_count(row: Mapping[str, Any]) -> int:
@@ -120,7 +155,34 @@ def build_settings_live_feature_results(payloads: Mapping[str, Any]) -> dict[str
 
     setting_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/settings_action_results.json"))]
     live_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/live_feature_results.json"))]
+    control_rows = [
+        _as_mapping(row)
+        for row in _as_list(payloads.get("artifacts/full_app_validation/control_inventory.json"))
+        if str(_as_mapping(row).get("section") or "") in {"Settings", "Settings/Admin Setup Health"}
+    ]
     rendered_settings = _settings_text_rows(payloads)
+
+    for requirement, key_needles, label_needles in REQUIRED_SETTINGS_CONTROLS:
+        matches = [row for row in control_rows if _matches_need(row, key_needles, label_needles)]
+        control = matches[0] if matches else {}
+        stable_key = _stable_key(control)
+        passed = bool(control) and bool(stable_key)
+        result = {
+            "area": "settings_control_inventory",
+            "section": str(control.get("section") or "Settings"),
+            "workflow": str(control.get("workflow") or "Default"),
+            "label": _label(control) or requirement,
+            "stable_key": stable_key,
+            "control_requirement": requirement,
+            "rendered": bool(control),
+            "clicked": False,
+            "passed": passed,
+            "failure_reason": "" if passed else f"required Settings control missing or lacks stable key: {requirement}",
+            "raw_sql_included": False,
+        }
+        rows.append(result)
+        if not passed:
+            failures.append(result)
 
     for row in setting_rows:
         stable_key = _stable_key(row)
@@ -195,6 +257,30 @@ def build_settings_live_feature_results(payloads: Mapping[str, Any]) -> dict[str
         if not passed:
             failures.append(result)
 
+    for requirement, needles in REQUIRED_LIVE_FEATURES:
+        matches = [
+            row for row in live_rows
+            if any(needle.lower() in (_stable_key(row) + " " + _label(row)).lower() for needle in needles)
+        ]
+        feature = matches[0] if matches else {}
+        passed = bool(feature)
+        result = {
+            "area": "live_feature_inventory",
+            "section": str(feature.get("section") or "Settings/Admin Setup Health"),
+            "workflow": str(feature.get("workflow") or requirement),
+            "label": _label(feature) or requirement,
+            "stable_key": _stable_key(feature),
+            "feature_requirement": requirement,
+            "clicked": bool(feature.get("clicked")),
+            "owner_skipped": bool(feature.get("owner_skipped") or feature.get("skip_reason")),
+            "passed": passed,
+            "failure_reason": "" if passed else f"required live feature inventory row missing: {requirement}",
+            "raw_sql_included": False,
+        }
+        rows.append(result)
+        if not passed:
+            failures.append(result)
+
     default_rows = [row for row in rendered_settings if str(row.get("section") or "") == "Settings"]
     setup_health_rows = [
         row for row in rendered_settings
@@ -221,6 +307,21 @@ def build_settings_live_feature_results(payloads: Mapping[str, Any]) -> dict[str
         rows.append(result)
         if not passed:
             failures.append(result)
+    if not default_rows:
+        result = {
+            "area": "settings_render",
+            "section": "Settings",
+            "workflow": "Default",
+            "stable_key": "settings_default_render",
+            "clicked": False,
+            "compact_cost_note_present": False,
+            "setup_diagnostics_visible_default": False,
+            "passed": False,
+            "failure_reason": "settings_default_render_missing",
+            "raw_sql_included": False,
+        }
+        rows.append(result)
+        failures.append(result)
 
     setup_health_reachable = any(_stable_key(row) == "settings_open_setup_health" and bool(row.get("clicked")) for row in setting_rows)
     setup_health_admin_only = bool(setup_health_rows) and all(
@@ -228,6 +329,21 @@ def build_settings_live_feature_results(payloads: Mapping[str, Any]) -> dict[str
         for row in setup_health_rows
     )
     setup_health_passed = setup_health_reachable and setup_health_admin_only
+    if not setup_health_rows:
+        rows.append(
+            {
+                "area": "setup_health_render",
+                "section": "Settings/Admin Setup Health",
+                "workflow": "Setup Health",
+                "stable_key": "settings_setup_health_render",
+                "clicked": False,
+                "admin_gated": False,
+                "passed": False,
+                "failure_reason": "setup_health_render_missing",
+                "raw_sql_included": False,
+            }
+        )
+        failures.append(rows[-1])
     setup_health_result = {
         "area": "setup_health",
         "section": "Settings/Admin Setup Health",
@@ -249,6 +365,7 @@ def build_settings_live_feature_results(payloads: Mapping[str, Any]) -> dict[str
         "passed": not failures,
         "failure_count": len(failures),
         "settings_action_count": len(setting_rows),
+        "settings_control_count": len(control_rows),
         "live_feature_count": len(live_rows),
         "settings_failure_count": sum(1 for row in failures if str(row.get("area") or "").startswith("settings")),
         "live_feature_failure_count": sum(1 for row in failures if row.get("area") == "live_feature"),
@@ -290,6 +407,7 @@ def write_settings_live_feature_gauntlet_artifacts(
             (
                 "artifacts/full_app_validation/settings_action_results.json",
                 "artifacts/full_app_validation/live_feature_results.json",
+                "artifacts/full_app_validation/control_inventory.json",
                 "artifacts/full_app_validation/rendered_fragments.json",
             ),
         )

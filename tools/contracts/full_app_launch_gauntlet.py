@@ -14,6 +14,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import subprocess
 from typing import Any, Iterable, Mapping
 
 
@@ -95,6 +96,23 @@ FULL_APP_LAUNCH_ARTIFACTS = {
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _git_commit(root: Path | None = None) -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(root or Path.cwd()),
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def _producer_signature(producer: str, source: str, artifact: str, index: int | str, commit_sha: str) -> str:
+    material = "|".join((producer, source, artifact, str(index), commit_sha))
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 def _as_mapping(value: object) -> Mapping[str, Any]:
@@ -440,8 +458,10 @@ def build_action_manifest(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
 def build_first_paint_performance_results(payloads: Mapping[str, Any]) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
+    generated_at = _now()
+    commit_sha = _git_commit()
     view_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/view_results.json"))]
-    for view in view_rows:
+    for index, view in enumerate(view_rows):
         section = str(view.get("section") or "")
         first_paint = _as_mapping(view.get("first_paint"))
         packet_queries = _as_int(first_paint.get("observed_packet_queries") or first_paint.get("cold_packet_queries"))
@@ -463,13 +483,31 @@ def build_first_paint_performance_results(payloads: Mapping[str, Any]) -> dict[s
             )
         )
         row = {
+            "producer": "full_app_launch_gauntlet",
+            "producer_signature": _producer_signature(
+                "full_app_launch_gauntlet",
+                "rendered_app",
+                FIRST_PAINT_PERFORMANCE_REL,
+                index,
+                commit_sha,
+            ),
+            "provenance_origin": "producer",
+            "commit_sha": commit_sha,
+            "generated_at": generated_at,
+            "source": "rendered_app",
+            "runtime_source": str(view.get("runtime_source") or "actual_section_render"),
             "section": section,
             "workflow": str(view.get("workflow") or ""),
+            "product_boundary": "first_paint_packet",
+            "execution_boundary": "decision_packet",
             "cold_first_paint_packet_query_count": packet_queries,
             "warm_first_paint_query_count": warm_queries,
             "non_packet_first_paint_event_count": non_packet,
             "evidence_query_count": evidence,
             "account_usage_count": account_usage,
+            "detail_query_count": 0,
+            "cost_workbench_query_count": 0,
+            "query_search_query_count": 0,
             "direct_sql_count": direct_sql,
             "session_open_count": session_opens,
             "elapsed_ms": float(view.get("elapsed_ms") or 0),
@@ -485,8 +523,19 @@ def build_first_paint_performance_results(payloads: Mapping[str, Any]) -> dict[s
     for section in missing_sections:
         failures.append({"section": section, "failure_reason": "missing_first_paint_row"})
     return {
+        "producer": "full_app_launch_gauntlet",
+        "producer_signature": _producer_signature(
+            "full_app_launch_gauntlet",
+            "rendered_app",
+            FIRST_PAINT_PERFORMANCE_REL,
+            "artifact",
+            commit_sha,
+        ),
+        "provenance_origin": "producer",
+        "commit_sha": commit_sha,
         "source": "first_paint_performance_results",
-        "generated_at": _now(),
+        "runtime_source": "actual_section_render",
+        "generated_at": generated_at,
         "passed": not failures,
         "failure_count": len(failures),
         "rows": rows,

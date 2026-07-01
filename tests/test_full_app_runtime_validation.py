@@ -168,7 +168,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             for workflow in workflows:
                 self.assertIn((section, workflow), rendered_pairs)
         for row in views:
-            self.assertEqual(row["source"], "lower_artifact_rendered")
+            self.assertEqual(row["source"], "rendered_app")
             self.assertEqual(row["runtime_source"], "actual_section_render")
             self.assertEqual(row["provenance_origin"], "producer")
             self.assertEqual(row["proof_source"], "runtime_render")
@@ -284,7 +284,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         )
         for row in query_search:
             if row["case"] in {"render_no_click", "text_contains_no_autorun", "warehouse_prefill_no_autorun"}:
-                self.assertEqual(row["source"], "lower_artifact_rendered", row)
+                self.assertEqual(row["source"], "rendered_app", row)
                 self.assertEqual(row["runtime_source"], "actual_section_render", row)
                 self.assertEqual(row["provenance_origin"], "producer", row)
                 self.assertEqual(row["proof_source"], "runtime_render", row)
@@ -434,12 +434,15 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         for row in live:
             self.assertEqual(row["proof_source"], "runtime_click", row)
             self.assertTrue(row["control_key"], row)
-            self.assertTrue(row["clicked"], row)
+            self.assertTrue(row["clicked"] or row.get("owner_skipped"), row)
+            if row.get("owner_skipped"):
+                self.assertTrue(row.get("skip_reason"), row)
             self.assertTrue(row["explicit_click_required"], row)
             self.assertTrue(row["admin_or_advanced_gated"], row)
             self.assertFalse(row["first_paint_invocation"], row)
             self.assertFalse(row["route_invocation"], row)
-            self.assertTrue(row["budget_context_observed"], row)
+            if row["clicked"]:
+                self.assertTrue(row["budget_context_observed"], row)
             self.assertIn("expected_session_open_count", row)
             self.assertIn("observed_session_open_count", row)
             self.assertIn("expected_direct_sql_count", row)

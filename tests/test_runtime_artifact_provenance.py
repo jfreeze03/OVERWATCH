@@ -56,7 +56,7 @@ class RuntimeArtifactProvenanceTests(unittest.TestCase):
                 required_rels=("artifacts/full_app_validation/view_results.json",),
             )
 
-        self.assertEqual(stamped[0]["source"], "lower_artifact_rendered")
+        self.assertEqual(stamped[0]["source"], "rendered_app")
         self.assertEqual(stamped[0]["runtime_source"], "runtime_render")
         self.assertEqual(stamped[0]["provenance_origin"], "annotated")
         self.assertTrue(result["passed"], result)
@@ -97,7 +97,7 @@ class RuntimeArtifactProvenanceTests(unittest.TestCase):
                         {
                             "producer": "full_app_runtime_validation",
                             "generated_at": "2026-06-29T00:00:00Z",
-                            "source": "lower_artifact_rendered",
+                            "source": "rendered_app",
                             "provenance_origin": "producer",
                             "producer_signature": "sig",
                             "fixture_mode": False,

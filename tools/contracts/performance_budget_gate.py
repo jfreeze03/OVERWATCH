@@ -23,6 +23,24 @@ PRIMARY_SECTIONS = (
     "Security Monitoring",
 )
 
+REQUIRED_FIRST_PAINT_FIELDS = (
+    "section",
+    "workflow",
+    "cold_first_paint_packet_query_count",
+    "warm_first_paint_query_count",
+    "evidence_query_count",
+    "account_usage_count",
+    "detail_query_count",
+    "cost_workbench_query_count",
+    "query_search_query_count",
+    "direct_sql_count",
+    "session_open_count",
+    "elapsed_ms",
+    "product_boundary",
+    "execution_boundary",
+    "passed",
+)
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -79,12 +97,20 @@ def _evaluate_first_paint_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[
     checked: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     seen_sections: set[str] = set()
-    for source_row in rows:
+    source_rows = [dict(row) for row in rows]
+    if not source_rows:
+        for section in PRIMARY_SECTIONS:
+            failures.append({"section": section, "workflow": "Overview", "failure_reason": "missing primary first-paint row"})
+        return checked, failures
+    for source_row in source_rows:
         row = dict(source_row)
         section = _section(row)
         workflow = str(row.get("workflow") or "Overview")
         if section in PRIMARY_SECTIONS:
             seen_sections.add(section)
+        missing_fields = [field for field in REQUIRED_FIRST_PAINT_FIELDS if field not in row]
+        product_boundary = str(row.get("product_boundary") or "").strip()
+        execution_boundary = str(row.get("execution_boundary") or "").strip()
         cold_packet = _row_count(row, "cold_first_paint_packet_query_count", "cold_packet_query_count", "packet_query_count")
         warm_queries = _row_count(row, "warm_first_paint_query_count", "warm_query_count")
         non_packet = _row_count(row, "non_packet_first_paint_event_count", "non_packet_query_count")
@@ -96,6 +122,16 @@ def _evaluate_first_paint_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[
         direct_sql = _row_count(row, "direct_sql_count", "direct_sql_event_count")
         session_open = _row_count(row, "session_open_count")
         reasons: list[str] = []
+        if missing_fields:
+            reasons.append(f"first-paint telemetry missing required fields: {', '.join(missing_fields)}")
+        if section in PRIMARY_SECTIONS and not product_boundary:
+            reasons.append("first-paint telemetry missing product boundary")
+        if section in PRIMARY_SECTIONS and not execution_boundary:
+            reasons.append("first-paint telemetry missing execution boundary")
+        if bool(row.get("raw_sql_included")):
+            reasons.append("first-paint telemetry included raw SQL")
+        if str(row.get("source") or "").lower() in {"synthetic_safe_fallback", "manual_safe_text", "static_contract_only", "test_constructed_payload"}:
+            reasons.append("first-paint telemetry is synthetic/static-only")
         if section in PRIMARY_SECTIONS and cold_packet > 1:
             reasons.append("cold first paint used more than one packet query")
         if warm_queries:
@@ -121,6 +157,8 @@ def _evaluate_first_paint_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[
                 "section": section,
                 "workflow": workflow,
                 "boundary": "first_paint_packet",
+                "product_boundary": product_boundary,
+                "execution_boundary": execution_boundary,
                 "cold_first_paint_packet_query_count": cold_packet,
                 "warm_first_paint_query_count": warm_queries,
                 "non_packet_first_paint_event_count": non_packet,
@@ -139,7 +177,7 @@ def _evaluate_first_paint_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[
         if reasons:
             failures.append({"section": section, "workflow": workflow, "failure_reason": "; ".join(reasons)})
     for section in PRIMARY_SECTIONS:
-        if rows and section not in seen_sections:
+        if section not in seen_sections:
             failures.append({"section": section, "workflow": "Overview", "failure_reason": "missing primary first-paint row"})
     return checked, failures
 

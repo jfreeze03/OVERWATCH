@@ -32,7 +32,7 @@ class RenderProvenanceReconciliationTests(unittest.TestCase):
             runtime_fragments.append(
                 {
                     "producer": "full_app_runtime_validation",
-                    "source": "lower_artifact_rendered",
+                    "source": "rendered_app",
                     "provenance_origin": "producer",
                     "commit_sha": commit,
                     "section": section,

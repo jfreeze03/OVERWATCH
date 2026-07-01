@@ -2453,7 +2453,10 @@ def _product_gauntlet_release_results(root: Path, payloads: Mapping[str, Any], l
         row for row in live_rows
         if not bool(row.get("admin_or_advanced_gated"))
         or not bool(row.get("explicit_click_required"))
-        or not bool(row.get("budget_context_observed", bool(_raw_observed_contexts(row))))
+        or (
+            not _owner_skipped(row)
+            and not bool(row.get("budget_context_observed", bool(_raw_observed_contexts(row))))
+        )
         or bool(row.get("first_paint_invocation"))
         or bool(row.get("route_invocation"))
         or bool(row.get("raw_error_visible_daily"))

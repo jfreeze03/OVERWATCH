@@ -16,6 +16,22 @@ PRIMARY_ALIASES = {
     "Workload Operations": "Workload Overview",
     "Security Monitoring": "Security Overview",
 }
+TEST_COMMIT = "test-commit"
+
+
+def _producer_fields(section: str, workflow: str, *, source: str = "rendered_app") -> dict:
+    return {
+        "producer": "full_app_runtime_validation",
+        "producer_signature": f"sig::{section}::{workflow}",
+        "provenance_origin": "producer",
+        "commit_sha": TEST_COMMIT,
+        "generated_at": "2026-07-01T00:00:00Z",
+        "source": source,
+        "runtime_source": "actual_section_render",
+        "section": section,
+        "workflow": workflow,
+        "raw_sql_included": False,
+    }
 
 
 def _command_brief_html(section: str) -> str:
@@ -32,6 +48,7 @@ def _passing_payload() -> dict:
     for section, workflow in PRIMARY_ALIASES.items():
         view_rows.append(
             {
+                **_producer_fields(section, workflow),
                 "section": section,
                 "workflow": workflow,
                 "rendered": True,
@@ -43,12 +60,19 @@ def _passing_payload() -> dict:
         )
         first_paint_rows.append(
             {
+                **_producer_fields(section, workflow),
                 "section": section,
                 "workflow": workflow,
+                "product_boundary": "first_paint_packet",
+                "execution_boundary": "decision_packet",
                 "cold_first_paint_packet_query_count": 1,
                 "warm_first_paint_query_count": 0,
+                "non_packet_first_paint_event_count": 0,
                 "evidence_query_count": 0,
                 "account_usage_count": 0,
+                "detail_query_count": 0,
+                "cost_workbench_query_count": 0,
+                "query_search_query_count": 0,
                 "direct_sql_count": 0,
                 "session_open_count": 0,
                 "elapsed_ms": 100,
@@ -57,24 +81,25 @@ def _passing_payload() -> dict:
         )
 
     fragment_rows = [
-        {"section": "Query Search", "workflow": "No click", "rendered": True, "text": "Query Search"},
-        {"section": "Query Search", "workflow": "Explicit search", "rendered": True, "text": "Exact query result"},
-        {"section": "Advanced Scope", "workflow": "Active filters", "rendered": True, "text": "Advanced Scope"},
-        {"section": "Settings", "workflow": "Default", "rendered": True, "text": "Cost estimates use configured credit rates."},
+        {**_producer_fields("Query Search", "No click"), "rendered": True, "text": "Query Search"},
+        {**_producer_fields("Query Search", "Explicit search"), "rendered": True, "text": "Exact query result"},
+        {**_producer_fields("Advanced Scope", "Active filters"), "rendered": True, "text": "Advanced Scope"},
+        {**_producer_fields("Settings", "Default"), "rendered": True, "text": "Cost estimates use configured credit rates."},
         {
+            **_producer_fields("Settings/Admin Setup Health", "Setup Health"),
             "section": "Settings/Admin Setup Health",
             "workflow": "Setup Health",
             "admin_only": True,
             "rendered": True,
             "text": "Setup Health",
         },
-        {"section": "Packet Missing", "workflow": "Fallback", "rendered": True, "text": "Summary pending"},
-        {"section": "Packet Closest Fallback", "workflow": "Fallback", "rendered": True, "text": "Latest available"},
-        {"section": "Snowflake Unavailable", "workflow": "Fallback", "rendered": True, "text": "Snowflake unavailable"},
-        {"section": "Permission Denied", "workflow": "Fallback", "rendered": True, "text": "Permission needed"},
-        {"section": "Targeted Evidence", "workflow": "Route action", "rendered": True, "text": "Targeted route"},
-        {"section": "Targeted Evidence", "workflow": "Evidence action", "rendered": True, "text": "Evidence action"},
-        {"section": "Cost Workbench", "workflow": "Explicit action", "rendered": True, "text": "Cost workbench"},
+        {**_producer_fields("Packet Missing", "Fallback"), "rendered": True, "text": "Summary pending"},
+        {**_producer_fields("Packet Closest Fallback", "Fallback"), "rendered": True, "text": "Latest available"},
+        {**_producer_fields("Snowflake Unavailable", "Fallback"), "rendered": True, "text": "Snowflake unavailable"},
+        {**_producer_fields("Permission Denied", "Fallback"), "rendered": True, "text": "Permission needed"},
+        {**_producer_fields("Targeted Evidence", "Route action"), "rendered": True, "text": "Targeted route"},
+        {**_producer_fields("Targeted Evidence", "Evidence action"), "rendered": True, "text": "Evidence action"},
+        {**_producer_fields("Cost Workbench", "Explicit action"), "rendered": True, "text": "Cost workbench"},
     ]
 
     passed_gate = {"passed": True, "failure_count": 0, "raw_sql_included": False}
@@ -87,6 +112,7 @@ def _passing_payload() -> dict:
             "failure_count": 0,
         },
         "artifacts/launch_readiness/action_click_gate_results.json": passed_gate,
+        "artifacts/launch_readiness/runtime_artifact_provenance_gate_results.json": passed_gate,
         "artifacts/launch_readiness/export_download_gate_results.json": passed_gate,
         "artifacts/launch_readiness/settings_live_feature_gate_results.json": {
             **passed_gate,
@@ -117,7 +143,7 @@ class FullAppReleaseSweepTests(unittest.TestCase):
             evaluate_full_app_release_sweep_gate,
         )
 
-        results, failures = build_full_app_release_sweep(_passing_payload())
+        results, failures = build_full_app_release_sweep(_passing_payload(), current_commit=TEST_COMMIT)
         gate = evaluate_full_app_release_sweep_gate(results)
 
         self.assertTrue(results["passed"], failures)
@@ -147,7 +173,7 @@ class FullAppReleaseSweepTests(unittest.TestCase):
             if row["section"] != "Query Search" or row["workflow"] != "Explicit search"
         ]
 
-        results, _failures = build_full_app_release_sweep(payload)
+        results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT)
 
         self.assertFalse(results["passed"])
         self.assertTrue(any(row["section"] == "Query Search" for row in results["failures"]))
@@ -158,7 +184,7 @@ class FullAppReleaseSweepTests(unittest.TestCase):
         payload = _passing_payload()
         payload["artifacts/full_app_validation/view_results.json"][0]["html_fragment"] += " ACCOUNT_USAGE"
 
-        results, _failures = build_full_app_release_sweep(payload)
+        results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT)
 
         self.assertFalse(results["passed"])
         self.assertGreater(results["raw_source_leak_count"], 0)
@@ -171,10 +197,58 @@ class FullAppReleaseSweepTests(unittest.TestCase):
             "cold_first_paint_packet_query_count"
         ] = 2
 
-        results, _failures = build_full_app_release_sweep(payload)
+        results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT)
 
         self.assertFalse(results["passed"])
         self.assertGreater(results["first_paint_failure_count"], 0)
+
+    def test_missing_first_paint_row_fails(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        payload = _passing_payload()
+        payload["artifacts/full_app_validation/first_paint_performance_results.json"]["rows"] = [
+            row
+            for row in payload["artifacts/full_app_validation/first_paint_performance_results.json"]["rows"]
+            if row["section"] != "Security Monitoring"
+        ]
+
+        results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT)
+
+        self.assertFalse(results["passed"])
+        self.assertGreater(results["missing_first_paint_row_count"], 0)
+
+    def test_manual_render_source_fails(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        payload = _passing_payload()
+        payload["artifacts/full_app_validation/view_results.json"][0]["source"] = "test_constructed_payload"
+
+        results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT)
+
+        self.assertFalse(results["passed"])
+        self.assertGreater(results["producer_provenance_failure_count"], 0)
+
+    def test_missing_producer_signature_fails(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        payload = _passing_payload()
+        payload["artifacts/full_app_validation/view_results.json"][0].pop("producer_signature")
+
+        results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT)
+
+        self.assertFalse(results["passed"])
+        self.assertGreater(results["producer_provenance_failure_count"], 0)
+
+    def test_commit_mismatch_fails(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        payload = _passing_payload()
+        payload["artifacts/full_app_validation/rendered_fragments.json"][0]["commit_sha"] = "old-commit"
+
+        results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT)
+
+        self.assertFalse(results["passed"])
+        self.assertGreater(results["producer_provenance_failure_count"], 0)
 
 
 if __name__ == "__main__":

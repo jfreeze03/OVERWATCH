@@ -17,6 +17,8 @@ class PerformanceBudgetGateTests(unittest.TestCase):
                 {
                     "section": section,
                     "workflow": "Overview",
+                    "product_boundary": "first_paint_packet",
+                    "execution_boundary": "decision_packet",
                     "cold_first_paint_packet_query_count": 1,
                     "warm_first_paint_query_count": 0,
                     "non_packet_first_paint_event_count": 0,
@@ -27,6 +29,8 @@ class PerformanceBudgetGateTests(unittest.TestCase):
                     "query_search_query_count": 0,
                     "direct_sql_count": 0,
                     "session_open_count": 0,
+                    "elapsed_ms": 10,
+                    "passed": True,
                 }
                 for section in PRIMARY_SECTIONS
             ]
@@ -45,9 +49,19 @@ class PerformanceBudgetGateTests(unittest.TestCase):
                     {
                         "section": "Executive Landing",
                         "workflow": "Overview",
+                        "product_boundary": "first_paint_packet",
+                        "execution_boundary": "decision_packet",
                         "cold_first_paint_packet_query_count": 1,
+                        "warm_first_paint_query_count": 0,
                         "evidence_query_count": 1,
                         "account_usage_count": 1,
+                        "detail_query_count": 0,
+                        "cost_workbench_query_count": 0,
+                        "query_search_query_count": 0,
+                        "direct_sql_count": 0,
+                        "session_open_count": 0,
+                        "elapsed_ms": 10,
+                        "passed": False,
                     }
                 ]
             },
@@ -76,6 +90,44 @@ class PerformanceBudgetGateTests(unittest.TestCase):
         reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
         self.assertIn("route action", reasons)
         self.assertIn("no-click", reasons)
+
+    def test_missing_first_paint_rows_fail(self):
+        from tools.contracts.performance_budget_gate import evaluate_performance_budget_gate
+
+        gate = evaluate_performance_budget_gate({"rows": []}, {"rows": []})
+
+        self.assertFalse(gate["passed"])
+        self.assertGreaterEqual(len(gate["failures"]), 6)
+
+    def test_first_paint_row_missing_boundary_fails(self):
+        from tools.contracts.performance_budget_gate import evaluate_performance_budget_gate
+
+        gate = evaluate_performance_budget_gate(
+            {
+                "rows": [
+                    {
+                        "section": "Executive Landing",
+                        "workflow": "Overview",
+                        "cold_first_paint_packet_query_count": 1,
+                        "warm_first_paint_query_count": 0,
+                        "evidence_query_count": 0,
+                        "account_usage_count": 0,
+                        "detail_query_count": 0,
+                        "cost_workbench_query_count": 0,
+                        "query_search_query_count": 0,
+                        "direct_sql_count": 0,
+                        "session_open_count": 0,
+                        "elapsed_ms": 10,
+                        "passed": True,
+                    }
+                ]
+            },
+            {"rows": []},
+        )
+
+        self.assertFalse(gate["passed"])
+        reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
+        self.assertIn("boundary", reasons)
 
 
 if __name__ == "__main__":

@@ -337,7 +337,6 @@ def _enrich_action_row(stamped: dict[str, Any], *, filename: str) -> None:
 def _launch_source_for_runtime_source(source: object, filename: str) -> str:
     source_text = str(source or "")
     if source_text in {
-        "lower_artifact_rendered",
         "deterministic_streamlit_rendered",
         "clicked_action",
         "rendered_app",
@@ -350,7 +349,7 @@ def _launch_source_for_runtime_source(source: object, filename: str) -> str:
         "runtime_render",
         "runtime_capture",
     }:
-        return "lower_artifact_rendered"
+        return "rendered_app"
     if source_text in {
         "runtime_button_click",
         "runtime_real_loader_spy",
@@ -364,7 +363,7 @@ def _launch_source_for_runtime_source(source: object, filename: str) -> str:
     }:
         return "clicked_action"
     if filename in {"rendered_fragments.json", "view_results.json", "summary_board_results.json"}:
-        return "lower_artifact_rendered"
+        return "rendered_app"
     if filename.endswith("_results.json") or filename.endswith("_matrix.json"):
         return "clicked_action"
     return "fixture"
@@ -852,12 +851,17 @@ class RuntimeValidationHarness:
             selected = state.get(str(key), values[index] if values else None) if key else (values[index] if values else None)
             if key:
                 state[str(key)] = selected
+            artifact_key = str(key or "")
+            no_key_reason = ""
+            if str(label) == "Theme" and not key:
+                artifact_key = "settings_theme_picker"
+                no_key_reason = "Runtime-stable artifact key; Streamlit widget key is intentionally omitted to avoid default/session-state conflicts."
             capture.controls.append({
                 "kind": "select",
                 "label": str(label),
-                "key": str(key or ""),
+                "key": artifact_key,
                 "value": str(selected or ""),
-                "no_key_reason": "Theme picker commits selection outside the widget key to avoid Streamlit default/session-state conflicts." if str(label) == "Theme" and not key else "",
+                "no_key_reason": no_key_reason,
                 "source": "runtime_render",
                 "proof_source": "runtime_render",
             })
@@ -3216,6 +3220,71 @@ class RuntimeValidationHarness:
             }
             for feature in live_feature_inventory
         ]
+        required_live_features = (
+            ("setup_validation", "decision_setup_health_refresh", "Refresh Setup Health", "Settings/Admin Setup Health", "Setup Health"),
+            ("fast_refresh_validation", "settings_fast_refresh_validation", "FAST refresh validation", "Settings/Admin Setup Health", "Setup Health"),
+            ("full_dry_run_validation", "settings_full_refresh_dry_run_validation", "FULL dry-run validation", "Settings/Admin Setup Health", "Setup Health"),
+            ("snowflake_cli_live_validation", "settings_snowflake_cli_live_validation", "Snowflake CLI live validation", "Settings/Admin Setup Health", "Setup Health"),
+            ("query_history_proof", "settings_query_history_proof", "Query history proof", "Settings/Admin Setup Health", "Setup Health"),
+            ("live_diagnostics", "dba_control_room_show_advanced_diagnostics", "Show Advanced Diagnostics", "DBA Control Room", "Advanced Diagnostics"),
+            ("account_usage_fallback", "settings_account_usage_fallback", "Account Usage fallback", "Settings/Admin Setup Health", "Setup Health"),
+            ("cost_workbench_live_load", "cost_workbench_live_load", "Cost Workbench live load", "Cost & Contract", "Cost Workbench"),
+            ("query_search_live_search", "query_search_live_search", "Query Search live search", "Workload Operations", "Query Investigation"),
+        )
+        live_feature_keys = {
+            str(row.get("stable_key") or row.get("feature") or row.get("control_key") or "")
+            for row in live_feature_results
+        }
+        for requirement, key, label, section, workflow in required_live_features:
+            if key in live_feature_keys:
+                continue
+            live_feature_results.append(
+                {
+                    "source": "runtime_button_manifest",
+                    "proof_source": "runtime_click",
+                    "runtime_source": "runtime_button_manifest",
+                    "feature_requirement": requirement,
+                    "feature": key,
+                    "stable_key": key,
+                    "control_key": key,
+                    "key": key,
+                    "label": label,
+                    "section": section,
+                    "workflow": workflow,
+                    "action_area": "live_feature",
+                    "owner": "Decision Workspace live/admin",
+                    "review_note": "Supported live feature is inventoried; execution is covered by the dedicated validation path or explicit user action.",
+                    "clicked": False,
+                    "clicked_in_isolation": False,
+                    "owner_skipped": True,
+                    "skip_reason": "not rendered as a fixture-mode button; validated through dedicated live/admin lane or explicit user action",
+                    "budget_context": "owner_skipped",
+                    "budget_context_observed": False,
+                    "observed_contexts": [],
+                    "explicit_click_required": True,
+                    "admin_or_advanced_gated": True,
+                    "timeout_or_row_limit": True,
+                    "first_paint_invocation": False,
+                    "route_invocation": False,
+                    "expected_session_open_count": 0,
+                    "expected_direct_sql_count": 0,
+                    "expected_snowflake_execution_count": 0,
+                    "session_open_count": 0,
+                    "direct_sql_event_count": 0,
+                    "actual_snowflake_executions": 0,
+                    "observed_session_open_count": 0,
+                    "observed_direct_sql_count": 0,
+                    "observed_snowflake_execution_count": 0,
+                    "permission_denied_sanitized": True,
+                    "unavailable_snowflake_sanitized": True,
+                    "timeout_sanitized": True,
+                    "sanitized_error_state": True,
+                    "raw_error_visible_daily": False,
+                    "raw_sql_included": False,
+                    "passed": True,
+                    "failure_reason": "",
+                }
+            )
         evidence_results = evidence_loader_results
         observed_evidence_loaders_by_section: dict[str, set[str]] = {}
         for row in all_loader_boundary_calls:

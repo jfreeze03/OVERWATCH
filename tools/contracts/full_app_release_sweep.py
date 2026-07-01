@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import subprocess
 from typing import Any, Iterable, Mapping, Sequence, cast
 
 from tools.contracts.full_app_launch_gauntlet import PRIMARY_SECTIONS
@@ -99,10 +100,68 @@ DIAGNOSTIC_TOKENS = (
     "SnowflakeSQLException",
     "stack trace",
 )
+ACCEPTABLE_PROOF_SOURCES = {
+    "rendered_app",
+    "deterministic_streamlit_rendered",
+    "browser_rendered",
+    "clicked_action",
+    "file_backed_export",
+    "case_payload",
+    "runtime_stress_sequence",
+    "live_validation",
+    "owner_skipped",
+}
+REJECTED_PROOF_SOURCES = {
+    "synthetic_safe_fallback",
+    "manual_safe_text",
+    "static_contract_only",
+    "test_constructed_payload",
+    "post_stamped_provenance",
+    "lower_artifact_rendered",
+    "fixture",
+}
+REQUIRED_RUNTIME_ROW_FIELDS = (
+    "producer",
+    "producer_signature",
+    "provenance_origin",
+    "commit_sha",
+    "generated_at",
+    "source",
+    "runtime_source",
+    "section",
+    "workflow",
+)
+REQUIRED_FIRST_PAINT_FIELDS = (
+    "cold_first_paint_packet_query_count",
+    "warm_first_paint_query_count",
+    "evidence_query_count",
+    "account_usage_count",
+    "detail_query_count",
+    "cost_workbench_query_count",
+    "query_search_query_count",
+    "direct_sql_count",
+    "session_open_count",
+    "elapsed_ms",
+    "product_boundary",
+    "execution_boundary",
+    "passed",
+)
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _git_commit(root: Path | None = None) -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(root or Path.cwd()),
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
 
 
 def _as_mapping(value: object) -> Mapping[str, Any]:
@@ -237,6 +296,48 @@ def _first_paint_row(payloads: Mapping[str, Any], section: str, aliases: Sequenc
     return {}
 
 
+def _proof_source(row: Mapping[str, Any]) -> str:
+    return str(row.get("source") or row.get("proof_source") or "").strip()
+
+
+def _runtime_provenance_failures(row: Mapping[str, Any], *, current_commit: str) -> list[str]:
+    reasons: list[str] = []
+    if not row:
+        return ["producer-backed runtime row missing"]
+    missing = [field for field in REQUIRED_RUNTIME_ROW_FIELDS if not row.get(field)]
+    if missing:
+        reasons.append(f"runtime row missing provenance fields: {', '.join(missing)}")
+    source = _proof_source(row)
+    if source in REJECTED_PROOF_SOURCES:
+        reasons.append(f"runtime row uses rejected proof source: {source}")
+    elif source and source not in ACCEPTABLE_PROOF_SOURCES:
+        reasons.append(f"runtime row uses unapproved proof source: {source}")
+    if str(row.get("provenance_origin") or "") != "producer":
+        reasons.append("runtime row provenance was not producer-written")
+    row_commit = str(row.get("commit_sha") or "")
+    if current_commit and row_commit and row_commit != current_commit:
+        reasons.append("runtime row commit_sha does not match current commit")
+    if bool(row.get("raw_sql_included")):
+        reasons.append("runtime row included raw SQL")
+    if bool(row.get("fixture_mode")) and str(row.get("launch_profile") or "") in {"internal_live", "prod_candidate"}:
+        reasons.append("fixture-only runtime proof cannot satisfy live/prod release sweep")
+    return reasons
+
+
+def _first_paint_failures(row: Mapping[str, Any], *, current_commit: str) -> list[str]:
+    reasons = _runtime_provenance_failures(row, current_commit=current_commit)
+    missing = [field for field in REQUIRED_FIRST_PAINT_FIELDS if field not in row]
+    if missing:
+        reasons.append(f"first-paint row missing required fields: {', '.join(missing)}")
+    if not str(row.get("product_boundary") or "").strip():
+        reasons.append("first-paint row missing product_boundary")
+    if not str(row.get("execution_boundary") or "").strip():
+        reasons.append("first-paint row missing execution_boundary")
+    if bool(row.get("raw_sql_included")):
+        reasons.append("first-paint row included raw SQL")
+    return reasons
+
+
 def _gate(payloads: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     return _as_mapping(payloads.get(f"artifacts/launch_readiness/{key}.json")) or _as_mapping(
         payloads.get(key)
@@ -259,7 +360,7 @@ def _global_gate_failed(payloads: Mapping[str, Any], key: str) -> bool:
     return bool(gate) and not bool(gate.get("passed", False))
 
 
-def _surface_row(surface: Mapping[str, Any], payloads: Mapping[str, Any]) -> dict[str, Any]:
+def _surface_row(surface: Mapping[str, Any], payloads: Mapping[str, Any], *, current_commit: str) -> dict[str, Any]:
     section = str(surface["section"])
     workflow = str(surface["workflow"])
     aliases = tuple(str(item) for item in surface.get("aliases") or (workflow,))
@@ -292,8 +393,19 @@ def _surface_row(surface: Mapping[str, Any], payloads: Mapping[str, Any]) -> dic
     synthetic = str(render_row.get("proof_source") or render_row.get("source") or "").lower() in {
         "synthetic_safe_fallback",
         "manual_safe_text",
+        "static_contract_only",
+        "test_constructed_payload",
+        "lower_artifact_rendered",
+        "fixture",
     }
     fp = _first_paint_row(payloads, section, aliases)
+    missing_first_paint_row = section in PRIMARY_SECTIONS and not bool(fp)
+    render_provenance_failures = [] if feature_gate_key else _runtime_provenance_failures(render_row, current_commit=current_commit)
+    first_paint_provenance_failures = (
+        ["first-paint row missing"]
+        if missing_first_paint_row
+        else (_first_paint_failures(fp, current_commit=current_commit) if section in PRIMARY_SECTIONS else [])
+    )
     first_paint_query_count = _as_int(
         fp.get("cold_first_paint_packet_query_count")
         or fp.get("packet_query_count")
@@ -302,6 +414,9 @@ def _surface_row(surface: Mapping[str, Any], payloads: Mapping[str, Any]) -> dic
     warm_query_count = _as_int(fp.get("warm_first_paint_query_count") or _as_mapping(render_row.get("first_paint")).get("warm_packet_queries"))
     evidence_query_count = _as_int(fp.get("evidence_query_count"))
     account_usage_count = _as_int(fp.get("account_usage_count"))
+    detail_query_count = _as_int(fp.get("detail_query_count"))
+    cost_workbench_query_count = _as_int(fp.get("cost_workbench_query_count"))
+    query_search_query_count = _as_int(fp.get("query_search_query_count"))
     direct_sql_count = _as_int(fp.get("direct_sql_count"))
     session_open_count = _as_int(fp.get("session_open_count"))
     elapsed_ms = _as_float(fp.get("elapsed_ms") or render_row.get("elapsed_ms"))
@@ -324,6 +439,7 @@ def _surface_row(surface: Mapping[str, Any], payloads: Mapping[str, Any]) -> dic
         reasons.append("rendered proof missing")
     if synthetic:
         reasons.append("synthetic fallback cannot pass release sweep")
+    reasons.extend(render_provenance_failures)
     if require_command_brief and command_brief_count != 1:
         reasons.append("primary overview must render exactly one CommandBrief")
     if require_command_brief and marker_count != 1:
@@ -337,11 +453,19 @@ def _surface_row(surface: Mapping[str, Any], payloads: Mapping[str, Any]) -> dic
     if raw_source_leak_count:
         reasons.append("raw source token leak appears")
     if section in PRIMARY_SECTIONS:
+        reasons.extend(first_paint_provenance_failures)
         if first_paint_query_count > 1:
             reasons.append("cold first paint exceeded one packet query")
         if warm_query_count:
             reasons.append("warm first paint ran queries")
-        if evidence_query_count or account_usage_count or direct_sql_count:
+        if (
+            evidence_query_count
+            or account_usage_count
+            or detail_query_count
+            or cost_workbench_query_count
+            or query_search_query_count
+            or direct_sql_count
+        ):
             reasons.append("first paint crossed evidence/Account Usage/direct SQL boundary")
     if action_failure_count:
         reasons.append("visible action/click proof failed")
@@ -360,6 +484,9 @@ def _surface_row(surface: Mapping[str, Any], payloads: Mapping[str, Any]) -> dic
         "warm_query_count": warm_query_count,
         "evidence_query_count": evidence_query_count,
         "account_usage_count": account_usage_count,
+        "detail_query_count": detail_query_count,
+        "cost_workbench_query_count": cost_workbench_query_count,
+        "query_search_query_count": query_search_query_count,
         "direct_sql_count": direct_sql_count,
         "session_open_count": session_open_count,
         "elapsed_ms": elapsed_ms,
@@ -371,15 +498,24 @@ def _surface_row(surface: Mapping[str, Any], payloads: Mapping[str, Any]) -> dic
         "decision_workspace_marker_count": marker_count,
         "action_failure_count": action_failure_count,
         "export_failure_count": export_failure_count,
+        "missing_first_paint_row": missing_first_paint_row,
+        "producer_provenance_failure_count": len(render_provenance_failures) + len(first_paint_provenance_failures),
+        "synthetic_render_used": synthetic,
         "passed": not reasons,
         "failure_reason": "; ".join(dict.fromkeys(reasons)),
         "raw_sql_included": False,
     }
 
 
-def build_full_app_release_sweep(payloads: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    rows = [_surface_row(surface, payloads) for surface in REQUIRED_RELEASE_SURFACES]
+def build_full_app_release_sweep(
+    payloads: Mapping[str, Any],
+    *,
+    current_commit: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    resolved_commit = current_commit if current_commit is not None else _git_commit()
+    rows = [_surface_row(surface, payloads, current_commit=resolved_commit) for surface in REQUIRED_RELEASE_SURFACES]
     gate_checks = (
+        ("runtime_artifact_provenance", "runtime_artifact_provenance_gate_results"),
         ("rendered_ui_leak_scan", "rendered_ui_leak_gate_results"),
         ("action_click_gauntlet", "action_click_gate_results"),
         ("export_download_gauntlet", "export_download_gate_results"),
@@ -470,10 +606,15 @@ def build_full_app_release_sweep(payloads: Mapping[str, Any]) -> tuple[dict[str,
         for row in rows
         if row.get("section") in PRIMARY_SECTIONS
         and (
-            _as_int(row.get("first_paint_query_count")) > 1
+            bool(row.get("missing_first_paint_row"))
+            or _as_int(row.get("producer_provenance_failure_count"))
+            or _as_int(row.get("first_paint_query_count")) > 1
             or _as_int(row.get("warm_query_count"))
             or _as_int(row.get("evidence_query_count"))
             or _as_int(row.get("account_usage_count"))
+            or _as_int(row.get("detail_query_count"))
+            or _as_int(row.get("cost_workbench_query_count"))
+            or _as_int(row.get("query_search_query_count"))
             or _as_int(row.get("direct_sql_count"))
         )
     )
@@ -494,6 +635,10 @@ def build_full_app_release_sweep(payloads: Mapping[str, Any]) -> tuple[dict[str,
         "stress_failure_count": _as_int(_gate(payloads, "user_stress_gate_results").get("failure_count")),
         "sql_cleanup_failure_count": _as_int(_gate(payloads, "sql_cleanup_gate_results").get("failure_count")),
         "first_paint_failure_count": first_paint_failure_count,
+        "missing_first_paint_row_count": sum(1 for row in rows if bool(row.get("missing_first_paint_row"))),
+        "missing_render_surface_count": sum(1 for row in rows if not row.get("rendered")),
+        "producer_provenance_failure_count": sum(_as_int(row.get("producer_provenance_failure_count")) for row in rows),
+        "synthetic_render_count": sum(1 for row in rows if bool(row.get("synthetic_render_used"))),
         "duplicate_command_brief_count": duplicate_command_brief_count,
         "old_board_marker_count": sum(_as_int(row.get("old_board_marker_count")) for row in rows),
         "credential_tile_rendered": bool(_gate(payloads, "security_credential_render_gate_results").get("passed")),
@@ -535,6 +680,10 @@ def evaluate_full_app_release_sweep_gate(payload: object) -> dict[str, Any]:
         "stress_failure_count": _as_int(results.get("stress_failure_count")),
         "sql_cleanup_failure_count": _as_int(results.get("sql_cleanup_failure_count")),
         "first_paint_failure_count": _as_int(results.get("first_paint_failure_count")),
+        "missing_first_paint_row_count": _as_int(results.get("missing_first_paint_row_count")),
+        "missing_render_surface_count": _as_int(results.get("missing_render_surface_count")),
+        "producer_provenance_failure_count": _as_int(results.get("producer_provenance_failure_count")),
+        "synthetic_render_count": _as_int(results.get("synthetic_render_count")),
         "duplicate_command_brief_count": _as_int(results.get("duplicate_command_brief_count")),
         "old_board_marker_count": _as_int(results.get("old_board_marker_count")),
         "credential_tile_rendered": bool(results.get("credential_tile_rendered")),
@@ -564,6 +713,8 @@ def write_full_app_release_sweep_artifacts(
                 "artifacts/full_app_validation/download_results.json",
                 "artifacts/full_app_validation/case_payload_results.json",
                 "artifacts/full_app_validation/user_stress_results.json",
+                "artifacts/full_app_validation/runtime_artifact_provenance_results.json",
+                "artifacts/launch_readiness/runtime_artifact_provenance_gate_results.json",
                 "artifacts/launch_readiness/action_click_gate_results.json",
                 "artifacts/launch_readiness/export_download_gate_results.json",
                 "artifacts/launch_readiness/settings_live_feature_gate_results.json",

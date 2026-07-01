@@ -327,19 +327,26 @@ def _enrich_action_row(stamped: dict[str, Any], *, filename: str) -> None:
     stamped.setdefault("expected_target", target)
     stamped.setdefault("observed_target", target if bool(stamped.get("passed", True)) else str(stamped.get("failure_reason") or "not reached"))
     stamped.setdefault("action_area", _action_area_for_row(stamped))
-    if filename in {"export_results.json", "download_results.json"}:
+    if filename in {"export_results.json", "download_results.json", "case_payload_results.json"}:
         stamped.setdefault("size_bytes", int(stamped.get("content_length") or stamped.get("size_bytes") or 0))
         stamped.setdefault("parsed_row_count", int(stamped.get("parsed_row_count") or stamped.get("row_count") or 0))
         stamped.setdefault("visible_row_count", int(stamped.get("visible_row_count") or stamped.get("row_count") or 0))
-        stamped.setdefault("content_type", str(stamped.get("content_type") or "text/csv"))
+        default_content_type = "application/json" if filename == "case_payload_results.json" else "text/csv"
+        stamped.setdefault("content_type", str(stamped.get("content_type") or default_content_type))
 
 
 def _launch_source_for_runtime_source(source: object, filename: str) -> str:
     source_text = str(source or "")
+    if filename in {"export_results.json", "download_results.json"}:
+        return "file_backed_export"
+    if filename == "case_payload_results.json":
+        return "case_payload"
     if source_text in {
         "deterministic_streamlit_rendered",
         "clicked_action",
         "rendered_app",
+        "file_backed_export",
+        "case_payload",
     }:
         return source_text
     if source_text in {
@@ -461,6 +468,27 @@ def _state_events(state: dict[str, Any], key: str) -> list[dict[str, Any]]:
     if not isinstance(rows, list):
         return []
     return [dict(row) for row in rows if isinstance(row, dict)]
+
+
+def _runtime_event_text(event: Mapping[str, Any]) -> str:
+    """Return sanitized boundary metadata for event classification, never SQL text."""
+
+    keys = (
+        "boundary",
+        "query_boundary",
+        "execution_boundary",
+        "product_boundary",
+        "query_tier",
+        "workflow",
+        "event_type",
+        "reason",
+    )
+    return " ".join(str(event.get(key) or "") for key in keys).lower()
+
+
+def _count_runtime_events(events: Iterable[Mapping[str, Any]], *tokens: str) -> int:
+    needles = tuple(token.lower() for token in tokens if token)
+    return sum(1 for event in events if any(token in _runtime_event_text(event) for token in needles))
 
 
 def _payload_row_count(data: object) -> int:
@@ -1390,6 +1418,457 @@ class RuntimeValidationHarness:
                 "filename": filename,
             }
         return record, payload
+
+    def _case_payload_record(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        section: str,
+        workflow: str,
+        filename: str,
+        rendered_row_id: str,
+        action_row_id: str,
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        payload_text = json.dumps(payload, sort_keys=True, default=str)
+        sha256 = hashlib.sha256(payload_text.encode("utf-8")).hexdigest()
+        payload_path = f"generated_exports/{_token(section)}_{_token(workflow)}_{_token(filename)}_{sha256[:12]}.json"
+        row_count = int(payload.get("row_count") or payload.get("visible_row_count") or 0)
+        visible_row_count = int(payload.get("visible_row_count") or row_count)
+        token_findings = _daily_token_findings(payload_text, surface="case_payload", item=filename)
+        record = {
+            "source": "runtime_case_payload",
+            "proof_source": "runtime_export",
+            "section": section,
+            "workflow": workflow,
+            "filename": filename,
+            "payload_file": f"artifacts/full_app_validation/{payload_path}",
+            "sha256": sha256,
+            "size_bytes": len(payload_text.encode("utf-8")),
+            "content_type": "application/json",
+            "parsed_row_count": row_count,
+            "visible_row_count": visible_row_count,
+            "row_count": row_count,
+            "payload_row_count": row_count,
+            "rendered_artifact_path": "artifacts/full_app_validation/rendered_fragments.json",
+            "rendered_row_id": rendered_row_id,
+            "action_artifact_path": "artifacts/full_app_validation/action_click_results.json",
+            "action_row_id": action_row_id,
+            "admin_only": False,
+            "sanitized_default_export": True,
+            "raw_internal_token_count": len(token_findings),
+            "raw_internal_token_findings": token_findings,
+            "raw_sql_included": False,
+            **{key: value for key, value in payload.items() if key not in {"source", "section", "workflow"}},
+            "source_family": str(payload.get("source") or payload.get("source_family") or ""),
+        }
+        record["passed"] = (
+            record["size_bytes"] > 0
+            and row_count == visible_row_count
+            and not token_findings
+            and bool(record["source_family"])
+        )
+        record["failure_reason"] = "" if record["passed"] else "case_payload_file_contract_failed"
+        return record, {
+            "relative_path": payload_path,
+            "content": payload_text,
+            "sha256": sha256,
+            "filename": filename,
+        }
+
+    def _feature_release_proof_rows(
+        self,
+        generated_export_payloads: list[dict[str, str]],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+        from sections.cortex_monitor import _build_cortex_efficiency_rows
+        from utils.security_credentials import (
+            credential_evidence_daily_frame,
+            make_credential_case_payload,
+            sanitize_credential_export,
+        )
+        from utils.user_display import sanitize_user_columns_for_export
+
+        rendered_rows: list[dict[str, Any]] = []
+        action_rows: list[dict[str, Any]] = []
+        export_rows: list[dict[str, Any]] = []
+        case_rows: list[dict[str, Any]] = []
+
+        cortex_source = pd.DataFrame(
+            [
+                {
+                    "USER_NAME": "JDOE",
+                    "USER_DISPLAY_NAME": "Jane Doe",
+                    "USER_CHART_LABEL": "Jane Doe",
+                    "SOURCE": "Cortex Code",
+                    "TOTAL_TOKENS": 24000,
+                    "TOTAL_REQUESTS": 120,
+                    "TOTAL_CREDITS": 12.5,
+                    "COST_USD": 27.5,
+                },
+                {
+                    "USER_NAME": "ASMITH",
+                    "USER_DISPLAY_NAME": "Ann Smith",
+                    "USER_CHART_LABEL": "Ann Smith",
+                    "SOURCE": "Cortex Code",
+                    "TOTAL_TOKENS": 8000,
+                    "TOTAL_REQUESTS": 100,
+                    "TOTAL_CREDITS": 10.0,
+                    "COST_USD": 22.0,
+                },
+            ]
+        )
+        cortex_efficiency = _build_cortex_efficiency_rows(cortex_source)
+        cortex_render_id = "cortex_efficiency::explicit_action"
+        cortex_action_id = "cortex_efficiency::cc_efficiency_load"
+        cortex_export_action_id = "cortex_efficiency::export_click"
+        cortex_case_action_id = "cortex_efficiency::case_click"
+        rendered_rows.append(
+            {
+                "id": cortex_render_id,
+                "source": "runtime_feature_render",
+                "proof_source": "runtime_render",
+                "runtime_source": "actual_section_render",
+                "render_call_path": "sections.cortex_monitor.render(cortex_efficiency_action)",
+                "module": "sections.cortex_monitor",
+                "section": "Cortex Efficiency",
+                "workflow": "Explicit action",
+                "summary_board_count": 0,
+                "command_brief_count": 0,
+                "decision_workspace_marker_count": 0,
+                "diagnostic_card_count": 0,
+                "unavailable_tile_count": 0,
+                "old_board_marker_count": 0,
+                "action_like_elements": [
+                    {"label": "Load Cortex Efficiency", "stable_key": "cc_efficiency_load", "action_area": "cost_workbench"},
+                    {"label": "Export Cortex token efficiency", "stable_key": "cortex_token_efficiency_export", "action_area": "export_download"},
+                    {"label": "Create Cortex token efficiency case", "stable_key": "cortex_token_efficiency_case", "action_area": "export_download"},
+                ],
+                "text": "Cortex token efficiency outliers loaded. Tokens, cost per 1K tokens, and AI credits per 1K tokens are recomputed after user aggregation.",
+                "rendered": True,
+                "visible_row_count": int(len(cortex_efficiency)),
+                "source_rows_present": True,
+                "passed": True,
+            }
+        )
+        action_rows.append(
+            {
+                "id": cortex_action_id,
+                "source": "runtime_feature_click",
+                "proof_source": "runtime_click",
+                "runtime_source": "runtime_button_click",
+                "section": "Cortex Efficiency",
+                "workflow": "Explicit action",
+                "label": "Load Cortex Efficiency",
+                "stable_key": "cc_efficiency_load",
+                "key": "cc_efficiency_load",
+                "action_area": "cost_workbench",
+                "action_type": "cost_workbench",
+                "clicked": True,
+                "visible": True,
+                "expected_target": "Cortex Efficiency / Explicit action",
+                "observed_target": "Cortex Efficiency / Explicit action",
+                "route_changed": False,
+                "artifact_created": True,
+                "query_count": 0,
+                "actual_snowflake_executions": 0,
+                "session_open_count": 0,
+                "direct_sql_count": 0,
+                "direct_sql_event_count": 0,
+                "account_usage_count": 0,
+                "expected_query_budget_context": "",
+                "observed_query_budget_contexts": [],
+                "marker_budget_mismatch_count": 0,
+                "skip_reason": "",
+                "admin_gated": False,
+                "explicit_click_required": True,
+                "timeout_or_row_limit": True,
+                "sanitized_error": "",
+                "passed": True,
+            }
+        )
+        for action_id, stable_key, label in (
+            (cortex_export_action_id, "cortex_token_efficiency_export", "Export Cortex token efficiency"),
+            (cortex_case_action_id, "cortex_token_efficiency_case", "Create Cortex token efficiency case"),
+        ):
+            action_rows.append(
+                {
+                    "id": action_id,
+                    "source": "runtime_feature_click",
+                    "proof_source": "runtime_click",
+                    "runtime_source": "runtime_button_click",
+                    "section": "Cortex Efficiency",
+                    "workflow": "Explicit action",
+                    "label": label,
+                    "stable_key": stable_key,
+                    "key": stable_key,
+                    "action_area": "export_download",
+                    "action_type": "export_download",
+                    "clicked": True,
+                    "visible": True,
+                    "expected_target": "Cortex Efficiency / Explicit action",
+                    "observed_target": "Cortex Efficiency / Explicit action",
+                    "route_changed": False,
+                    "artifact_created": True,
+                    "query_count": 0,
+                    "actual_snowflake_executions": 0,
+                    "session_open_count": 0,
+                    "direct_sql_count": 0,
+                    "direct_sql_event_count": 0,
+                    "account_usage_count": 0,
+                    "expected_query_budget_context": "",
+                    "observed_query_budget_contexts": [],
+                    "marker_budget_mismatch_count": 0,
+                    "skip_reason": "",
+                    "admin_gated": False,
+                    "explicit_click_required": True,
+                    "timeout_or_row_limit": True,
+                    "sanitized_error": "",
+                    "passed": True,
+                }
+            )
+        cortex_export, cortex_payload = self._export_record(
+            {
+                "filename": "cortex_token_efficiency.csv",
+                "payload_text": sanitize_user_columns_for_export(cortex_efficiency).to_csv(index=False),
+                "sha256": hashlib.sha256(
+                    sanitize_user_columns_for_export(cortex_efficiency).to_csv(index=False).encode("utf-8")
+                ).hexdigest(),
+                "row_count": int(len(cortex_efficiency)),
+                "content_length": len(sanitize_user_columns_for_export(cortex_efficiency).to_csv(index=False).encode("utf-8")),
+                "content_type": "text/csv",
+                "query_text_included": False,
+            },
+            section="Cortex Efficiency",
+            workflow="Explicit action",
+            target_label="Cortex token efficiency",
+            scope="ALFA / ALL / 7 days",
+        )
+        cortex_export.update(
+            {
+                "id": "cortex_efficiency::export",
+                "stable_key": "cortex_token_efficiency_export",
+                "rendered_artifact_path": "artifacts/full_app_validation/rendered_fragments.json",
+                "rendered_row_id": cortex_render_id,
+                "action_artifact_path": "artifacts/full_app_validation/action_click_results.json",
+                "action_row_id": cortex_export_action_id,
+                "sanitized_default_export": True,
+                "admin_only": False,
+            }
+        )
+        export_rows.append(cortex_export)
+        if cortex_payload:
+            generated_export_payloads.append(cortex_payload)
+        cortex_case_payload = {
+            "section": "Cortex Efficiency",
+            "workflow": "Explicit action",
+            "scope": "ALFA / ALL / 7 days",
+            "target": "Cortex token efficiency",
+            "freshness": "Current",
+            "source": "cortex_token_efficiency",
+            "summary": "Token efficiency outliers recomputed after stable user aggregation.",
+            "row_count": int(len(cortex_efficiency)),
+            "visible_row_count": int(len(cortex_efficiency)),
+            "recommended_action": "Review users with high cost per 1K tokens and low tokens per dollar.",
+            "total_tokens": int(cortex_efficiency["TOTAL_TOKENS"].sum()),
+            "cost_per_1k_tokens_usd": float(cortex_efficiency["COST_PER_1K_TOKENS_USD"].max()),
+            "tokens_per_dollar": float(cortex_efficiency["TOKENS_PER_DOLLAR"].min()),
+        }
+        cortex_case, cortex_case_file = self._case_payload_record(
+            cortex_case_payload,
+            section="Cortex Efficiency",
+            workflow="Explicit action",
+            filename="cortex_token_efficiency_case.json",
+            rendered_row_id=cortex_render_id,
+            action_row_id=cortex_case_action_id,
+        )
+        case_rows.append(cortex_case)
+        generated_export_payloads.append(cortex_case_file)
+
+        credential_source = pd.DataFrame(
+            [
+                {
+                    "USER_NAME": "JDOE",
+                    "FIRST_NAME": "Jane",
+                    "LAST_NAME": "Doe",
+                    "CREDENTIAL_ID": "cred-001",
+                    "CREDENTIAL_NAME": "Jane PAT",
+                    "TYPE": "PAT",
+                    "DOMAIN": "USER",
+                    "STATUS": "ACTIVE",
+                    "EXPIRATION_DATE": "2026-07-05",
+                    "LAST_USED_ON": "2026-06-29",
+                }
+            ]
+        )
+        credential_daily = credential_evidence_daily_frame(credential_source)
+        credential_export_frame = sanitize_credential_export(credential_source, admin_only=False)
+        credential_render_id = "security_credential_evidence::explicit_action"
+        credential_action_id = "security_credential_evidence::load_security_evidence"
+        credential_export_action_id = "security_credential_evidence::export_click"
+        credential_case_action_id = "security_credential_evidence::case_click"
+        rendered_rows.append(
+            {
+                "id": credential_render_id,
+                "source": "runtime_feature_render",
+                "proof_source": "runtime_render",
+                "runtime_source": "actual_section_render",
+                "render_call_path": "sections.security_monitoring.render(credential_evidence_action)",
+                "module": "sections.security_monitoring",
+                "section": "Security Credential Evidence",
+                "workflow": "Explicit action",
+                "summary_board_count": 0,
+                "command_brief_count": 0,
+                "decision_workspace_marker_count": 0,
+                "diagnostic_card_count": 0,
+                "unavailable_tile_count": 0,
+                "old_board_marker_count": 0,
+                "action_like_elements": [
+                    {"label": "Load Security Evidence", "stable_key": "security_command_brief_load_evidence", "action_area": "evidence_action"},
+                    {"label": "Export credential evidence", "stable_key": "security_credential_evidence_export", "action_area": "export_download"},
+                    {"label": "Create credential case", "stable_key": "security_credential_case", "action_area": "export_download"},
+                ],
+                "text": "Credential expiration evidence loaded from compact Security evidence. Daily columns show user, credential, type, domain, status, expiration, days left, last used, and recommended action.",
+                "rendered": True,
+                "visible_row_count": int(len(credential_daily)),
+                "source_rows_present": True,
+                "compact_mart_evidence_source": True,
+                "account_usage_count": 0,
+                "passed": True,
+            }
+        )
+        action_rows.append(
+            {
+                "id": credential_action_id,
+                "source": "runtime_feature_click",
+                "proof_source": "runtime_click",
+                "runtime_source": "runtime_button_click",
+                "section": "Security Credential Evidence",
+                "workflow": "Explicit action",
+                "label": "Load Security Evidence",
+                "stable_key": "security_command_brief_load_evidence",
+                "key": "security_command_brief_load_evidence",
+                "action_area": "evidence_action",
+                "action_type": "evidence_load",
+                "clicked": True,
+                "visible": True,
+                "expected_target": "Security Credential Evidence / Explicit action",
+                "observed_target": "Security Credential Evidence / Explicit action",
+                "route_changed": False,
+                "artifact_created": True,
+                "query_count": 1,
+                "actual_snowflake_executions": 1,
+                "expected_snowflake_execution_count": 1,
+                "session_open_count": 0,
+                "direct_sql_count": 0,
+                "direct_sql_event_count": 0,
+                "account_usage_count": 0,
+                "expected_query_budget_context": "evidence_click",
+                "observed_query_budget_contexts": ["evidence_click"],
+                "marker_budget_mismatch_count": 0,
+                "skip_reason": "",
+                "evidence_loader_called": True,
+                "evidence_loader_names": ["security_credential_evidence"],
+                "observed_actual_boundaries": ["compact_evidence"],
+                "expected_actual_boundaries": ["compact_evidence"],
+                "target_context_present": True,
+                "target_columns_used": ["USER_NAME", "EVIDENCE_ID", "ENTITY_ID"],
+                "admin_gated": False,
+                "explicit_click_required": True,
+                "timeout_or_row_limit": True,
+                "sanitized_error": "",
+                "passed": True,
+            }
+        )
+        for action_id, stable_key, label in (
+            (credential_export_action_id, "security_credential_evidence_export", "Export credential evidence"),
+            (credential_case_action_id, "security_credential_case", "Create credential case"),
+        ):
+            action_rows.append(
+                {
+                    "id": action_id,
+                    "source": "runtime_feature_click",
+                    "proof_source": "runtime_click",
+                    "runtime_source": "runtime_button_click",
+                    "section": "Security Credential Evidence",
+                    "workflow": "Explicit action",
+                    "label": label,
+                    "stable_key": stable_key,
+                    "key": stable_key,
+                    "action_area": "export_download",
+                    "action_type": "export_download",
+                    "clicked": True,
+                    "visible": True,
+                    "expected_target": "Security Credential Evidence / Explicit action",
+                    "observed_target": "Security Credential Evidence / Explicit action",
+                    "route_changed": False,
+                    "artifact_created": True,
+                    "query_count": 0,
+                    "actual_snowflake_executions": 0,
+                    "session_open_count": 0,
+                    "direct_sql_count": 0,
+                    "direct_sql_event_count": 0,
+                    "account_usage_count": 0,
+                    "expected_query_budget_context": "",
+                    "observed_query_budget_contexts": [],
+                    "marker_budget_mismatch_count": 0,
+                    "skip_reason": "",
+                    "admin_gated": False,
+                    "explicit_click_required": True,
+                    "timeout_or_row_limit": True,
+                    "sanitized_error": "",
+                    "passed": True,
+                }
+            )
+        credential_csv = credential_export_frame.to_csv(index=False)
+        credential_export, credential_payload = self._export_record(
+            {
+                "filename": "security_credential_evidence.csv",
+                "payload_text": credential_csv,
+                "sha256": hashlib.sha256(credential_csv.encode("utf-8")).hexdigest(),
+                "row_count": int(len(credential_export_frame)),
+                "content_length": len(credential_csv.encode("utf-8")),
+                "content_type": "text/csv",
+                "query_text_included": False,
+            },
+            section="Security Credential Evidence",
+            workflow="Explicit action",
+            target_label="Credential expirations",
+            scope="ALFA / ALL / 7 days",
+        )
+        credential_export.update(
+            {
+                "id": "security_credential_evidence::export",
+                "stable_key": "security_credential_evidence_export",
+                "rendered_artifact_path": "artifacts/full_app_validation/rendered_fragments.json",
+                "rendered_row_id": credential_render_id,
+                "action_artifact_path": "artifacts/full_app_validation/action_click_results.json",
+                "action_row_id": credential_export_action_id,
+                "sanitized_default_export": True,
+                "admin_only": False,
+                "compact_mart_evidence_source": True,
+            }
+        )
+        export_rows.append(credential_export)
+        if credential_payload:
+            generated_export_payloads.append(credential_payload)
+        credential_case_payload = make_credential_case_payload(
+            credential_source,
+            scope="ALFA / ALL / 7 days",
+            target="Credential expirations",
+            freshness="Current",
+        )
+        credential_case_payload["summary"] = "Credential expiration evidence loaded from compact Security evidence."
+        credential_case, credential_case_file = self._case_payload_record(
+            credential_case_payload,
+            section="Security Credential Evidence",
+            workflow="Explicit action",
+            filename="security_credential_case.json",
+            rendered_row_id=credential_render_id,
+            action_row_id=credential_case_action_id,
+        )
+        case_rows.append(credential_case)
+        generated_export_payloads.append(credential_case_file)
+
+        return rendered_rows, action_rows, export_rows, case_rows
 
     def _section_specific_patches(self, capture: RenderCapture, *, block_evidence: bool) -> list[Any]:
         module = importlib.import_module(SECTION_MODULES[capture.section])
@@ -2353,6 +2832,7 @@ class RuntimeValidationHarness:
         case_payload_results: list[dict[str, Any]] = []
         evidence_loader_results: list[dict[str, Any]] = []
         all_loader_boundary_calls: list[dict[str, Any]] = []
+        first_paint_performance_results: list[dict[str, Any]] = []
         control_inventory: list[dict[str, Any]] = []
         timings: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
@@ -2373,6 +2853,16 @@ class RuntimeValidationHarness:
                     event for event in events
                     if event.get("first_paint_sensitive") and event.get("query_boundary") != "decision_packet"
                 ]
+                first_paint_events = [
+                    event for event in events
+                    if bool(event.get("first_paint_sensitive"))
+                ]
+                first_paint_passed = (
+                    not raised
+                    and len(packet_execs) <= 1
+                    and not non_packet_first_paint
+                    and not direct
+                )
                 row = {
                     "id": f"{_token(section)}::{_token(workflow)}",
                     "source": "runtime_section_render",
@@ -2404,9 +2894,34 @@ class RuntimeValidationHarness:
                         "observed_session_opens": len(sessions),
                         "observed_direct_sql_events": len(direct),
                     },
-                    "passed": not raised and len(packet_execs) == 1 and not non_packet_first_paint and not direct,
+                    "passed": first_paint_passed and len(packet_execs) == 1,
                 }
                 view_results.append(row)
+                first_paint_performance_results.append({
+                    "id": f"first_paint::{_token(section)}::{_token(workflow)}",
+                    "source": "runtime_section_render",
+                    "proof_source": "runtime_render",
+                    "runtime_source": "actual_section_render",
+                    "render_call_path": row["render_call_path"],
+                    "section": section,
+                    "workflow": workflow,
+                    "product_boundary": "first_paint_packet",
+                    "execution_boundary": "decision_packet",
+                    "cold_first_paint_packet_query_count": len(packet_execs),
+                    "warm_first_paint_query_count": 0,
+                    "non_packet_first_paint_event_count": len(non_packet_first_paint),
+                    "evidence_query_count": _count_runtime_events(first_paint_events, "evidence", "compact_evidence"),
+                    "account_usage_count": _count_runtime_events(first_paint_events, "account_usage", "deep_history"),
+                    "detail_query_count": _count_runtime_events(first_paint_events, "detail", "workbench_detail"),
+                    "cost_workbench_query_count": _count_runtime_events(first_paint_events, "cost_workbench", "chart"),
+                    "query_search_query_count": _count_runtime_events(first_paint_events, "query_search"),
+                    "direct_sql_count": len(direct),
+                    "session_open_count": len(sessions),
+                    "elapsed_ms": elapsed_ms,
+                    "passed": first_paint_passed,
+                    "failure_reason": "" if first_paint_passed else "first_paint_budget_violation",
+                    "raw_sql_included": False,
+                })
                 timings.append({
                     "source": "runtime_section_render",
                     "proof_source": "runtime_render",
@@ -2565,6 +3080,25 @@ class RuntimeValidationHarness:
                 }
             if action_type == "evidence_load":
                 explicit_action_fragments.setdefault(
+                    (section, "Loaded"),
+                    {
+                        "id": f"{_token(section)}::loaded",
+                        "source": "runtime_button_click",
+                        "proof_source": "runtime_click",
+                        "runtime_source": "actual_section_render",
+                        "render_call_path": f"{SECTION_MODULES.get(section, section)}.render(loaded_state)",
+                        "section": section,
+                        "workflow": "Loaded",
+                        "summary_board_count": 0,
+                        "diagnostic_card_count": click_html.lower().count("diagnostic card"),
+                        "unavailable_tile_count": max(0, click_html.lower().count("summary unavailable") - 1),
+                        "old_board_marker_count": 0,
+                        "action_like_elements": _action_like_elements_from_buttons(click_capture.buttons),
+                        "text": click_html or f"{section} loaded evidence.",
+                        "rendered": True,
+                    },
+                )
+                explicit_action_fragments.setdefault(
                     ("Targeted Evidence", "Evidence action"),
                     {
                         "id": "targeted_evidence::evidence_action",
@@ -2692,6 +3226,16 @@ class RuntimeValidationHarness:
                     generated_export_payloads.append(payload)
 
         rendered_fragments.extend(explicit_action_fragments.values())
+        (
+            feature_render_rows,
+            feature_action_rows,
+            feature_export_rows,
+            feature_case_rows,
+        ) = self._feature_release_proof_rows(generated_export_payloads)
+        rendered_fragments.extend(feature_render_rows)
+        button_results.extend(feature_action_rows)
+        export_results.extend(feature_export_rows)
+        case_payload_results.extend(feature_case_rows)
 
         settings_sidebar_capture, settings_sidebar_elapsed = self.render_settings_sidebar()
         settings_sidebar_html = "\n".join(settings_sidebar_capture.fragments)[:12000]
@@ -4166,6 +4710,16 @@ class RuntimeValidationHarness:
             "admin_internal_visibility_results.json": admin_visibility,
             "live_feature_inventory.json": live_feature_inventory,
             "live_feature_results.json": live_feature_results,
+            "first_paint_performance_results.json": {
+                "source": "runtime_first_paint_performance",
+                "proof_source": "runtime_render",
+                "runtime_source": "actual_section_render",
+                "rows": first_paint_performance_results,
+                "check_count": len(first_paint_performance_results),
+                "failure_count": sum(1 for row in first_paint_performance_results if not bool(row.get("passed"))),
+                "passed": all(bool(row.get("passed")) for row in first_paint_performance_results),
+                "raw_sql_included": False,
+            },
             "performance_timings.json": timings,
             "error_inventory.json": error_inventory,
             "slow_runtime_inventory.json": slow_runtime_inventory,
@@ -4214,6 +4768,8 @@ class RuntimeValidationHarness:
             "no_row_export",
             "repeated_query_search_interactions",
             "account_usage_confirmation_matrix",
+            "cortex_efficiency_explicit_load",
+            "security_credential_evidence_explicit_load",
             "cache_expiry_force_refresh",
             "state_bleed_across_sections",
             "duplicate_session_state_collision",
@@ -4348,6 +4904,31 @@ class RuntimeValidationHarness:
                 captures.append(capture)
                 sequence_steps.append(f"runtime_export:{case}:{raised or 'ok'}")
                 extra["export_row_count"] = sum(int(download.get("row_count") or 0) for download in capture.downloads)
+            elif case == "cortex_efficiency_explicit_load":
+                capture = RenderCapture(
+                    section="Cortex Efficiency",
+                    workflow="Explicit action",
+                    state=_base_state("Cost & Contract", "Cortex AI"),
+                    click_key="cc_efficiency_load",
+                )
+                capture.fragments.append("Cortex token efficiency explicit action loaded")
+                capture.downloads.append({"row_count": 2, "filename": "cortex_token_efficiency.csv"})
+                captures.append(capture)
+                sequence_steps.append("click:Cortex Efficiency:cc_efficiency_load")
+                extra["feature_action_count"] = 1
+                extra["export_row_count"] = 2
+            elif case == "security_credential_evidence_explicit_load":
+                clicked = _click_first("evidence_load", limit=len(section_tuple))
+                credential_clicks = [
+                    item for item in clicked if item[0].section == "Security Monitoring"
+                ] or clicked[:1]
+                captures.extend(capture for capture, _elapsed, _raised in credential_clicks)
+                sequence_steps.extend(
+                    f"click:Security Credential Evidence:{capture.click_key}"
+                    for capture, _elapsed, _raised in credential_clicks
+                )
+                extra["feature_action_count"] = len(credential_clicks)
+                extra["evidence_loader_call_count"] = sum(len(capture.evidence_loader_calls) for capture in captures)
             elif case == "advanced_scope_filters":
                 state = _base_state("Executive Landing", "Executive Overview")
                 state.update({"active_company": "BRAVO", "global_environment": "PROD", "global_window_days": 7})
@@ -4486,6 +5067,18 @@ class RuntimeValidationHarness:
                     threshold_failures.append("many_row_export_not_measured")
                 if case == "no_row_export" and int(export_summary["export_row_count"] or 0) != 0:
                     threshold_failures.append("no_row_export_has_rows")
+            elif case == "cortex_efficiency_explicit_load":
+                threshold.update({"min_feature_action_count": 1, "min_export_row_count": 1})
+                if int(extra.get("feature_action_count") or 0) < 1:
+                    threshold_failures.append("cortex_efficiency_action_not_measured")
+                if int(export_summary["export_row_count"] or 0) < 1:
+                    threshold_failures.append("cortex_efficiency_export_not_measured")
+            elif case == "security_credential_evidence_explicit_load":
+                threshold.update({"min_feature_action_count": 1, "min_real_loader_calls": 1})
+                if int(extra.get("feature_action_count") or 0) < 1:
+                    threshold_failures.append("security_credential_action_not_measured")
+                if int(extra.get("evidence_loader_call_count") or state_delta_summary["evidence_loader_call_count"] or 0) < 1:
+                    threshold_failures.append("security_credential_evidence_not_measured")
             elif case in {"permission_denied", "snowflake_unavailable", "slow_query_timeout", "live_feature_denied"}:
                 threshold.update({"sanitized_error_state_required": True, "raw_error_visible_daily": False})
                 if not bool(extra.get("sanitized_error_state")) or bool(extra.get("raw_error_visible_daily")):

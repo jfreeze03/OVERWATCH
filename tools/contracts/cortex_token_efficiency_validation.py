@@ -55,6 +55,93 @@ def _contains(text: str, token: str) -> bool:
     return token.upper() in text.upper()
 
 
+def _load_json(root: Path, rel: str) -> Any:
+    path = root / rel
+    if not path.exists():
+        return []
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+
+
+def _rows(payload: object) -> list[Mapping[str, Any]]:
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, Mapping)]
+    if isinstance(payload, Mapping):
+        for key in ("rows", "actions", "results", "cases"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [row for row in value if isinstance(row, Mapping)]
+    return []
+
+
+def _find_surface_row(root: Path, rel: str, section: str, workflow: str) -> tuple[int, Mapping[str, Any]]:
+    for index, row in enumerate(_rows(_load_json(root, rel))):
+        if str(row.get("section") or "") == section and str(row.get("workflow") or "") == workflow:
+            return index, row
+    return -1, {}
+
+
+def _find_action_row(root: Path, section: str, workflow: str) -> tuple[str, int, Mapping[str, Any]]:
+    for rel in (
+        "artifacts/full_app_validation/action_click_results.json",
+        "artifacts/full_app_validation/button_click_results.json",
+    ):
+        for index, row in enumerate(_rows(_load_json(root, rel))):
+            if (
+                str(row.get("section") or "") == section
+                and str(row.get("workflow") or "") == workflow
+                and bool(row.get("clicked", row.get("passed", False)))
+            ):
+                return rel, index, row
+    return "", -1, {}
+
+
+def _runtime_references(root: Path, section: str, workflow: str) -> tuple[dict[str, Any], list[str]]:
+    render_rel = "artifacts/full_app_validation/rendered_fragments.json"
+    export_rel = "artifacts/full_app_validation/export_results.json"
+    case_rel = "artifacts/full_app_validation/case_payload_results.json"
+    render_index, render_row = _find_surface_row(root, render_rel, section, workflow)
+    action_rel, action_index, action_row = _find_action_row(root, section, workflow)
+    export_index, export_row = _find_surface_row(root, export_rel, section, workflow)
+    case_index, case_row = _find_surface_row(root, case_rel, section, workflow)
+    refs = {
+        "rendered_artifact_path": render_rel if render_row else "",
+        "rendered_row_id": str(render_row.get("id") or render_row.get("runtime_artifact_row_index") or render_index if render_row else ""),
+        "rendered_row_index": render_index,
+        "action_artifact_path": action_rel,
+        "action_row_id": str(action_row.get("id") or action_row.get("stable_key") or action_row.get("runtime_artifact_row_index") or action_index if action_row else ""),
+        "action_row_index": action_index,
+        "export_artifact_path": export_rel if export_row else "",
+        "export_row_id": str(export_row.get("id") or export_row.get("stable_key") or export_row.get("filename") or export_row.get("runtime_artifact_row_index") or export_index if export_row else ""),
+        "export_row_index": export_index,
+        "case_payload_artifact_path": case_rel if case_row else "",
+        "case_payload_row_id": str(case_row.get("id") or case_row.get("filename") or case_row.get("runtime_artifact_row_index") or case_index if case_row else ""),
+        "case_payload_row_index": case_index,
+        "source_rows_present": bool(render_row.get("source_rows_present", render_row)),
+        "visible_row_count": int(render_row.get("visible_row_count") or export_row.get("visible_row_count") or 0) if (render_row or export_row) else 0,
+        "exported_row_count": int(export_row.get("parsed_row_count") or export_row.get("row_count") or 0) if export_row else 0,
+        "producer_signature": str(render_row.get("producer_signature") or ""),
+        "commit_sha": str(render_row.get("commit_sha") or ""),
+    }
+    missing = [
+        name
+        for name, row in (
+            ("rendered runtime row", render_row),
+            ("clicked action row", action_row),
+            ("file-backed export row", export_row),
+            ("case payload row", case_row),
+        )
+        if not row
+    ]
+    if export_row and refs["visible_row_count"] != refs["exported_row_count"]:
+        missing.append("visible/exported row count mismatch")
+    if any(bool(row.get("raw_sql_included")) for row in (render_row, action_row, export_row, case_row) if row):
+        missing.append("runtime artifact row included raw SQL")
+    return refs, missing
+
+
 def _selected_profile(profile: str | None = None) -> str:
     return (profile or os.environ.get("OVERWATCH_LAUNCH_PROFILE") or "internal_fixture").strip() or "internal_fixture"
 
@@ -87,6 +174,7 @@ def build_cortex_token_efficiency_results(root: Path | str = ".") -> dict[str, A
     cortex_source = _read(root_path, ".overwatch_final/sections/cortex_monitor.py")
     display_source = _read(root_path, ".overwatch_final/utils/display.py")
     metric_source = _read(root_path, ".overwatch_final/sections/metric_semantic_registry.py")
+    runtime_refs, runtime_failures = _runtime_references(root_path, "Cortex Efficiency", "Explicit action")
     rows = [
         _row(
             "ranked_chart_recomputes_ratio_metrics",
@@ -133,6 +221,12 @@ def build_cortex_token_efficiency_results(root: Path | str = ".") -> dict[str, A
             evidence="Cortex token-efficiency metrics are registered in metric semantics.",
             recommendation="Add semantic rows for every visible/exported token-efficiency metric.",
         ),
+        _row(
+            "cortex_efficiency_runtime_artifact_references",
+            not runtime_failures,
+            evidence="Cortex token-efficiency gate references rendered, clicked, exported, and case payload runtime artifacts.",
+            recommendation="Generate Cortex Efficiency explicit-action render/click/export/case artifacts before evaluating this gate.",
+        ),
     ]
     failures = [row for row in rows if not row["passed"]]
     return {
@@ -143,6 +237,8 @@ def build_cortex_token_efficiency_results(root: Path | str = ".") -> dict[str, A
         "cortex_token_efficiency_gate_passed": not failures,
         "cortex_token_metric_count": len(CORTEX_TOKEN_METRICS),
         "cortex_token_ratio_failure_count": len([row for row in failures if "ratio" in row["check"]]),
+        **runtime_refs,
+        "runtime_reference_failures": runtime_failures,
         "rows": rows,
         "failures": failures,
         "raw_sql_included": False,
@@ -200,6 +296,17 @@ def evaluate_cortex_token_efficiency_gate(payload: Mapping[str, Any]) -> dict[st
         "cortex_token_efficiency_gate_passed": passed,
         "cortex_token_metric_count": payload.get("cortex_token_metric_count", 0),
         "cortex_token_ratio_failure_count": payload.get("cortex_token_ratio_failure_count", len(failures)),
+        "rendered_artifact_path": payload.get("rendered_artifact_path", ""),
+        "rendered_row_id": payload.get("rendered_row_id", ""),
+        "action_artifact_path": payload.get("action_artifact_path", ""),
+        "action_row_id": payload.get("action_row_id", ""),
+        "export_artifact_path": payload.get("export_artifact_path", ""),
+        "case_payload_artifact_path": payload.get("case_payload_artifact_path", ""),
+        "source_rows_present": bool(payload.get("source_rows_present")),
+        "visible_row_count": payload.get("visible_row_count", 0),
+        "exported_row_count": payload.get("exported_row_count", 0),
+        "producer_signature": payload.get("producer_signature", ""),
+        "commit_sha": payload.get("commit_sha", ""),
         "failure_count": len(failures),
         "failures": failures,
         "raw_sql_included": False,

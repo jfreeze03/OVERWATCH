@@ -2,13 +2,15 @@
 
 This umbrella gate consumes the runtime/render/click/export/stress artifacts
 and converts them into a single launch-blocking release sweep. It deliberately
-does not synthesize UI text; every passing surface must be backed by a lower
-runtime artifact or a feature-specific launch gate.
+does not synthesize UI text; every passing surface must be backed by a
+producer-written runtime artifact. Feature-specific launch gates are checked as
+additional gates, never as substitutes for rendered/clicked/file-backed proof.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -45,8 +47,12 @@ REQUIRED_RELEASE_SURFACES: tuple[dict[str, Any], ...] = (
         }
         for section, aliases in PRIMARY_OVERVIEW_ALIASES.items()
     ),
+    {"area": "loaded_surface", "section": "Alert Center", "workflow": "Loaded", "aliases": ("Loaded",), "require_action": True},
+    {"area": "loaded_surface", "section": "Cost & Contract", "workflow": "Loaded", "aliases": ("Loaded",), "require_action": True},
+    {"area": "loaded_surface", "section": "Workload Operations", "workflow": "Loaded", "aliases": ("Loaded",), "require_action": True},
+    {"area": "loaded_surface", "section": "Security Monitoring", "workflow": "Loaded", "aliases": ("Loaded",), "require_action": True},
     {"area": "query_search", "section": "Query Search", "workflow": "No click", "aliases": ("No click",)},
-    {"area": "query_search", "section": "Query Search", "workflow": "Explicit search", "aliases": ("Explicit search",)},
+    {"area": "query_search", "section": "Query Search", "workflow": "Explicit search", "aliases": ("Explicit search",), "require_action": True},
     {"area": "advanced_scope", "section": "Advanced Scope", "workflow": "Default", "aliases": ("Default", "Active filters")},
     {"area": "advanced_scope", "section": "Advanced Scope", "workflow": "Active filters", "aliases": ("Active filters",)},
     {"area": "settings", "section": "Settings", "workflow": "Default", "aliases": ("Default",)},
@@ -55,11 +61,29 @@ REQUIRED_RELEASE_SURFACES: tuple[dict[str, Any], ...] = (
     {"area": "fallback", "section": "Packet Closest Fallback", "workflow": "Fallback", "aliases": ("Fallback",)},
     {"area": "fallback", "section": "Snowflake Unavailable", "workflow": "Fallback", "aliases": ("Fallback",)},
     {"area": "fallback", "section": "Permission Denied", "workflow": "Fallback", "aliases": ("Fallback",)},
-    {"area": "targeted_evidence", "section": "Targeted Evidence", "workflow": "Route action", "aliases": ("Route action",)},
-    {"area": "targeted_evidence", "section": "Targeted Evidence", "workflow": "Evidence action", "aliases": ("Evidence action",)},
-    {"area": "cost_workbench", "section": "Cost Workbench", "workflow": "Explicit action", "aliases": ("Explicit action",)},
-    {"area": "cortex_efficiency", "section": "Cortex Efficiency", "workflow": "Explicit action", "feature_gate": "cortex_token_efficiency_gate_results"},
-    {"area": "security_credential", "section": "Security Credential Evidence", "workflow": "Explicit action", "feature_gate": "security_credential_evidence_gate_results"},
+    {"area": "targeted_evidence", "section": "Targeted Evidence", "workflow": "Route action", "aliases": ("Route action",), "require_action": True},
+    {"area": "targeted_evidence", "section": "Targeted Evidence", "workflow": "Evidence action", "aliases": ("Evidence action",), "require_action": True},
+    {"area": "cost_workbench", "section": "Cost Workbench", "workflow": "Explicit action", "aliases": ("Explicit action",), "require_action": True},
+    {
+        "area": "cortex_efficiency",
+        "section": "Cortex Efficiency",
+        "workflow": "Explicit action",
+        "aliases": ("Explicit action",),
+        "require_action": True,
+        "require_export": True,
+        "require_case": True,
+        "linked_gate": "cortex_token_efficiency_gate_results",
+    },
+    {
+        "area": "security_credential",
+        "section": "Security Credential Evidence",
+        "workflow": "Explicit action",
+        "aliases": ("Explicit action",),
+        "require_action": True,
+        "require_export": True,
+        "require_case": True,
+        "linked_gate": "security_credential_evidence_gate_results",
+    },
 )
 
 RAW_SOURCE_TOKENS = tuple(
@@ -355,28 +379,166 @@ def _export_failure_count(payloads: Mapping[str, Any]) -> int:
     return _as_int(gate.get("failure_count"))
 
 
+def _rows_from_payload(value: object) -> list[Mapping[str, Any]]:
+    if isinstance(value, list):
+        return [_as_mapping(row) for row in value if isinstance(row, Mapping)]
+    mapping = _as_mapping(value)
+    for key in ("rows", "actions", "results", "cases", "features"):
+        rows = mapping.get(key)
+        if isinstance(rows, list):
+            return [_as_mapping(row) for row in rows if isinstance(row, Mapping)]
+    return []
+
+
+def _artifact_rows(payloads: Mapping[str, Any], rel: str) -> list[Mapping[str, Any]]:
+    return _rows_from_payload(payloads.get(rel))
+
+
+def _row_id(row: Mapping[str, Any]) -> str:
+    return str(
+        row.get("id")
+        or row.get("row_id")
+        or row.get("validation_id")
+        or row.get("stable_key")
+        or row.get("key")
+        or row.get("filename")
+        or row.get("runtime_artifact_row_index")
+        or ""
+    )
+
+
+def _row_matches(row: Mapping[str, Any], section: str, aliases: Sequence[str]) -> bool:
+    if str(row.get("section") or "") != section:
+        return False
+    workflow = str(row.get("workflow") or "")
+    return not aliases or workflow in aliases
+
+
+def _find_action_row(
+    payloads: Mapping[str, Any],
+    *,
+    section: str,
+    aliases: Sequence[str],
+    area: str,
+) -> tuple[str, Mapping[str, Any]]:
+    action_rels = (
+        "artifacts/full_app_validation/button_click_results.json",
+        "artifacts/full_app_validation/action_click_results.json",
+        "artifacts/full_app_validation/query_search_results.json",
+    )
+    for rel in action_rels:
+        for row in _artifact_rows(payloads, rel):
+            if not bool(row.get("clicked", row.get("passed", False))):
+                continue
+            row_section = str(row.get("section") or "")
+            row_workflow = str(row.get("workflow") or "")
+            if area == "query_search":
+                case = str(row.get("case") or "")
+                if row_section in {"Workload Operations", "Query Search"} and case not in {"render_no_click", "text_contains_no_autorun", "warehouse_prefill_no_autorun"}:
+                    return rel, row
+            elif area == "loaded_surface":
+                if row_section == section and str(row.get("action_area") or "") in {"evidence_action", "cost_workbench"}:
+                    return rel, row
+            elif area == "targeted_evidence":
+                if str(row.get("action_area") or "") in {"route_action", "evidence_action", "cost_workbench"}:
+                    return rel, row
+            elif area == "cost_workbench":
+                if str(row.get("action_area") or "") == "cost_workbench" and (row_section == "Cost & Contract" or row_section == section):
+                    return rel, row
+            elif row_section == section and (not aliases or row_workflow in aliases):
+                return rel, row
+    return "", {}
+
+
+def _find_export_row(payloads: Mapping[str, Any], *, section: str, aliases: Sequence[str]) -> tuple[str, Mapping[str, Any]]:
+    rel = "artifacts/full_app_validation/export_results.json"
+    for row in _artifact_rows(payloads, rel):
+        if _row_matches(row, section, aliases):
+            return rel, row
+    return "", {}
+
+
+def _find_case_row(payloads: Mapping[str, Any], *, section: str, aliases: Sequence[str]) -> tuple[str, Mapping[str, Any]]:
+    rel = "artifacts/full_app_validation/case_payload_results.json"
+    for row in _artifact_rows(payloads, rel):
+        if _row_matches(row, section, aliases):
+            return rel, row
+    return "", {}
+
+
+def _resolve_payload_path(root: Path, payload_file: object) -> Path:
+    raw = Path(str(payload_file or ""))
+    return raw if raw.is_absolute() else root / raw
+
+
+def _file_backed_failures(row: Mapping[str, Any], *, root: Path, row_kind: str) -> list[str]:
+    reasons: list[str] = []
+    payload_file = str(row.get("payload_file") or "")
+    if not payload_file:
+        return [f"{row_kind} row missing payload_file"]
+    path = _resolve_payload_path(root, payload_file)
+    if not path.exists():
+        return [f"{row_kind} payload file missing"]
+    payload = path.read_bytes()
+    size = len(payload)
+    expected_size = _as_int(row.get("size_bytes") or row.get("content_length"))
+    if expected_size and expected_size != size:
+        reasons.append(f"{row_kind} payload size mismatch")
+    expected_sha = str(row.get("sha256") or row.get("payload_hash") or "")
+    if expected_sha:
+        actual_sha = hashlib.sha256(payload).hexdigest()
+        if actual_sha != expected_sha:
+            reasons.append(f"{row_kind} payload sha256 mismatch")
+    if size <= 0 and not bool(row.get("intentional_empty")):
+        reasons.append(f"{row_kind} payload is empty without intentional_empty=true")
+    parsed_rows = _as_int(row.get("parsed_row_count") or row.get("payload_row_count") or row.get("row_count"))
+    visible_rows = _as_int(row.get("visible_row_count") or row.get("row_count"))
+    if parsed_rows != visible_rows:
+        reasons.append(f"{row_kind} parsed row count differs from visible row count")
+    if not str(row.get("content_type") or row.get("mime") or "").strip():
+        reasons.append(f"{row_kind} row missing content_type")
+    text = payload.decode("utf-8", errors="ignore")
+    if not bool(row.get("admin_only")):
+        forbidden_count = (
+            _token_count(text, RAW_SOURCE_TOKENS)
+            + _token_count(text, INTERNAL_WORDING_TOKENS)
+            + _token_count(text, DIAGNOSTIC_TOKENS)
+        )
+        if forbidden_count:
+            reasons.append(f"{row_kind} default payload contains forbidden daily/internal token")
+        if "QUERY_TEXT" in text.upper() or "query_text" in text:
+            reasons.append(f"{row_kind} default payload contains query_text")
+    if bool(row.get("raw_sql_included")):
+        reasons.append(f"{row_kind} row included raw SQL")
+    return reasons
+
+
 def _global_gate_failed(payloads: Mapping[str, Any], key: str) -> bool:
     gate = _gate(payloads, key)
     return bool(gate) and not bool(gate.get("passed", False))
 
 
-def _surface_row(surface: Mapping[str, Any], payloads: Mapping[str, Any], *, current_commit: str) -> dict[str, Any]:
+def _surface_row(surface: Mapping[str, Any], payloads: Mapping[str, Any], *, current_commit: str, root: Path) -> dict[str, Any]:
     section = str(surface["section"])
     workflow = str(surface["workflow"])
     aliases = tuple(str(item) for item in surface.get("aliases") or (workflow,))
-    feature_gate_key = str(surface.get("feature_gate") or "")
+    linked_gate_key = str(surface.get("linked_gate") or "")
     source_artifact = ""
     render_row: Mapping[str, Any] = {}
-    rendered = False
-
-    if feature_gate_key:
-        feature_gate = _gate(payloads, feature_gate_key)
-        source_artifact = f"artifacts/launch_readiness/{feature_gate_key}.json"
-        rendered = bool(feature_gate.get("passed"))
-        render_row = feature_gate
-    else:
-        source_artifact, render_row = _find_render_row(payloads, section, aliases)
-        rendered = bool(render_row.get("rendered", True)) if render_row else False
+    source_artifact, render_row = _find_render_row(payloads, section, aliases)
+    rendered = bool(render_row.get("rendered", True)) if render_row else False
+    action_artifact = ""
+    action_row: Mapping[str, Any] = {}
+    export_artifact = ""
+    export_row: Mapping[str, Any] = {}
+    case_artifact = ""
+    case_row: Mapping[str, Any] = {}
+    if bool(surface.get("require_action")):
+        action_artifact, action_row = _find_action_row(payloads, section=section, aliases=aliases, area=str(surface["area"]))
+    if bool(surface.get("require_export")):
+        export_artifact, export_row = _find_export_row(payloads, section=section, aliases=aliases)
+    if bool(surface.get("require_case")):
+        case_artifact, case_row = _find_case_row(payloads, section=section, aliases=aliases)
 
     text = _text_from(render_row)
     admin_allowed = _is_admin_allowed(section, workflow, render_row)
@@ -400,7 +562,22 @@ def _surface_row(surface: Mapping[str, Any], payloads: Mapping[str, Any], *, cur
     }
     fp = _first_paint_row(payloads, section, aliases)
     missing_first_paint_row = section in PRIMARY_SECTIONS and not bool(fp)
-    render_provenance_failures = [] if feature_gate_key else _runtime_provenance_failures(render_row, current_commit=current_commit)
+    render_provenance_failures = _runtime_provenance_failures(render_row, current_commit=current_commit)
+    action_provenance_failures = (
+        _runtime_provenance_failures(action_row, current_commit=current_commit)
+        if bool(surface.get("require_action"))
+        else []
+    )
+    export_provenance_failures = (
+        _runtime_provenance_failures(export_row, current_commit=current_commit)
+        if bool(surface.get("require_export"))
+        else []
+    )
+    case_provenance_failures = (
+        _runtime_provenance_failures(case_row, current_commit=current_commit)
+        if bool(surface.get("require_case"))
+        else []
+    )
     first_paint_provenance_failures = (
         ["first-paint row missing"]
         if missing_first_paint_row
@@ -427,10 +604,8 @@ def _surface_row(surface: Mapping[str, Any], payloads: Mapping[str, Any], *, cur
 
     action_failure_count = _action_failure_count(payloads) if surface["area"] in {"targeted_evidence", "cost_workbench", "settings", "settings_admin"} else 0
     export_failure_count = _export_failure_count(payloads) if surface["area"] in {"security_credential", "cortex_efficiency"} else 0
-    clicked = surface["area"] not in {"primary_overview", "fallback", "advanced_scope"} and (
-        not feature_gate_key or bool(_gate(payloads, feature_gate_key).get("passed"))
-    )
-    exported = surface["area"] in {"security_credential", "cortex_efficiency"} and export_failure_count == 0
+    clicked = bool(action_row) if bool(surface.get("require_action")) else surface["area"] not in {"primary_overview", "fallback", "advanced_scope"}
+    exported = bool(export_row) and bool(case_row) if surface["area"] in {"security_credential", "cortex_efficiency"} else False
 
     reasons: list[str] = []
     if not source_artifact or not render_row:
@@ -440,6 +615,40 @@ def _surface_row(surface: Mapping[str, Any], payloads: Mapping[str, Any], *, cur
     if synthetic:
         reasons.append("synthetic fallback cannot pass release sweep")
     reasons.extend(render_provenance_failures)
+    if bool(surface.get("require_action")):
+        if not action_artifact or not action_row:
+            reasons.append("required action/click row missing")
+        if action_row and not bool(action_row.get("clicked", action_row.get("passed", False))):
+            reasons.append("required action was not clicked")
+        reasons.extend(action_provenance_failures)
+    if bool(surface.get("require_export")):
+        if not export_artifact or not export_row:
+            reasons.append("required export row missing")
+        reasons.extend(export_provenance_failures)
+        reasons.extend(_file_backed_failures(export_row, root=root, row_kind="export") if export_row else [])
+    if bool(surface.get("require_case")):
+        if not case_artifact or not case_row:
+            reasons.append("required case payload row missing")
+        reasons.extend(case_provenance_failures)
+        reasons.extend(_file_backed_failures(case_row, root=root, row_kind="case payload") if case_row else [])
+    if linked_gate_key:
+        linked_gate = _gate(payloads, linked_gate_key)
+        if not linked_gate:
+            reasons.append("linked feature gate artifact missing")
+        elif not bool(linked_gate.get("passed")):
+            reasons.append("linked feature gate failed")
+        else:
+            required_refs = (
+                "rendered_artifact_path",
+                "rendered_row_id",
+                "action_artifact_path",
+                "action_row_id",
+                "export_artifact_path",
+                "case_payload_artifact_path",
+            )
+            missing_refs = [field for field in required_refs if not linked_gate.get(field)]
+            if missing_refs:
+                reasons.append(f"linked feature gate missing runtime artifact references: {', '.join(missing_refs)}")
     if require_command_brief and command_brief_count != 1:
         reasons.append("primary overview must render exactly one CommandBrief")
     if require_command_brief and marker_count != 1:
@@ -477,6 +686,12 @@ def _surface_row(surface: Mapping[str, Any], payloads: Mapping[str, Any], *, cur
         "section": section,
         "workflow": workflow,
         "source_artifact": source_artifact,
+        "action_artifact": action_artifact,
+        "action_row_id": _row_id(action_row),
+        "export_artifact": export_artifact,
+        "export_row_id": _row_id(export_row),
+        "case_payload_artifact": case_artifact,
+        "case_payload_row_id": _row_id(case_row),
         "rendered": rendered,
         "clicked": clicked,
         "exported": exported,
@@ -499,7 +714,13 @@ def _surface_row(surface: Mapping[str, Any], payloads: Mapping[str, Any], *, cur
         "action_failure_count": action_failure_count,
         "export_failure_count": export_failure_count,
         "missing_first_paint_row": missing_first_paint_row,
-        "producer_provenance_failure_count": len(render_provenance_failures) + len(first_paint_provenance_failures),
+        "producer_provenance_failure_count": (
+            len(render_provenance_failures)
+            + len(action_provenance_failures)
+            + len(export_provenance_failures)
+            + len(case_provenance_failures)
+            + len(first_paint_provenance_failures)
+        ),
         "synthetic_render_used": synthetic,
         "passed": not reasons,
         "failure_reason": "; ".join(dict.fromkeys(reasons)),
@@ -511,9 +732,14 @@ def build_full_app_release_sweep(
     payloads: Mapping[str, Any],
     *,
     current_commit: str | None = None,
+    root: Path | str = ".",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     resolved_commit = current_commit if current_commit is not None else _git_commit()
-    rows = [_surface_row(surface, payloads, current_commit=resolved_commit) for surface in REQUIRED_RELEASE_SURFACES]
+    root_path = Path(root).resolve()
+    rows = [
+        _surface_row(surface, payloads, current_commit=resolved_commit, root=root_path)
+        for surface in REQUIRED_RELEASE_SURFACES
+    ]
     gate_checks = (
         ("runtime_artifact_provenance", "runtime_artifact_provenance_gate_results"),
         ("rendered_ui_leak_scan", "rendered_ui_leak_gate_results"),
@@ -709,9 +935,11 @@ def write_full_app_release_sweep_artifacts(
                 "artifacts/full_app_validation/query_search_results.json",
                 "artifacts/full_app_validation/first_paint_performance_results.json",
                 "artifacts/full_app_validation/action_click_results.json",
+                "artifacts/full_app_validation/button_click_results.json",
                 "artifacts/full_app_validation/export_results.json",
                 "artifacts/full_app_validation/download_results.json",
                 "artifacts/full_app_validation/case_payload_results.json",
+                "artifacts/full_app_validation/stress_results.json",
                 "artifacts/full_app_validation/user_stress_results.json",
                 "artifacts/full_app_validation/runtime_artifact_provenance_results.json",
                 "artifacts/launch_readiness/runtime_artifact_provenance_gate_results.json",
@@ -730,7 +958,7 @@ def write_full_app_release_sweep_artifacts(
                 "artifacts/launch_readiness/cortex_token_efficiency_gate_results.json",
             ),
         )
-    results, failures = build_full_app_release_sweep(payloads)
+    results, failures = build_full_app_release_sweep(payloads, root=root_path)
     gate = evaluate_full_app_release_sweep_gate(results)
     artifacts = {
         FULL_APP_RELEASE_SWEEP_RESULTS_REL: results,

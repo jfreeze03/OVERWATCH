@@ -214,7 +214,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
                 self.assertEqual(row["actual_snowflake_executions"], row["expected_snowflake_execution_count"], row)
 
         for row in exports:
-            self.assertEqual(row["source"], "clicked_action")
+            self.assertEqual(row["source"], "file_backed_export")
             self.assertEqual(row["runtime_source"], "runtime_export_payload")
             self.assertEqual(row["provenance_origin"], "producer")
             self.assertEqual(row["proof_source"], "runtime_export")

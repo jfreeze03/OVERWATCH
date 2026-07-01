@@ -3838,6 +3838,163 @@ div[class*="st-key-"][class*="_decision_workspace_shell"] .ow-decision-workspace
 .ow-decision-context-strip small {
     color: var(--ow-text-secondary) !important;
 }
+.ow-kit-command-brief,
+.ow-kit-section-header,
+.ow-kit-signal-panel,
+.ow-kit-action-panel,
+.ow-kit-ranked-panel,
+.ow-kit-area-panel,
+.ow-kit-evidence-empty,
+.ow-kit-pending-state {
+    border: 1px solid rgba(170, 188, 200, .13);
+    border-radius: 9px;
+    background: rgba(6, 19, 28, .34);
+    padding: .9rem 1rem;
+}
+.ow-kit-command-brief {
+    display: grid;
+    gap: .85rem;
+    border-color: var(--ow-border-soft);
+    background:
+        linear-gradient(145deg, rgba(37, 184, 242, .08), transparent 40%),
+        rgba(6, 19, 28, .36);
+    box-shadow: var(--metric-shadow);
+    margin: .35rem 0 .85rem;
+}
+.ow-kit-section-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: .25rem .9rem;
+    background: transparent;
+    border-color: transparent;
+    padding: 0 0 .6rem;
+}
+.ow-kit-section-header span,
+.ow-kit-section-header strong,
+.ow-kit-metric-card span,
+.ow-kit-metric-card em,
+.ow-kit-signal-panel span,
+.ow-kit-signal-panel em,
+.ow-kit-data-trust span,
+.ow-kit-data-trust em,
+.ow-kit-action-row small,
+.ow-kit-ranked-panel p,
+.ow-kit-area-panel p,
+.ow-kit-area-panel small,
+.ow-kit-ranked-empty,
+.ow-kit-trend-empty {
+    color: var(--ow-text-secondary) !important;
+}
+.ow-kit-section-header h1 {
+    margin: 0 !important;
+    color: var(--ow-text) !important;
+    font-size: 1.45rem !important;
+    line-height: 1.1 !important;
+}
+.ow-kit-section-header p {
+    grid-column: 1 / -1;
+    margin: 0 !important;
+    color: var(--ow-text-secondary) !important;
+}
+.ow-kit-metric-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+    gap: .62rem;
+}
+.ow-kit-metric-card {
+    min-width: 0;
+    min-height: 5.5rem;
+    border: 1px solid rgba(170, 188, 200, .13);
+    border-radius: 8px;
+    background: rgba(10, 31, 43, .38);
+    padding: .72rem .78rem;
+}
+.ow-kit-metric-card strong,
+.ow-kit-signal-panel h4,
+.ow-kit-signal-panel strong,
+.ow-kit-data-trust strong,
+.ow-kit-pending-state strong {
+    color: var(--ow-text) !important;
+}
+.ow-kit-metric-glyph {
+    width: 1.75rem;
+    height: .18rem;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--ow-cyan), rgba(37, 184, 242, .24));
+    margin-bottom: .42rem;
+}
+.ow-kit-signal-panel h4 {
+    margin: 0 0 .65rem !important;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    font-size: .82rem;
+}
+.ow-kit-data-trust {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: .52rem;
+    border-top: 1px solid rgba(170, 188, 200, .13);
+    padding-top: .72rem;
+}
+.ow-kit-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .45rem;
+    margin: .35rem 0 .7rem;
+}
+.ow-kit-tabs span {
+    border: 1px solid var(--ow-border-soft);
+    border-radius: 999px;
+    color: var(--ow-text-secondary) !important;
+    padding: .36rem .62rem;
+}
+.ow-kit-tabs span[data-active="true"] {
+    border-color: rgba(37, 184, 242, .65);
+    color: var(--ow-text) !important;
+    background: rgba(37, 184, 242, .12);
+}
+.ow-kit-action-panel {
+    min-height: 272px;
+}
+.ow-kit-action-panel h4,
+.ow-kit-ranked-panel h4,
+.ow-kit-area-panel h4 {
+    color: var(--ow-text) !important;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    font-size: .86rem;
+    margin: 0 0 .75rem !important;
+}
+.ow-kit-action-row {
+    display: grid;
+    gap: .18rem;
+    padding: .72rem 0;
+    border-top: 1px solid rgba(170, 188, 200, .13);
+}
+.ow-kit-action-row strong,
+.ow-kit-ranked-row span,
+.ow-kit-ranked-row b {
+    color: var(--ow-text) !important;
+}
+.ow-kit-ranked-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: .5rem;
+    align-items: center;
+    margin: .58rem 0;
+}
+.ow-kit-ranked-row i {
+    grid-column: 1 / -1;
+    display: block;
+    min-height: .42rem;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--ow-cyan), rgba(37, 184, 242, .28));
+}
+.ow-kit-area-trend {
+    width: 100%;
+    height: 92px;
+    color: var(--ow-cyan);
+}
 @media (max-width: 900px) {
     .ow-decision-hero,
     .ow-decision-main-grid,

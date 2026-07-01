@@ -12,6 +12,7 @@ import re
 import streamlit as st
 
 from runtime_state import mark_widget_key_rendered, set_state
+from utils.display_safety import scrub_daily_text
 
 FRESHNESS_TARGET_MINUTES = {
     "live": 5,
@@ -177,7 +178,7 @@ def _clean_display_text(value: object) -> str:
     for old, new in replacements.items():
         text = text.replace(old, new)
     text = _INTERNAL_OBJECT_RE.sub("managed Snowflake object", text)
-    return text
+    return scrub_daily_text(text)
 
 
 def _display_html(value: object) -> str:

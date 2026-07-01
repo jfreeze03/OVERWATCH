@@ -177,6 +177,10 @@ from tools.contracts.user_stress_test import (
     USER_STRESS_RESULTS_REL,
     evaluate_user_stress_gate,
 )
+from tools.contracts.ui_kit_alignment import (
+    UI_KIT_ALIGNMENT_GATE_REL,
+    write_ui_kit_alignment_artifacts,
+)
 
 
 LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
@@ -237,6 +241,7 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     DELETE_FIRST_GATE_REL,
     PERFORMANCE_BUDGET_GATE_REL,
     METRIC_SOURCE_GOVERNANCE_GATE_REL,
+    UI_KIT_ALIGNMENT_GATE_REL,
     *METRIC_FAMILY_GATE_RELS.values(),
     CORTEX_TOKEN_EFFICIENCY_GATE_REL,
     CORTEX_TOKEN_EFFICIENCY_LIVE_GATE_REL,
@@ -2692,6 +2697,15 @@ def _release_candidate_summary_bundle(
         "sql_cleanup_failure_count": _as_int(launch_summary.get("sql_cleanup_failure_count")),
         "first_paint_failure_count": _as_int(launch_summary.get("first_paint_failure_count")),
         "metric_source_governance_passed": bool(launch_summary.get("metric_source_governance_passed")),
+        "ui_kit_alignment_passed": bool(launch_summary.get("ui_kit_alignment_passed")),
+        "ui_kit_command_brief_surface_count": _as_int(
+            launch_summary.get("ui_kit_command_brief_surface_count")
+        ),
+        "ui_kit_source_footer_leak_count": _as_int(launch_summary.get("ui_kit_source_footer_leak_count")),
+        "ui_kit_old_board_marker_count": _as_int(launch_summary.get("ui_kit_old_board_marker_count")),
+        "ui_kit_evidence_autoload_violation_count": _as_int(
+            launch_summary.get("ui_kit_evidence_autoload_violation_count")
+        ),
         "new_metric_family_count": _as_int(launch_summary.get("new_metric_family_count")),
         "new_metric_packet_field_count": _as_int(launch_summary.get("new_metric_packet_field_count")),
         "new_metric_rendered_count": _as_int(launch_summary.get("new_metric_rendered_count")),
@@ -4678,6 +4692,7 @@ def _release_gate_matrix(
     delete_first_cleanup_gate = _as_mapping(launch_artifacts.get("delete_first_cleanup_gate_results"))
     performance_budget_gate = _as_mapping(launch_artifacts.get("performance_budget_gate_results"))
     metric_source_governance_gate = _as_mapping(launch_artifacts.get("metric_source_governance_gate_results"))
+    ui_kit_alignment_gate = _as_mapping(launch_artifacts.get("ui_kit_alignment_gate_results"))
     metric_family_gates = {
         family_id: _as_mapping(launch_artifacts.get(Path(rel).stem))
         for family_id, rel in METRIC_FAMILY_GATE_RELS.items()
@@ -4855,6 +4870,14 @@ def _release_gate_matrix(
             "failure_reason": ""
             if metric_source_governance_gate.get("passed")
             else "New metric families are missing packet, source, zero/unavailable, evidence/export/case, or first-paint safety metadata.",
+        },
+        {
+            "gate": "ui_kit_alignment",
+            "artifact": UI_KIT_ALIGNMENT_GATE_REL,
+            "passed": bool(ui_kit_alignment_gate.get("passed")),
+            "failure_reason": ""
+            if ui_kit_alignment_gate.get("passed")
+            else "Streamlit Decision Workspace primitives, six-section CommandBrief coverage, or daily-safe source footer proof failed.",
         },
         *[
             {
@@ -5576,6 +5599,7 @@ def evaluate_launch_readiness(
     live_feature_gate = _as_mapping(launch_artifacts.get("live_feature_gate_results"))
     sql_cleanup_gate = _as_mapping(launch_artifacts.get("sql_cleanup_gate_results"))
     metric_source_governance_gate = _as_mapping(launch_artifacts.get("metric_source_governance_gate_results"))
+    ui_kit_alignment_gate = _as_mapping(launch_artifacts.get("ui_kit_alignment_gate_results"))
     cortex_token_efficiency_gate = _as_mapping(launch_artifacts.get("cortex_token_efficiency_gate_results"))
     cortex_token_efficiency_live_gate = _as_mapping(
         launch_artifacts.get("cortex_token_efficiency_live_gate_results")
@@ -5705,6 +5729,15 @@ def evaluate_launch_readiness(
         "sql_cleanup_gate_passed": bool(sql_cleanup_gate.get("passed")),
         "sql_cleanup_failure_count": _as_int(sql_cleanup_gate.get("failure_count")),
         "metric_source_governance_passed": bool(metric_source_governance_gate.get("passed")),
+        "ui_kit_alignment_passed": bool(ui_kit_alignment_gate.get("passed")),
+        "ui_kit_command_brief_surface_count": _as_int(ui_kit_alignment_gate.get("command_brief_surface_count")),
+        "ui_kit_source_footer_leak_count": _as_int(ui_kit_alignment_gate.get("source_footer_leak_count")),
+        "ui_kit_old_board_marker_count": _as_int(ui_kit_alignment_gate.get("old_board_marker_count")),
+        "ui_kit_evidence_autoload_violation_count": _as_int(
+            ui_kit_alignment_gate.get("evidence_autoload_violation_count")
+        ),
+        "ui_kit_credential_tile_rendered": bool(ui_kit_alignment_gate.get("credential_tile_rendered")),
+        "ui_kit_cortex_efficiency_rendered": bool(ui_kit_alignment_gate.get("cortex_efficiency_rendered")),
         "new_metric_family_count": _as_int(metric_source_governance_gate.get("new_metric_family_count")),
         "new_metric_packet_field_count": _as_int(
             metric_source_governance_gate.get("new_metric_packet_field_count")
@@ -5951,6 +5984,8 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     payloads.update(cortex_token_efficiency_artifacts)
     metric_source_governance_artifacts = write_metric_source_governance_artifacts(root_path)
     payloads.update(metric_source_governance_artifacts)
+    ui_kit_alignment_artifacts = write_ui_kit_alignment_artifacts(root_path)
+    payloads.update(ui_kit_alignment_artifacts)
 
     launch_artifacts: dict[str, Any] = {}
     launch_artifacts["launch_waivers"] = {
@@ -5999,6 +6034,7 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["metric_source_governance_gate_results"] = metric_source_governance_artifacts[
         METRIC_SOURCE_GOVERNANCE_GATE_REL
     ]
+    launch_artifacts["ui_kit_alignment_gate_results"] = ui_kit_alignment_artifacts[UI_KIT_ALIGNMENT_GATE_REL]
     for rel, metric_gate_payload in metric_source_governance_artifacts.items():
         if rel in METRIC_FAMILY_GATE_RELS.values():
             launch_artifacts[Path(rel).stem] = metric_gate_payload

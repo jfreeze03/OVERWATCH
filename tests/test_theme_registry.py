@@ -352,6 +352,16 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn(".ow-command-action", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-command-action-label", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-command-action-detail", theme._STRUCTURAL_CSS)
+        for theme_key in ("carbon", "terminal"):
+            with self.subTest(theme=theme_key):
+                combined_css = theme._combined_theme_css(theme_key)
+                self.assertIn(".ow-kit-command-brief", combined_css)
+                self.assertIn(".ow-kit-metric-row", combined_css)
+                self.assertIn(".ow-kit-signal-panel", combined_css)
+                self.assertIn(".ow-kit-action-panel", combined_css)
+                self.assertIn(".ow-kit-data-trust", combined_css)
+                self.assertIn(".ow-kit-ranked-panel", combined_css)
+                self.assertIn(".ow-kit-area-panel", combined_css)
         self.assertIn(".ow-decision-brief", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-decision-operating-loop", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-decision-loop-header", theme._STRUCTURAL_CSS)

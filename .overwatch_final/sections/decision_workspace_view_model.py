@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Mapping, Sequence
 
 from sections.metric_semantic_registry import MetricSemantic, get_metric_semantic
+from utils.display_safety import contains_raw_source_token, safe_source_label, scrub_daily_text
 
 
 @dataclass(frozen=True)
@@ -204,6 +205,8 @@ _SOURCE_LABEL_OVERRIDES: dict[str, str] = {
 
 def _friendly_source_label(source_key: str) -> str:
     cleaned = (source_key or "source").strip().lower()
+    if contains_raw_source_token(source_key):
+        return safe_source_label(source_key)
     return _SOURCE_LABEL_OVERRIDES.get(cleaned, cleaned.replace("_", " ").title())
 
 
@@ -222,14 +225,13 @@ def _friendly_gap_reason(gap_reason: str, *, required: bool) -> str:
     normalized = (gap_reason or "").strip()
     if not normalized:
         return "No source gap reported"
-    unsafe_tokens = ("MART_", "FACT_", "ACCOUNT" + "_USAGE", "SP_", "CALL ", "SELECT ", "WITH ", "JOIN ")
-    if any(token in normalized.upper() for token in unsafe_tokens):
+    if contains_raw_source_token(normalized):
         return "Source unavailable" if required else "Optional source missing"
     if "stale" in normalized.lower():
         return "Source stale"
     if "missing" in normalized.lower() or "unavailable" in normalized.lower():
         return "Source unavailable" if required else "Optional source missing"
-    return normalized
+    return scrub_daily_text(normalized)
 
 
 def _delta_label(metric: object) -> str:

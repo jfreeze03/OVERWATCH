@@ -73,6 +73,7 @@ from tools.contracts.sql_value_inventory import (
     write_sql_value_inventory_artifacts,
 )
 from tools.contracts.user_stress_test import USER_STRESS_RESULTS_REL, write_user_stress_artifacts
+from tools.contracts.ui_kit_alignment import UI_KIT_ALIGNMENT_REL, write_ui_kit_alignment_artifacts
 
 
 REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
@@ -101,6 +102,7 @@ REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
     "artifacts/full_app_validation/summary_board_failure_diagnostics.json",
     "artifacts/full_app_validation/metric_semantic_results.json",
     METRIC_SOURCE_GOVERNANCE_REL,
+    UI_KIT_ALIGNMENT_REL,
     "artifacts/full_app_validation/cortex_cost_consistency_results.json",
     "artifacts/full_app_validation/cost_chart_workbench_results.json",
     "artifacts/full_app_validation/cost_workbench_chart_results.json",
@@ -1251,6 +1253,11 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
     sql_dead_code_artifacts = write_sql_dead_code_scan_artifacts(root_path)
     runtime_provenance_artifacts = write_runtime_artifact_provenance_artifacts(root_path)
     render_provenance_artifacts = write_render_provenance_reconciliation_artifacts(root_path)
+    ui_kit_alignment_artifacts = {
+        rel: payload
+        for rel, payload in write_ui_kit_alignment_artifacts(root_path).items()
+        if rel.startswith("artifacts/full_app_validation/")
+    }
     artifacts = {
         **cleanup_artifacts,
         **inventory_artifacts,
@@ -1273,6 +1280,7 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
         **sql_dead_code_artifacts,
         **runtime_provenance_artifacts,
         **render_provenance_artifacts,
+        **ui_kit_alignment_artifacts,
     }
     _ensure_manifest_entries(
         root_path,
@@ -1304,6 +1312,7 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             RUNTIME_ARTIFACT_PROVENANCE_GATE_REL,
             RENDER_PROVENANCE_RECONCILIATION_REL,
             RENDER_PROVENANCE_RECONCILIATION_GATE_REL,
+            UI_KIT_ALIGNMENT_REL,
         },
     )
     cleanup_manifest = _ensure_manifest_entries(
@@ -1357,6 +1366,7 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             RUNTIME_ARTIFACT_PROVENANCE_GATE_REL,
             RENDER_PROVENANCE_RECONCILIATION_REL,
             RENDER_PROVENANCE_RECONCILIATION_GATE_REL,
+            UI_KIT_ALIGNMENT_REL,
             "artifacts/direct_sql_static_scan.json",
             "artifacts/session_open_static_scan.json",
             "artifacts/sql_performance_lint_findings.json",

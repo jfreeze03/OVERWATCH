@@ -24,6 +24,11 @@ from sections.decision_workspace_controls import (
     apply_finding_evidence_target,
     render_evidence_settings,
 )
+from sections.decision_workspace_components import (
+    render_data_trust_footer as _kit_data_trust_footer,
+    render_metric_row as _kit_metric_row,
+    render_signal_panel as _kit_signal_panel,
+)
 from sections.decision_workspace_setup_health import can_open_decision_setup_health, open_decision_setup_health
 from sections.decision_workspace_bootstrap import BOOTSTRAP_REQUEST_KEY
 from sections.decision_workspace_view_model import (
@@ -34,6 +39,7 @@ from sections.decision_workspace_view_model import (
     format_metric_value,
 )
 from sections.section_command_brief import SectionCommandBrief
+from utils.display_safety import safe_source_label, scrub_daily_text
 
 
 def _key_token(value: object) -> str:
@@ -48,8 +54,7 @@ def _html(value: object) -> str:
 
 def _public_text(value: object) -> str:
     """Remove Snowflake implementation names from first-viewport user copy."""
-    text = str(value or "").strip()
-    text = re.sub(r"\b(?:MART|FACT|OVERWATCH|ALERT)_[A-Z0-9_]+\b", "Decision source", text)
+    text = scrub_daily_text(value)
     text = re.sub(r"\bsnowflake/[A-Za-z0-9_./-]+\.sql\b", "setup script", text, flags=re.IGNORECASE)
     return text
 
@@ -209,10 +214,10 @@ def _trust_detail_html(model: DecisionWorkspaceViewModel) -> str:
         )
         source_rows.append(
             '<div class="ow-decision-source-row">'
-            f'<strong>{_html(source.source_label or source.source_object or source.source_key)}</strong>'
+            f'<strong>{_html(safe_source_label(source.source_label or source.source_object, source_key=source.source_key))}</strong>'
             f'<span>{_html(source.environment_scope_label or source.status)}</span>'
             f'<span>{_html(meta)}</span>'
-            f'<small>{_html(source.gap_reason or source.confidence or "No source gap reported")}</small>'
+            f'<small>{_html(_public_text(source.gap_reason or source.confidence or "No source gap reported"))}</small>'
             '</div>'
         )
     if source_rows:
@@ -414,62 +419,18 @@ def _apply_route_action(action: object, *, finding: object | None, section: str,
 def _metric_ribbon(model: DecisionWorkspaceViewModel, *, compact: bool) -> str:
     if compact:
         return ""
-    cells: list[str] = []
-    for metric in model.metric_cells[:4]:
-        tone = _html(metric.tone or "neutral").lower()
-        cells.append(
-            f'<article class="ow-decision-metric-cell" data-tone="{tone}">'
-            f'<div><span>{_html(metric.label)}</span><strong>{_html(metric.value)}</strong>'
-            f'<small>{_html(metric.detail)}</small></div>'
-            f'{_sparkline(metric.trend_points)}'
-            '</article>'
-        )
-    return '<section class="ow-decision-metric-ribbon" aria-label="Primary metrics">' + "".join(cells) + "</section>"
+    return _kit_metric_row(model.metric_cells[:5], min_count=3, max_count=5)
 
 
 def _render_model_attention_panel(model: DecisionWorkspaceViewModel) -> str:
-    rows: list[str] = []
-    for item in model.findings[:3]:
-        entity_meta = " / ".join(
-            part for part in (item.entity_type, item.entity_id or item.entity_name or item.entity) if part
-        )
-        age_due = item.first_seen_label
-        evidence_hint = f"Evidence {item.evidence_id}" if item.evidence_id else (item.evidence_source or "")
-        detail_parts = [item.detail or item.entity, entity_meta, age_due, evidence_hint]
-        detail = " | ".join(part for part in detail_parts if part)
-        rows.append(
-            '<div class="ow-decision-attention-row">'
-            f'<span class="ow-attention-icon" data-severity="{_html(item.severity).lower()}"></span>'
-            f'<strong>{_html(item.severity)}</strong>'
-            f'<div class="ow-attention-copy"><b>{_html(item.signal)}</b><small>{_html(detail)}</small></div>'
-            f'<div class="ow-attention-meta"><span>Entity</span><b>{_html(item.entity_name or item.entity or item.entity_id or "Entity unavailable")}</b></div>'
-            f'<div class="ow-attention-meta"><span>Owner</span><b>{_html(item.owner or "Owner unavailable")}</b></div>'
-            f'<div class="ow-attention-meta"><span>SLA</span><b>{_html(item.sla or "SLA unavailable")}</b></div>'
-            '</div>'
-        )
-    if not rows:
-        rows.append(
-            '<div class="ow-decision-attention-row ow-decision-clear-row">'
-            '<span class="ow-attention-icon" data-severity="clear"></span>'
-            '<strong>CLEAR</strong>'
-            '<div class="ow-attention-copy"><b>No threshold breach in the command brief</b>'
-            '<small>Continue monitoring; load evidence only when proof is needed.</small></div>'
-            '<div class="ow-attention-meta"><span>Owner</span><b>Owner unavailable</b></div>'
-            '<div class="ow-attention-meta"><span>SLA</span><b>SLA unavailable</b></div>'
-            '</div>'
-        )
-    return (
-        '<section class="ow-decision-attention-panel">'
-        '<h4>What needs attention</h4>'
-        + "".join(rows)
-        + '</section>'
-    )
+    return _kit_signal_panel(model.findings, title="What needs attention")
 
 
 def _render_model_trend_band(model: DecisionWorkspaceViewModel) -> str:
     tiles: list[str] = []
     candidates = tuple(model.trends or model.metric_cells)
-    has_partial = any(str(metric.trend_quality or "").lower() == "partial" for metric in candidates)
+    partial_count = sum(1 for metric in candidates if str(metric.trend_quality or "").lower() == "partial")
+    has_partial = partial_count > 0
     partial_badge = '<span class="ow-decision-trend-quality">partial source history</span>' if has_partial else ""
     for metric in candidates[:5]:
         trend_svg = _trend_bar_svg(metric.trend_points, tone=metric.tone or "neutral")
@@ -499,24 +460,21 @@ def _render_model_trend_band(model: DecisionWorkspaceViewModel) -> str:
         f'<h4>What changed {partial_badge}</h4>'
         '<div class="ow-decision-trend-grid">'
         + "".join(tiles)
-        + "</div></section>"
+        + "</div>"
+        + (f'<p class="ow-decision-trend-meta">Trend history: {partial_count} partial</p>' if partial_count else "")
+        + "</section>"
     )
 
 
 def _render_model_trust_footer(model: DecisionWorkspaceViewModel) -> str:
-    badge = '<b class="ow-fixture-badge">FIXTURE DATA</b>' if model.fixture_mode else ""
-    return (
-        '<footer class="ow-decision-trust-footer">'
-        '<strong>Data Trust</strong>'
-        f'{badge}'
-        f'<span>{_html(model.trust.mode_label)}</span>'
-        f'<span>{_html(model.trust.freshness_label)}</span>'
-        f'<span>{_html(model.trust.target_label)}</span>'
-        f'<span>{_html(model.trust.coverage_label)}</span>'
-        f'<span>Data quality <b>{_html(model.trust.quality_label)}</b></span>'
-        + (f'<span>{_html(model.trust.trend_quality_label)}</span>' if model.trust.trend_quality_label else "")
-        + '<span class="ow-decision-source-trigger">View sources &dtri;</span>'
-        + '</footer>'
+    source_labels = tuple(source.source_label or source.source_object or source.source_key for source in model.source_rows)
+    return _kit_data_trust_footer(
+        mode=model.trust.mode_label,
+        freshness=model.trust.freshness_label,
+        target=model.trust.target_label,
+        coverage=model.trust.coverage_label,
+        quality=model.trust.quality_label,
+        source_labels=source_labels,
     )
 
 
@@ -711,7 +669,7 @@ def render_decision_workspace(
             )
         st.html(_render_model_trend_band(model) + _render_model_trust_footer(model))
         if model.has_sources:
-            with st.expander("View sources", expanded=False):
+            with st.expander("Data Trust details", expanded=False):
                 st.html(f'<div class="ow-decision-source-drawer">{_trust_detail_html(model)}</div>')
         if getattr(model, "additional_metrics", ()):
             with st.expander("Additional brief metrics", expanded=False):

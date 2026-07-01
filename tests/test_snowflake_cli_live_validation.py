@@ -248,7 +248,7 @@ def _runner(
                 rows[1]["ROW_JSON"]["packet"][null_packet_field] = None
                 return subprocess.CompletedProcess(args, 0, json.dumps(rows), "")
             return subprocess.CompletedProcess(args, 0, _packet_stdout(mismatch=packet_mismatch), "")
-        if "METERING_DAILY_HISTORY" in joined:
+        if "FACT_COST_DAILY" in joined and "FACT_WAREHOUSE_HOURLY" in joined:
             return subprocess.CompletedProcess(args, 0, _formula_stdout(), "")
         return subprocess.CompletedProcess(args, 0, "[]", "")
 
@@ -396,6 +396,9 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
         sql = module._formula_expected_sql(SnowflakeCliValidationOptions(connection="dev", profile="internal_live"))
 
         self.assertIn("CREDITS_ADJUSTMENT_CLOUD_SERVICES", sql)
+        self.assertIn("FROM FACT_COST_DAILY", sql)
+        self.assertIn("FROM FACT_WAREHOUSE_HOURLY", sql)
+        self.assertIn("FROM FACT_CORTEX_DAILY", sql)
         self.assertIn("'CORTEX_AI_COST_USD', c.cortex_ai_credits * 2.2", sql)
         self.assertNotIn("'CORTEX_AI_COST_USD', c.cortex_ai_credits * 3.68", sql)
         self.assertNotIn("'CLOUD_SERVICES_ADJUSTMENT', 0", sql)

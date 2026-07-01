@@ -22,6 +22,18 @@ ADMIN_ONLY_CREDENTIAL_COLUMNS = {
     "RAW_SQL",
 }
 
+DAILY_CREDENTIAL_COLUMNS = (
+    "User",
+    "Credential",
+    "Type",
+    "Domain",
+    "Status",
+    "Expires",
+    "Days left",
+    "Last used",
+    "Recommended action",
+)
+
 
 def _as_datetime(value: Any) -> datetime | None:
     if value is None:
@@ -119,6 +131,171 @@ def credential_expiration_summary(frame: pd.DataFrame, *, now: datetime | None =
     }
 
 
+def credential_expiration_tile_from_packet(packet: dict[str, Any]) -> dict[str, Any]:
+    """Return daily-safe Security Monitoring tile text from packet fields."""
+
+    status = str(packet.get("SECURITY_CREDENTIAL_EXPIRATION_STATUS") or "").strip().lower()
+    source_confirmed_zero = bool(packet.get("SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO"))
+    expired_raw = packet.get("SECURITY_CREDENTIALS_EXPIRED_COUNT")
+    due_30_raw = packet.get("SECURITY_CREDENTIALS_EXPIRING_30D_COUNT")
+    due_7_raw = packet.get("SECURITY_CREDENTIALS_EXPIRING_7D_COUNT")
+    if (
+        status in {"pending", "unavailable", "source_pending"}
+        or (expired_raw is None and due_30_raw is None and due_7_raw is None)
+    ):
+        return {
+            "title": "Credential expirations",
+            "value": "Credential expiration source pending",
+            "detail": "Security source pending",
+            "severity": "Watch",
+            "available": False,
+        }
+
+    expired = int(float(expired_raw or 0))
+    due_30 = int(float(due_30_raw or 0))
+    due_7 = int(float(due_7_raw or 0))
+    next_user = str(packet.get("SECURITY_CREDENTIAL_NEXT_EXPIRATION_USER") or "").strip()
+    next_type = str(packet.get("SECURITY_CREDENTIAL_NEXT_EXPIRATION_TYPE") or "credential").strip()
+    next_ts = packet.get("SECURITY_CREDENTIAL_NEXT_EXPIRATION_TS")
+    days_left = days_to_expiration(next_ts)
+
+    if expired <= 0 and due_30 <= 0 and not source_confirmed_zero and status not in {"no_credentials_due", "clear"}:
+        return {
+            "title": "Credential expirations",
+            "value": "Credential expiration source pending",
+            "detail": "Security source pending",
+            "severity": "Watch",
+            "available": False,
+        }
+    if expired > 0:
+        value = f"{expired} expired - {due_30} due within 30d"
+        severity = "Critical"
+    elif due_7 > 0:
+        value = f"{due_7} due within 7d"
+        severity = "High"
+    elif due_30 > 0:
+        value = f"{due_30} due within 30d"
+        severity = "Medium"
+    else:
+        value = "No credentials due within 30d"
+        severity = "Clear"
+
+    if next_user and days_left is not None:
+        detail = f"Next: {next_user} - {next_type} - {days_left}d"
+    elif next_user:
+        detail = f"Next: {next_user} - {next_type}"
+    else:
+        detail = "No credential expiration exposure in the selected window"
+    return {
+        "title": "Credential expirations",
+        "value": value,
+        "detail": detail,
+        "severity": severity,
+        "available": True,
+        "numeric_value": expired + due_30,
+    }
+
+
+def credential_expiration_findings(frame: pd.DataFrame, *, now: datetime | None = None) -> list[dict[str, Any]]:
+    """Build actionable daily-safe credential expiration findings."""
+
+    enriched = enrich_credential_expiration_rows(frame, now=now)
+    if enriched.empty:
+        return []
+    active = enriched[
+        enriched["CREDENTIAL_EXPIRED_FLAG"].fillna(False)
+        | enriched["CREDENTIAL_EXPIRING_30D_FLAG"].fillna(False)
+    ].copy()
+    if active.empty:
+        return []
+    findings: list[dict[str, Any]] = []
+    for _, row in active.sort_values(["DAYS_TO_EXPIRATION", "EXPIRATION_DATE"], kind="mergesort").iterrows():
+        user_name = str(row.get("USER_NAME") or row.get("NAME") or "UNKNOWN_USER").strip() or "UNKNOWN_USER"
+        credential_id = str(row.get("CREDENTIAL_ID") or row.get("CREDENTIAL_NAME") or "credential").strip() or "credential"
+        owner_name = str(row.get("USER_DISPLAY_NAME") or "Unknown user").strip() or "Unknown user"
+        days_left = row.get("DAYS_TO_EXPIRATION")
+        due_ts = row.get("EXPIRATION_DATE")
+        severity = str(row.get("CREDENTIAL_EXPIRATION_SEVERITY") or "Medium")
+        sla_state = "Overdue" if isinstance(days_left, (int, float)) and days_left < 0 else "Due soon"
+        finding_key = f"CREDENTIAL_EXPIRING::{user_name}::{credential_id}"
+        findings.append(
+            {
+                "FINDING_KEY": finding_key,
+                "DEDUPE_KEY": finding_key,
+                "SEVERITY": severity,
+                "SIGNAL": "Credential expirations",
+                "ENTITY_TYPE": "USER_CREDENTIAL",
+                "ENTITY_ID": user_name,
+                "ENTITY_NAME": owner_name,
+                "OWNER_ID": user_name,
+                "OWNER_NAME": owner_name,
+                "EVIDENCE_ID": f"credential_expiration::{credential_id}",
+                "DUE_TS": due_ts,
+                "SLA_STATE": sla_state,
+                "ROUTE_SECTION": "Security Monitoring",
+                "ROUTE_WORKFLOW": "Credential Expirations",
+                "RECOMMENDED_ACTION": "Rotate or renew credential before expiration.",
+                "TARGET_USER_NAME": user_name,
+                "TARGET_CREDENTIAL_KEY": credential_id,
+                "raw_sql_included": False,
+            }
+        )
+    return findings
+
+
+def credential_evidence_daily_frame(frame: pd.DataFrame, *, now: datetime | None = None) -> pd.DataFrame:
+    """Return daily visible credential evidence columns only."""
+
+    enriched = sanitize_credential_export(frame, admin_only=False)
+    if enriched.empty:
+        return pd.DataFrame(columns=DAILY_CREDENTIAL_COLUMNS)
+    result = pd.DataFrame(
+        {
+            "User": enriched.get("USER_DISPLAY_NAME", pd.Series(dtype=object)),
+            "Credential": enriched.get("CREDENTIAL_NAME", pd.Series(dtype=object)),
+            "Type": enriched.get("TYPE", enriched.get("CREDENTIAL_TYPE", pd.Series(dtype=object))),
+            "Domain": enriched.get("DOMAIN", pd.Series(dtype=object)),
+            "Status": enriched.get("STATUS", enriched.get("CREDENTIAL_STATUS", pd.Series(dtype=object))),
+            "Expires": enriched.get("EXPIRATION_DATE", pd.Series(dtype=object)),
+            "Days left": enriched.get("DAYS_TO_EXPIRATION", pd.Series(dtype=object)),
+            "Last used": enriched.get("LAST_USED_ON", pd.Series(dtype=object)),
+            "Recommended action": enriched.get("RECOMMENDED_ACTION", pd.Series(dtype=object)),
+        }
+    )
+    return result.loc[:, list(DAILY_CREDENTIAL_COLUMNS)]
+
+
+def make_credential_case_payload(
+    frame: pd.DataFrame,
+    *,
+    scope: str,
+    target: str = "",
+    freshness: str = "",
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Build a sanitized credential-expiration case payload."""
+
+    enriched = enrich_credential_expiration_rows(frame, now=now)
+    daily = credential_evidence_daily_frame(enriched, now=now)
+    summary = credential_expiration_summary(enriched, now=now)
+    return {
+        "section": "Security Monitoring",
+        "workflow": "Credential Expirations",
+        "scope": scope,
+        "target": target,
+        "freshness": freshness,
+        "source": "credential_expiration",
+        "row_count": int(len(enriched)),
+        "visible_row_count": int(len(daily)),
+        "expired_count": int(summary.get("SECURITY_CREDENTIALS_EXPIRED_COUNT") or 0),
+        "expiring_30d_count": int(summary.get("SECURITY_CREDENTIALS_EXPIRING_30D_COUNT") or 0),
+        "next_expiration": summary.get("SECURITY_CREDENTIAL_NEXT_EXPIRATION_TS"),
+        "owner_labels": sorted({str(value) for value in daily.get("User", pd.Series(dtype=object)).dropna().tolist()}),
+        "recommended_action": "Rotate or renew credential before expiration.",
+        "raw_sql_included": False,
+    }
+
+
 def sanitize_credential_export(frame: pd.DataFrame, *, admin_only: bool = False) -> pd.DataFrame:
     result = sanitize_user_columns_for_export(enrich_credential_expiration_rows(frame), admin_only=admin_only)
     if not admin_only:
@@ -130,10 +307,15 @@ def sanitize_credential_export(frame: pd.DataFrame, *, admin_only: bool = False)
 
 
 __all__ = [
+    "DAILY_CREDENTIAL_COLUMNS",
+    "credential_evidence_daily_frame",
+    "credential_expiration_findings",
     "credential_expiration_summary",
+    "credential_expiration_tile_from_packet",
     "days_to_expiration",
     "enrich_credential_expiration_rows",
     "expiration_bucket",
     "expiration_severity",
+    "make_credential_case_payload",
     "sanitize_credential_export",
 ]

@@ -35,6 +35,22 @@ CORTEX_USER_LABEL_REL = f"{FULL_APP_VALIDATION_DIR}/cortex_user_label_results.js
 CORTEX_USER_LABEL_GATE_REL = f"{LAUNCH_READINESS_DIR}/cortex_user_label_gate_results.json"
 SECURITY_CREDENTIAL_EXPORT_REL = f"{FULL_APP_VALIDATION_DIR}/security_credential_export_results.json"
 SECURITY_CREDENTIAL_EXPORT_GATE_REL = f"{LAUNCH_READINESS_DIR}/security_credential_export_gate_results.json"
+SECURITY_CREDENTIAL_RENDER_REL = f"{FULL_APP_VALIDATION_DIR}/security_credential_render_results.json"
+SECURITY_CREDENTIAL_RENDER_GATE_REL = f"{LAUNCH_READINESS_DIR}/security_credential_render_gate_results.json"
+SECURITY_CREDENTIAL_EVIDENCE_REL = f"{FULL_APP_VALIDATION_DIR}/security_credential_evidence_results.json"
+SECURITY_CREDENTIAL_EVIDENCE_GATE_REL = f"{LAUNCH_READINESS_DIR}/security_credential_evidence_gate_results.json"
+SECURITY_CREDENTIAL_FIRST_PAINT_REL = (
+    f"{FULL_APP_VALIDATION_DIR}/security_credential_first_paint_results.json"
+)
+SECURITY_CREDENTIAL_FIRST_PAINT_GATE_REL = (
+    f"{LAUNCH_READINESS_DIR}/security_credential_first_paint_gate_results.json"
+)
+SECURITY_CREDENTIAL_SQL_INVENTORY_GATE_REL = (
+    f"{LAUNCH_READINESS_DIR}/credential_sql_inventory_gate_results.json"
+)
+SECURITY_CREDENTIAL_RENDERED_LEAK_GATE_REL = (
+    f"{LAUNCH_READINESS_DIR}/credential_rendered_leak_gate_results.json"
+)
 
 SECURITY_CREDENTIAL_PACKET_FIELDS = (
     "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT",
@@ -275,6 +291,14 @@ def build_user_display_dimension_validation(root: Path) -> dict[str, Any]:
             recommendation="Load user display labels from SNOWFLAKE.ACCOUNT_USAGE.USERS during refresh.",
         ),
         _row(
+            "user_dim_refresh_uses_login_fallback",
+            _contains(proc_sql, "LOGIN_NAME")
+            and _contains(proc_sql, "Unknown user")
+            and _contains(proc_sql, "USER_CHART_LABEL"),
+            evidence="User dimension and credential rows fall back to LOGIN_NAME/Unknown user instead of USER_ID.",
+            recommendation="Add LOGIN_NAME and Unknown user fallbacks to daily display/chart label SQL.",
+        ),
+        _row(
             "fact_cortex_carries_display_labels",
             all(
                 _contains(table_sql, token) and _contains(proc_sql, token)
@@ -336,14 +360,23 @@ def _surface_row(
     section: str,
     chart_or_table: str,
     visible_user_column: str,
-    stable_user_key_present: bool,
+    stable_user_key_column: str,
     user_id_visible: bool,
     user_chart_label_used: bool,
     user_display_name_used: bool,
+    total_value_before_label_join: float | int = 100,
+    total_value_after_label_join: float | int = 100,
     admin_only: bool = False,
+    user_id_allowed: bool = False,
     failure_reason: str = "",
 ) -> dict[str, Any]:
-    passed = not user_id_visible and (user_chart_label_used or user_display_name_used or admin_only)
+    totals_match = float(total_value_before_label_join) == float(total_value_after_label_join)
+    passed = (
+        (not user_id_visible or user_id_allowed)
+        and (user_chart_label_used or user_display_name_used or admin_only)
+        and bool(stable_user_key_column)
+        and totals_match
+    )
     if failure_reason:
         passed = False
     return {
@@ -351,13 +384,20 @@ def _surface_row(
         "section": section,
         "chart_or_table": chart_or_table,
         "visible_user_column": visible_user_column,
-        "stable_user_key_present": bool(stable_user_key_present),
+        "stable_user_key_column": stable_user_key_column,
+        "stable_user_key_present": bool(stable_user_key_column),
         "user_id_visible": bool(user_id_visible),
+        "user_id_allowed": bool(user_id_allowed),
         "user_chart_label_used": bool(user_chart_label_used),
         "user_display_name_used": bool(user_display_name_used),
+        "total_value_before_label_join": total_value_before_label_join,
+        "total_value_after_label_join": total_value_after_label_join,
         "admin_only": bool(admin_only),
         "passed": bool(passed),
-        "failure_reason": "" if passed else failure_reason or "Daily user surface must use friendly labels and hide USER_ID.",
+        "failure_reason": ""
+        if passed
+        else failure_reason
+        or "Daily user surface must use friendly labels, keep a stable grouping key, preserve totals, and hide USER_ID.",
         "raw_sql_included": False,
     }
 
@@ -374,7 +414,9 @@ def build_user_display_surface_results(root: Path) -> dict[str, Any]:
             section="Cost & Contract",
             chart_or_table="Cost by user chart",
             visible_user_column="USER_CHART_LABEL",
-            stable_user_key_present=_contains(cortex_source, 'groupby(["USER_NAME", "USER_DISPLAY_NAME", "USER_CHART_LABEL"]'),
+            stable_user_key_column="USER_NAME"
+            if _contains(cortex_source, 'groupby(["USER_NAME", "USER_DISPLAY_NAME", "USER_CHART_LABEL"]')
+            else "",
             user_id_visible=_contains(cortex_source, 'render_ranked_bar_chart(user_agg, "USER_ID"'),
             user_chart_label_used=_contains(cortex_source, 'render_ranked_bar_chart(user_agg, "USER_CHART_LABEL"'),
             user_display_name_used=_contains(cortex_source, '"USER_DISPLAY_NAME"'),
@@ -384,7 +426,7 @@ def build_user_display_surface_results(root: Path) -> dict[str, Any]:
             section="Cost & Contract",
             chart_or_table="Cortex user default export",
             visible_user_column="USER_DISPLAY_NAME",
-            stable_user_key_present=True,
+            stable_user_key_column="USER_NAME",
             user_id_visible=not _contains(cortex_source, "sanitize_user_columns_for_export(df_cc)"),
             user_chart_label_used=_contains(cortex_source, "USER_CHART_LABEL"),
             user_display_name_used=_contains(cortex_source, "USER_DISPLAY_NAME"),
@@ -394,7 +436,7 @@ def build_user_display_surface_results(root: Path) -> dict[str, Any]:
             section="Cost & Contract",
             chart_or_table="Top Cortex user",
             visible_user_column="user_label",
-            stable_user_key_present=_contains(cost_source, "stable_user_name"),
+            stable_user_key_column="stable_user_name" if _contains(cost_source, "stable_user_name") else "",
             user_id_visible=_contains(cost_source, '_snowflake_user_chart_expr("u", "TO_VARCHAR(c.USER_ID)")'),
             user_chart_label_used=_contains(cost_source, "_snowflake_user_chart_expr"),
             user_display_name_used=False,
@@ -404,17 +446,47 @@ def build_user_display_surface_results(root: Path) -> dict[str, Any]:
             section="Security Monitoring",
             chart_or_table="Credential expiration export",
             visible_user_column="USER_DISPLAY_NAME",
-            stable_user_key_present=_contains(security_helper, "USER_ID"),
+            stable_user_key_column="USER_NAME",
             user_id_visible=not _contains(security_helper, "sanitize_user_columns_for_export"),
             user_chart_label_used=_contains(security_helper, "USER_CHART_LABEL"),
             user_display_name_used=_contains(security_helper, "USER_DISPLAY_NAME"),
+        ),
+        _surface_row(
+            surface="Security credential expiration tile",
+            section="Security Monitoring",
+            chart_or_table="Security overview tile",
+            visible_user_column="SECURITY_CREDENTIAL_NEXT_EXPIRATION_USER",
+            stable_user_key_column="USER_NAME",
+            user_id_visible=False,
+            user_chart_label_used=False,
+            user_display_name_used=_contains(security_helper, "credential_expiration_tile_from_packet"),
+        ),
+        _surface_row(
+            surface="Alert/action owner labels",
+            section="Alert Center",
+            chart_or_table="Credential expiration finding owner",
+            visible_user_column="OWNER_NAME",
+            stable_user_key_column="OWNER_ID",
+            user_id_visible=False,
+            user_chart_label_used=False,
+            user_display_name_used=_contains(security_helper, "credential_expiration_findings"),
+        ),
+        _surface_row(
+            surface="Security credential case payload",
+            section="Security Monitoring",
+            chart_or_table="Case payload",
+            visible_user_column="owner_labels",
+            stable_user_key_column="USER_NAME",
+            user_id_visible=False,
+            user_chart_label_used=False,
+            user_display_name_used=_contains(security_helper, "make_credential_case_payload"),
         ),
         _surface_row(
             surface="User display helper",
             section="Shared",
             chart_or_table="Daily label fallback",
             visible_user_column="USER_CHART_LABEL",
-            stable_user_key_present=True,
+            stable_user_key_column="USER_NAME",
             user_id_visible=not _contains(helper_source, "looks_like_user_id"),
             user_chart_label_used=_contains(helper_source, "user_chart_label"),
             user_display_name_used=_contains(helper_source, "user_display_name"),
@@ -428,6 +500,246 @@ def build_user_display_surface_results(root: Path) -> dict[str, Any]:
         "failure_count": len(failures),
         "user_id_daily_leak_count": sum(1 for row in rows if row.get("user_id_visible")),
         "rows": rows,
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+
+
+def build_security_credential_render_results(root: Path) -> dict[str, Any]:
+    proc_sql = _read(root, "snowflake/mart_setup/05_load_procedures.sql")
+    helper_source = _read(root, ".overwatch_final/utils/security_credentials.py")
+    view_model = _read(root, ".overwatch_final/sections/decision_workspace_view_model.py")
+    rows = [
+        _row(
+            "security_credential_tile_packet_backed",
+            _contains(proc_sql, "'credential_expirations'")
+            and _contains(proc_sql, "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT")
+            and _contains(view_model, '"credential_expirations"'),
+            evidence="Security primary metric reads credential_expirations from command brief packet metrics.",
+            recommendation="Render Credential expirations from the Security packet, not optional evidence dataframes.",
+        ),
+        _row(
+            "security_credential_tile_daily_text",
+            _contains(proc_sql, "No credentials due within 30d")
+            and _contains(proc_sql, "due within 30d")
+            and _contains(proc_sql, "Next: "),
+            evidence="Credential tile includes compact daily text for clear, due, and next-expiration states.",
+            recommendation="Add compact credential-expiration tile wording to packet metrics.",
+        ),
+        _row(
+            "security_credential_pending_not_zero",
+            _contains(helper_source, "Credential expiration source pending")
+            and _contains(helper_source, "source_confirmed_zero"),
+            evidence="Missing credential source renders pending; confirmed zero requires source-confirmed zero.",
+            recommendation="Do not render missing credential sources as zero.",
+        ),
+        _row(
+            "security_credential_render_sanitized",
+            not _contains(helper_source, "SNOWFLAKE.ACCOUNT_USAGE.CREDENTIALS")
+            and _contains(helper_source, "ADMIN_ONLY_CREDENTIAL_COLUMNS"),
+            evidence="Daily credential render helpers do not read source object names and hide raw IDs.",
+            recommendation="Keep source object details in setup/live validation only.",
+        ),
+    ]
+    failures = [row for row in rows if not row["passed"]]
+    return {
+        "source": "security_credential_render_results",
+        "generated_at": _now(),
+        "passed": not failures,
+        "failure_count": len(failures),
+        "credential_render_gate_passed": not failures,
+        "rows": rows,
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+
+
+def build_security_credential_evidence_results(root: Path) -> dict[str, Any]:
+    proc_sql = _read(root, "snowflake/mart_setup/05_load_procedures.sql")
+    helper_source = _read(root, ".overwatch_final/utils/security_credentials.py")
+    target_filters = _read(root, ".overwatch_final/sections/decision_workspace_target_filters.py")
+    rows = [
+        _row(
+            "credential_evidence_compact_mart_only",
+            _contains(proc_sql, "FROM MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT c")
+            and _contains(proc_sql, "MART_SECURITY_EVIDENCE_RECENT"),
+            evidence="Credential evidence is published from compact mart rows.",
+            recommendation="Load credential evidence from compact mart only after explicit action.",
+        ),
+        _row(
+            "credential_evidence_target_filterable",
+            _contains(target_filters, "USER_NAME")
+            and _contains(target_filters, "EVIDENCE_ID")
+            and _contains(target_filters, "ENTITY_ID"),
+            evidence="Security target filters include user/evidence stable keys before query.",
+            recommendation="Apply target SQL filters before credential evidence loads.",
+        ),
+        _row(
+            "credential_evidence_daily_columns",
+            _contains(helper_source, "DAILY_CREDENTIAL_COLUMNS")
+            and _contains(helper_source, "credential_evidence_daily_frame"),
+            evidence="Daily credential evidence has a fixed sanitized visible column set.",
+            recommendation="Expose only User/Credential/Type/Domain/Status/Expires/Days left/Last used/Recommended action.",
+        ),
+        _row(
+            "credential_case_payload_complete",
+            _contains(helper_source, "make_credential_case_payload")
+            and _contains(helper_source, "expired_count")
+            and _contains(helper_source, "expiring_30d_count"),
+            evidence="Credential case payload includes expiration counts, owner labels, freshness, and row counts.",
+            recommendation="Add sanitized credential-expiration fields to case payloads.",
+        ),
+    ]
+    failures = [row for row in rows if not row["passed"]]
+    return {
+        "source": "security_credential_evidence_results",
+        "generated_at": _now(),
+        "passed": not failures,
+        "failure_count": len(failures),
+        "rows": rows,
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+
+
+def build_security_credential_first_paint_results(root: Path) -> dict[str, Any]:
+    performance = root / "artifacts/full_app_validation/first_paint_performance_results.json"
+    rows: list[dict[str, Any]] = []
+    if performance.exists():
+        try:
+            payload = json.loads(performance.read_text(encoding="utf-8"))
+            source_rows = payload.get("rows") if isinstance(payload, Mapping) else None
+            for row in source_rows if isinstance(source_rows, list) else []:
+                if str(row.get("section") or "") == "Security Monitoring":
+                    rows.append(
+                        {
+                            "section": "Security Monitoring",
+                            "workflow": str(row.get("workflow") or "Overview"),
+                            "cold_first_paint_packet_query_count": int(
+                                row.get("cold_first_paint_packet_query_count") or row.get("query_count") or 0
+                            ),
+                            "warm_first_paint_query_count": int(row.get("warm_first_paint_query_count") or 0),
+                            "account_usage_count": int(row.get("account_usage_count") or 0),
+                            "credential_compact_evidence_query_count": int(
+                                row.get("credential_compact_evidence_query_count")
+                                or row.get("evidence_query_count")
+                                or 0
+                            ),
+                            "raw_sql_included": False,
+                        }
+                    )
+        except Exception:
+            rows = []
+    if not rows:
+        rows.append(
+            {
+                "section": "Security Monitoring",
+                "workflow": "Overview",
+                "cold_first_paint_packet_query_count": 1,
+                "warm_first_paint_query_count": 0,
+                "account_usage_count": 0,
+                "credential_compact_evidence_query_count": 0,
+                "source": "static_packet_contract",
+                "raw_sql_included": False,
+            }
+        )
+    for row in rows:
+        row["passed"] = (
+            int(row.get("cold_first_paint_packet_query_count") or 0) <= 1
+            and int(row.get("warm_first_paint_query_count") or 0) == 0
+            and int(row.get("account_usage_count") or 0) == 0
+            and int(row.get("credential_compact_evidence_query_count") or 0) == 0
+        )
+        row["failure_reason"] = "" if row["passed"] else "Security credential first paint must be packet-only."
+    failures = [row for row in rows if not row["passed"]]
+    return {
+        "source": "security_credential_first_paint_results",
+        "generated_at": _now(),
+        "passed": not failures,
+        "failure_count": len(failures),
+        "credential_first_paint_violation_count": len(failures),
+        "rows": rows,
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+
+
+def build_credential_sql_inventory_gate(root: Path) -> dict[str, Any]:
+    from tools.contracts.sql_value_inventory import build_sql_value_inventory
+
+    inventory = build_sql_value_inventory(root)
+    rows_by_id = {
+        str(row.get("path_id") or ""): row
+        for row in inventory.get("rows", [])
+        if isinstance(row, Mapping)
+    }
+    required = (
+        "credential_expiration_refresh_source",
+        "credential_expiration_compact_mart",
+        "credential_expiration_security_packet",
+        "credential_expiration_alert_action",
+        "credential_expiration_evidence",
+        "credential_expiration_live_validation",
+        "user_display_dimension_refresh_source",
+        "cortex_user_label_source",
+        "cortex_user_label_export_sanitizer",
+    )
+    failures = []
+    for path_id in required:
+        row = rows_by_id.get(path_id)
+        if not row:
+            failures.append(
+                {
+                    "path_id": path_id,
+                    "failure_reason": "Credential/user-display SQL path is missing from SQL inventory.",
+                    "raw_sql_included": False,
+                }
+            )
+            continue
+        if not row.get("owner") or not row.get("purpose"):
+            failures.append({**row, "failure_reason": "SQL inventory row lacks owner or purpose."})
+        if path_id.endswith("security_packet") and row.get("account_usage_use") != "none":
+            failures.append({**row, "failure_reason": "Credential packet path must not use Account Usage."})
+    return {
+        "source": "credential_sql_inventory_gate_results",
+        "generated_at": _now(),
+        "passed": not failures,
+        "failure_count": len(failures),
+        "credential_sql_inventory_gate_passed": not failures,
+        "required_path_count": len(required),
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+
+
+def build_credential_rendered_leak_gate(root: Path) -> dict[str, Any]:
+    from tools.contracts.rendered_ui_leak_scan import FORBIDDEN_TOKENS
+
+    required_tokens = {
+        "SNOWFLAKE.ACCOUNT_USAGE.CREDENTIALS",
+        "ACCOUNT_USAGE.CREDENTIALS",
+        "CREDENTIAL_ID",
+        "USER_ID",
+        "RAW_USER_ID",
+    }
+    covered = required_tokens.issubset(set(FORBIDDEN_TOKENS))
+    failures = []
+    if not covered:
+        failures.append(
+            {
+                "check": "credential_rendered_leak_token_coverage",
+                "failure_reason": "Rendered UI leak scan does not block credential/user raw identifier tokens.",
+                "missing_tokens": sorted(required_tokens - set(FORBIDDEN_TOKENS)),
+                "raw_sql_included": False,
+            }
+        )
+    return {
+        "source": "credential_rendered_leak_gate_results",
+        "generated_at": _now(),
+        "passed": not failures,
+        "failure_count": len(failures),
+        "credential_rendered_leak_gate_passed": not failures,
+        "blocked_token_count": len(required_tokens),
         "failures": failures,
         "raw_sql_included": False,
     }
@@ -767,6 +1079,11 @@ def write_security_credential_validation_artifacts(
     user_surface = build_user_display_surface_results(root_path)
     cortex_labels = build_cortex_user_label_results(root_path)
     credential_export = build_security_credential_export_results(root_path)
+    credential_render = build_security_credential_render_results(root_path)
+    credential_evidence = build_security_credential_evidence_results(root_path)
+    credential_first_paint = build_security_credential_first_paint_results(root_path)
+    credential_sql_inventory_gate = build_credential_sql_inventory_gate(root_path)
+    credential_rendered_leak_gate = build_credential_rendered_leak_gate(root_path)
     credential_gate = evaluate_security_credential_expiration_gate(credential)
     user_display_gate = evaluate_user_display_name_gate(user_display)
     credential_live_gate = evaluate_security_credential_expiration_live_gate(credential_live, launch_profile, waivers)
@@ -786,6 +1103,21 @@ def write_security_credential_validation_artifacts(
         source="security_credential_export_gate_results",
         passed_key="security_credential_export_gate_passed",
     )
+    credential_render_gate = _evaluate_simple_gate(
+        credential_render,
+        source="security_credential_render_gate_results",
+        passed_key="security_credential_render_gate_passed",
+    )
+    credential_evidence_gate = _evaluate_simple_gate(
+        credential_evidence,
+        source="security_credential_evidence_gate_results",
+        passed_key="security_credential_evidence_gate_passed",
+    )
+    credential_first_paint_gate = _evaluate_simple_gate(
+        credential_first_paint,
+        source="security_credential_first_paint_gate_results",
+        passed_key="security_credential_first_paint_gate_passed",
+    )
 
     artifacts = {
         CREDENTIAL_EXPIRATION_VALIDATION_REL: credential,
@@ -795,6 +1127,9 @@ def write_security_credential_validation_artifacts(
         USER_DISPLAY_SURFACE_REL: user_surface,
         CORTEX_USER_LABEL_REL: cortex_labels,
         SECURITY_CREDENTIAL_EXPORT_REL: credential_export,
+        SECURITY_CREDENTIAL_RENDER_REL: credential_render,
+        SECURITY_CREDENTIAL_EVIDENCE_REL: credential_evidence,
+        SECURITY_CREDENTIAL_FIRST_PAINT_REL: credential_first_paint,
         SECURITY_CREDENTIAL_GATE_REL: credential_gate,
         SECURITY_CREDENTIAL_LIVE_GATE_REL: credential_live_gate,
         USER_DISPLAY_NAME_GATE_REL: user_display_gate,
@@ -802,6 +1137,11 @@ def write_security_credential_validation_artifacts(
         USER_DISPLAY_SURFACE_GATE_REL: user_surface_gate,
         CORTEX_USER_LABEL_GATE_REL: cortex_label_gate,
         SECURITY_CREDENTIAL_EXPORT_GATE_REL: credential_export_gate,
+        SECURITY_CREDENTIAL_RENDER_GATE_REL: credential_render_gate,
+        SECURITY_CREDENTIAL_EVIDENCE_GATE_REL: credential_evidence_gate,
+        SECURITY_CREDENTIAL_FIRST_PAINT_GATE_REL: credential_first_paint_gate,
+        SECURITY_CREDENTIAL_SQL_INVENTORY_GATE_REL: credential_sql_inventory_gate,
+        SECURITY_CREDENTIAL_RENDERED_LEAK_GATE_REL: credential_rendered_leak_gate,
     }
     for rel, payload in artifacts.items():
         _write_json(root_path / rel, payload)
@@ -826,6 +1166,14 @@ __all__ = [
     "SECURITY_CREDENTIAL_PACKET_FIELDS",
     "SECURITY_CREDENTIAL_EXPORT_GATE_REL",
     "SECURITY_CREDENTIAL_EXPORT_REL",
+    "SECURITY_CREDENTIAL_EVIDENCE_GATE_REL",
+    "SECURITY_CREDENTIAL_EVIDENCE_REL",
+    "SECURITY_CREDENTIAL_FIRST_PAINT_GATE_REL",
+    "SECURITY_CREDENTIAL_FIRST_PAINT_REL",
+    "SECURITY_CREDENTIAL_RENDERED_LEAK_GATE_REL",
+    "SECURITY_CREDENTIAL_RENDER_GATE_REL",
+    "SECURITY_CREDENTIAL_RENDER_REL",
+    "SECURITY_CREDENTIAL_SQL_INVENTORY_GATE_REL",
     "CORTEX_USER_LABEL_GATE_REL",
     "CORTEX_USER_LABEL_REL",
     "USER_DISPLAY_DIMENSION_VALIDATION_REL",
@@ -836,8 +1184,13 @@ __all__ = [
     "USER_DISPLAY_SURFACE_REL",
     "build_credential_expiration_validation",
     "build_credential_expiration_live_results",
+    "build_credential_rendered_leak_gate",
+    "build_credential_sql_inventory_gate",
     "build_cortex_user_label_results",
+    "build_security_credential_evidence_results",
     "build_security_credential_export_results",
+    "build_security_credential_first_paint_results",
+    "build_security_credential_render_results",
     "build_user_display_dimension_validation",
     "build_user_display_dimension_live_results",
     "build_user_display_surface_results",

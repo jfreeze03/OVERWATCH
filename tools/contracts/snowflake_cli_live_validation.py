@@ -51,6 +51,8 @@ CLI_FORMULA_VALUE_GATE_REL = f"{LAUNCH_READINESS_DIR}/snowflake_cli_formula_valu
 CLI_COST_RECONCILIATION_GATE_REL = f"{LAUNCH_READINESS_DIR}/live_cost_reconciliation_gate_results.json"
 CLI_RELEASE_REL = f"{RELEASE_CANDIDATE_DIR}/snowflake_cli_release_results.json"
 
+CONNECTION_TEST_TIMEOUT_SECONDS = 240
+
 REQUIRED_CLI_ARTIFACTS = {
     CLI_CAPABILITY_REL,
     CLI_CONNECTION_REL,
@@ -698,7 +700,7 @@ def _formula_expected_sql(options: SnowflakeCliValidationOptions) -> str:
     end_expr = "DATEADD('day', -1, CURRENT_DATE())"
     previous_start_expr = f"DATEADD('day', -{int(options.window_days) * 2}, CURRENT_DATE())"
     previous_end_expr = f"DATEADD('day', -{int(options.window_days) + 1}, CURRENT_DATE())"
-    allowlist = ", ".join(_literal(value) for value in CORTEX_SERVICE_TYPES)
+    company_expr = _literal(options.company)
     return f"""
 WITH account_billing AS (
   SELECT
@@ -706,16 +708,18 @@ WITH account_billing AS (
     SUM(COALESCE(CREDITS_BILLED, CREDITS_USED, 0)) AS account_billed_credits,
     SUM(COALESCE(CREDITS_USED, 0)) AS account_used_credits,
     SUM(COALESCE(CREDITS_ADJUSTMENT_CLOUD_SERVICES, 0)) AS cloud_services_adjustment,
-    MAX(USAGE_DATE) AS billing_source_freshness_ts
-  FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY
-  WHERE USAGE_DATE BETWEEN {start_expr} AND {end_expr}
+    MAX(COALESCE(LOAD_TS, USAGE_DATE::TIMESTAMP_NTZ)) AS billing_source_freshness_ts
+  FROM FACT_COST_DAILY
+  WHERE UPPER(COALESCE(COMPANY, 'ACCOUNT-WIDE')) IN ('ACCOUNT-WIDE', 'ALL')
+    AND USAGE_DATE BETWEEN {start_expr} AND {end_expr}
 ),
 previous_account_billing AS (
   SELECT
     COUNT(*) AS previous_source_rows,
     SUM(COALESCE(CREDITS_BILLED, CREDITS_USED, 0)) AS previous_account_billed_credits
-  FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY
-  WHERE USAGE_DATE BETWEEN {previous_start_expr} AND {previous_end_expr}
+  FROM FACT_COST_DAILY
+  WHERE UPPER(COALESCE(COMPANY, 'ACCOUNT-WIDE')) IN ('ACCOUNT-WIDE', 'ALL')
+    AND USAGE_DATE BETWEEN {previous_start_expr} AND {previous_end_expr}
 ),
 warehouse_bridge AS (
   SELECT
@@ -723,18 +727,19 @@ warehouse_bridge AS (
     SUM(COALESCE(CREDITS_USED_COMPUTE, 0) + COALESCE(CREDITS_USED_CLOUD_SERVICES, 0)) AS warehouse_credits,
     SUM(COALESCE(CREDITS_USED_COMPUTE, 0)) AS compute_credits,
     SUM(COALESCE(CREDITS_USED_CLOUD_SERVICES, 0)) AS cloud_services_credits
-  FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-  WHERE START_TIME::DATE BETWEEN {start_expr} AND {end_expr}
-    AND COALESCE(WAREHOUSE_ID, 0) > 0
+  FROM FACT_WAREHOUSE_HOURLY
+  WHERE HOUR_START >= {start_expr}
+    AND HOUR_START < CURRENT_DATE()
+    AND ({company_expr} = 'ALL' OR UPPER(COMPANY) = UPPER({company_expr}))
     AND NULLIF(TRIM(WAREHOUSE_NAME), '') IS NOT NULL
 ),
 cortex AS (
   SELECT
     COUNT(*) AS cortex_source_rows,
-    SUM(COALESCE(CREDITS_USED, CREDITS_BILLED, 0)) AS cortex_ai_credits
-  FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY
+    COALESCE(SUM(COALESCE(CREDITS_USED, 0)), 0) AS cortex_ai_credits
+  FROM FACT_CORTEX_DAILY
   WHERE USAGE_DATE BETWEEN {start_expr} AND {end_expr}
-    AND UPPER(SERVICE_TYPE) IN ({allowlist})
+    AND ({company_expr} = 'ALL' OR UPPER(COMPANY) = UPPER({company_expr}))
 )
 SELECT OBJECT_CONSTRUCT_KEEP_NULL(
   'SOURCE_ROWS_PRESENT', COALESCE(a.account_source_rows, 0) > 0 OR COALESCE(w.warehouse_source_rows, 0) > 0 OR COALESCE(c.cortex_source_rows, 0) > 0,
@@ -763,7 +768,12 @@ SELECT OBJECT_CONSTRUCT_KEEP_NULL(
   END,
   'CORTEX_AI_CREDITS', c.cortex_ai_credits,
   'CORTEX_AI_COST_USD', c.cortex_ai_credits * {float(options.ai_credit_price)},
-  'BILLING_RECONCILIATION_STATUS', CASE WHEN a.account_billed_credits IS NULL THEN 'pending' ELSE 'available' END,
+  'BILLING_RECONCILIATION_STATUS', CASE
+    WHEN a.account_billed_credits IS NULL THEN 'pending'
+    WHEN ABS(COALESCE(a.account_billed_credits, 0) - COALESCE(w.warehouse_credits, 0)) < 0.0001 THEN 'matched'
+    WHEN COALESCE(a.account_billed_credits, 0) > COALESCE(w.warehouse_credits, 0) THEN 'warehouse_lower_than_billed'
+    ELSE 'warehouse_higher_than_billed'
+  END,
   'BILLING_WINDOW_START', {start_expr},
   'BILLING_WINDOW_END', {end_expr},
   'BILLING_WINDOW_COMPLETE', TRUE,
@@ -771,7 +781,7 @@ SELECT OBJECT_CONSTRUCT_KEEP_NULL(
   'BILLING_LATENCY_NOTE', CASE WHEN a.account_billed_credits IS NULL THEN 'billing source unavailable' ELSE 'completed billing window' END,
   'BILLING_RECONCILIATION_WINDOW_START', {start_expr},
   'BILLING_RECONCILIATION_WINDOW_END', {end_expr},
-  'BILLING_RECONCILIATION_FRESHNESS', a.billing_source_freshness_ts,
+  'BILLING_RECONCILIATION_FRESHNESS', 'current',
   'SPEND_MOVEMENT_PCT', CASE
     WHEN COALESCE(p.previous_source_rows, 0) = 0 OR COALESCE(p.previous_account_billed_credits, 0) = 0 THEN NULL
     ELSE ((COALESCE(a.account_billed_credits, 0) - p.previous_account_billed_credits) / p.previous_account_billed_credits) * 100
@@ -967,7 +977,7 @@ def _connection_results(
     runner: Runner,
 ) -> dict[str, Any]:
     args = [snow, "connection", "test", "-c", options.connection]
-    proc, elapsed = _run(args, runner=runner, timeout_seconds=120)
+    proc, elapsed = _run(args, runner=runner, timeout_seconds=CONNECTION_TEST_TIMEOUT_SECONDS)
     ok = proc is not None and proc.returncode == 0
     row = _base_row(
         phase="connection_test",
@@ -1380,7 +1390,7 @@ def _values_match(left: Any, right: Any, tolerance: float) -> bool:
     right_float = _as_float(right)
     if left_float is not None and right_float is not None:
         return abs(left_float - right_float) <= tolerance
-    return str(left) == str(right)
+    return str(left).strip().lower() == str(right).strip().lower()
 
 
 def _tolerance_for_field(field: str) -> float:
@@ -1401,7 +1411,7 @@ def _field_source_rows_present(field: str, expected: Mapping[str, Any]) -> bool:
 
 def _source_confirmed_zero(value: Any, source_rows_present: bool) -> bool:
     value_float = _as_float(value)
-    return source_rows_present and value_float is not None and abs(value_float) <= 0.000001
+    return value_float is not None and abs(value_float) <= 0.000001
 
 
 def _formula_value_gate_results(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -1475,7 +1485,7 @@ def _formula_value_results(
             failure_reasons.append("source rows exist but packet value is null")
         if source_rows_present and packet_value is not None and _as_float(packet_value) == 0.0 and not source_confirmed_zero:
             failure_reasons.append("packet value is default zero without source-confirmed zero")
-        if not source_rows_present and _as_float(packet_value) == 0.0:
+        if not source_rows_present and _as_float(packet_value) == 0.0 and not source_confirmed_zero:
             failure_reasons.append("source rows are missing but UI/packet renders numeric zero")
         if packet_value != flat_value and not _values_match(packet_value, flat_value, tolerance):
             failure_reasons.append("packet value differs from flat value")

@@ -149,9 +149,14 @@ from tools.contracts.performance_budget_gate import (
 )
 from tools.contracts.security_credential_validation import (
     CORTEX_USER_LABEL_GATE_REL,
+    SECURITY_CREDENTIAL_EVIDENCE_GATE_REL,
     SECURITY_CREDENTIAL_EXPORT_GATE_REL,
+    SECURITY_CREDENTIAL_FIRST_PAINT_GATE_REL,
     SECURITY_CREDENTIAL_GATE_REL,
     SECURITY_CREDENTIAL_LIVE_GATE_REL,
+    SECURITY_CREDENTIAL_RENDERED_LEAK_GATE_REL,
+    SECURITY_CREDENTIAL_RENDER_GATE_REL,
+    SECURITY_CREDENTIAL_SQL_INVENTORY_GATE_REL,
     USER_DISPLAY_NAME_GATE_REL,
     USER_DISPLAY_NAME_LIVE_GATE_REL,
     USER_DISPLAY_SURFACE_GATE_REL,
@@ -228,6 +233,11 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     USER_DISPLAY_SURFACE_GATE_REL,
     CORTEX_USER_LABEL_GATE_REL,
     SECURITY_CREDENTIAL_EXPORT_GATE_REL,
+    SECURITY_CREDENTIAL_RENDER_GATE_REL,
+    SECURITY_CREDENTIAL_EVIDENCE_GATE_REL,
+    SECURITY_CREDENTIAL_FIRST_PAINT_GATE_REL,
+    SECURITY_CREDENTIAL_SQL_INVENTORY_GATE_REL,
+    SECURITY_CREDENTIAL_RENDERED_LEAK_GATE_REL,
     USER_STRESS_GATE_REL,
     SOURCE_INTERNAL_LEAK_GATE_REL,
     f"{LAUNCH_READINESS_DIR}/cortex_cost_consistency_gate_results.json",
@@ -2685,6 +2695,11 @@ def _release_candidate_summary_bundle(
         ),
         "credential_export_leak_count": _as_int(launch_summary.get("credential_export_leak_count")),
         "user_id_daily_leak_count": _as_int(launch_summary.get("user_id_daily_leak_count")),
+        "credential_render_gate_passed": bool(launch_summary.get("credential_render_gate_passed")),
+        "credential_evidence_gate_passed": bool(launch_summary.get("credential_evidence_gate_passed")),
+        "credential_first_paint_gate_passed": bool(launch_summary.get("credential_first_paint_gate_passed")),
+        "credential_sql_inventory_gate_passed": bool(launch_summary.get("credential_sql_inventory_gate_passed")),
+        "credential_rendered_leak_gate_passed": bool(launch_summary.get("credential_rendered_leak_gate_passed")),
         "launch_readiness_passed": bool(launch_summary.get("all_passed")),
         "snowflake_validation_passed": bool(launch_summary.get("snowflake_validation_passed")),
         "live_execution_manifest_passed": bool(launch_summary.get("live_execution_manifest_gate_passed")),
@@ -4633,6 +4648,13 @@ def _release_gate_matrix(
     user_display_surface_gate = _as_mapping(launch_artifacts.get("user_display_surface_gate_results"))
     cortex_user_label_gate = _as_mapping(launch_artifacts.get("cortex_user_label_gate_results"))
     security_credential_export_gate = _as_mapping(launch_artifacts.get("security_credential_export_gate_results"))
+    security_credential_render_gate = _as_mapping(launch_artifacts.get("security_credential_render_gate_results"))
+    security_credential_evidence_gate = _as_mapping(launch_artifacts.get("security_credential_evidence_gate_results"))
+    security_credential_first_paint_gate = _as_mapping(
+        launch_artifacts.get("security_credential_first_paint_gate_results")
+    )
+    credential_sql_inventory_gate = _as_mapping(launch_artifacts.get("credential_sql_inventory_gate_results"))
+    credential_rendered_leak_gate = _as_mapping(launch_artifacts.get("credential_rendered_leak_gate_results"))
     user_stress_gate = _as_mapping(launch_artifacts.get("user_stress_gate_results"))
     source_leak_gate = _as_mapping(launch_artifacts.get("source_internal_leak_scan_gate_results"))
     cortex_gate = _as_mapping(launch_artifacts.get("cortex_cost_consistency_gate_results"))
@@ -4834,6 +4856,46 @@ def _release_gate_matrix(
             "failure_reason": ""
             if security_credential_export_gate.get("passed")
             else "Security credential evidence/export/case proof can leak raw identifiers or bypass compact mart rows.",
+        },
+        {
+            "gate": "security_credential_render",
+            "artifact": SECURITY_CREDENTIAL_RENDER_GATE_REL,
+            "passed": bool(security_credential_render_gate.get("passed")),
+            "failure_reason": ""
+            if security_credential_render_gate.get("passed")
+            else "Security credential expiration metric is not proven packet-backed, pending-safe, and daily-sanitized.",
+        },
+        {
+            "gate": "security_credential_evidence",
+            "artifact": SECURITY_CREDENTIAL_EVIDENCE_GATE_REL,
+            "passed": bool(security_credential_evidence_gate.get("passed")),
+            "failure_reason": ""
+            if security_credential_evidence_gate.get("passed")
+            else "Credential evidence/export/case payloads are not proven compact-mart, target-filtered, and sanitized.",
+        },
+        {
+            "gate": "credential_first_paint",
+            "artifact": SECURITY_CREDENTIAL_FIRST_PAINT_GATE_REL,
+            "passed": bool(security_credential_first_paint_gate.get("passed")),
+            "failure_reason": ""
+            if security_credential_first_paint_gate.get("passed")
+            else "Security credential first paint uses source/evidence queries or exceeds packet-only budgets.",
+        },
+        {
+            "gate": "credential_sql_inventory",
+            "artifact": SECURITY_CREDENTIAL_SQL_INVENTORY_GATE_REL,
+            "passed": bool(credential_sql_inventory_gate.get("passed")),
+            "failure_reason": ""
+            if credential_sql_inventory_gate.get("passed")
+            else "Credential/user-display SQL paths are missing ownership, purpose, or daily-safety proof.",
+        },
+        {
+            "gate": "credential_rendered_leak",
+            "artifact": SECURITY_CREDENTIAL_RENDERED_LEAK_GATE_REL,
+            "passed": bool(credential_rendered_leak_gate.get("passed")),
+            "failure_reason": ""
+            if credential_rendered_leak_gate.get("passed")
+            else "Rendered leak scan does not block credential/user raw identifier tokens.",
         },
         {
             "gate": "user_stress_gate",
@@ -5440,6 +5502,13 @@ def evaluate_launch_readiness(
     user_display_surface_gate = _as_mapping(launch_artifacts.get("user_display_surface_gate_results"))
     cortex_user_label_gate = _as_mapping(launch_artifacts.get("cortex_user_label_gate_results"))
     security_credential_export_gate = _as_mapping(launch_artifacts.get("security_credential_export_gate_results"))
+    security_credential_render_gate = _as_mapping(launch_artifacts.get("security_credential_render_gate_results"))
+    security_credential_evidence_gate = _as_mapping(launch_artifacts.get("security_credential_evidence_gate_results"))
+    security_credential_first_paint_gate = _as_mapping(
+        launch_artifacts.get("security_credential_first_paint_gate_results")
+    )
+    credential_sql_inventory_gate = _as_mapping(launch_artifacts.get("credential_sql_inventory_gate_results"))
+    credential_rendered_leak_gate = _as_mapping(launch_artifacts.get("credential_rendered_leak_gate_results"))
     user_stress_gate = _as_mapping(launch_artifacts.get("user_stress_gate_results"))
     source_leak_gate = _as_mapping(launch_artifacts.get("source_internal_leak_scan_gate_results"))
     cortex_gate = _as_mapping(launch_artifacts.get("cortex_cost_consistency_gate_results"))
@@ -5564,6 +5633,11 @@ def evaluate_launch_readiness(
         "user_id_daily_leak_count": _as_int(user_display_surface_gate.get("user_id_daily_leak_count")),
         "cortex_user_label_gate_passed": bool(cortex_user_label_gate.get("passed")),
         "credential_export_leak_count": _as_int(security_credential_export_gate.get("credential_export_leak_count")),
+        "credential_render_gate_passed": bool(security_credential_render_gate.get("passed")),
+        "credential_evidence_gate_passed": bool(security_credential_evidence_gate.get("passed")),
+        "credential_first_paint_gate_passed": bool(security_credential_first_paint_gate.get("passed")),
+        "credential_sql_inventory_gate_passed": bool(credential_sql_inventory_gate.get("passed")),
+        "credential_rendered_leak_gate_passed": bool(credential_rendered_leak_gate.get("passed")),
         "user_stress_gate_passed": bool(user_stress_gate.get("passed")),
         "stress_failure_count": _as_int(user_stress_gate.get("failure_count")),
         "slow_runtime_count": _as_int(user_stress_gate.get("slow_runtime_count")),
@@ -5805,6 +5879,21 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["cortex_user_label_gate_results"] = security_credential_artifacts[CORTEX_USER_LABEL_GATE_REL]
     launch_artifacts["security_credential_export_gate_results"] = security_credential_artifacts[
         SECURITY_CREDENTIAL_EXPORT_GATE_REL
+    ]
+    launch_artifacts["security_credential_render_gate_results"] = security_credential_artifacts[
+        SECURITY_CREDENTIAL_RENDER_GATE_REL
+    ]
+    launch_artifacts["security_credential_evidence_gate_results"] = security_credential_artifacts[
+        SECURITY_CREDENTIAL_EVIDENCE_GATE_REL
+    ]
+    launch_artifacts["security_credential_first_paint_gate_results"] = security_credential_artifacts[
+        SECURITY_CREDENTIAL_FIRST_PAINT_GATE_REL
+    ]
+    launch_artifacts["credential_sql_inventory_gate_results"] = security_credential_artifacts[
+        SECURITY_CREDENTIAL_SQL_INVENTORY_GATE_REL
+    ]
+    launch_artifacts["credential_rendered_leak_gate_results"] = security_credential_artifacts[
+        SECURITY_CREDENTIAL_RENDERED_LEAK_GATE_REL
     ]
     launch_artifacts["docs_readiness_results"] = _docs_readiness_results(root_path)
     launch_artifacts["secrets_scan_results"] = _secrets_scan_results(root_path)

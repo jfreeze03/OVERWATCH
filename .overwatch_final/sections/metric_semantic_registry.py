@@ -404,7 +404,7 @@ _ROWS: tuple[MetricSemantic, ...] = (
     _sem(
         "Security Monitoring",
         "credential_expirations",
-        "Credential Expirations",
+        "Credential expirations",
         description="Expired credentials and credentials due within 30 days from the compact credential mart.",
         source_family="credential_expiration",
         source_object="compact credential expiration summary",
@@ -416,6 +416,7 @@ _ROWS: tuple[MetricSemantic, ...] = (
         zero_policy="zero requires credential source availability proving no due credentials",
         unavailable_policy="Credential expiration source pending",
         live_validation_source="credential_expiration_live_or_fixture",
+        cost_db_mapping="not_applicable_security_credential_expiration",
     ),
     _sem(
         "Security Monitoring",

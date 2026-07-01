@@ -148,6 +148,19 @@ def _supplemental_overwatch_rows(root: Path) -> list[dict[str, Any]]:
             daily_safe=True,
             value_to_app="Feeds packet-backed Security Monitoring credential expiration metrics and actions.",
         )
+    if "MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT" in setup_text:
+        add(
+            "credential_expiration_compact_mart",
+            purpose="Store compact credential-expiration rows for Security packet, evidence, and actions.",
+            user_visible_feature="Credential expirations",
+            source_family="refresh_fast",
+            account_usage_use="none",
+            admin_only=True,
+            daily_safe=True,
+            value_to_app="Separates source credential metadata from daily first-paint Security Monitoring surfaces.",
+            row_limit="current compact credential rows",
+            pruning_predicate="expiration_date due/expired window",
+        )
     if "SNOWFLAKE.ACCOUNT_USAGE.USERS" in setup_text and "MART_USER_DIM_CURRENT" in setup_text:
         add(
             "user_display_dimension_refresh_source",
@@ -172,6 +185,18 @@ def _supplemental_overwatch_rows(root: Path) -> list[dict[str, Any]]:
             row_limit="5000 max evidence publish rows",
             pruning_predicate="expiration due/expired flags",
         )
+        add(
+            "credential_expiration_evidence",
+            purpose="Expose credential-expiration rows only through explicit Security evidence loads.",
+            user_visible_feature="Credential expirations",
+            source_family="targeted_evidence",
+            account_usage_use="none",
+            admin_only=False,
+            daily_safe=True,
+            value_to_app="Allows sanitized credential evidence/export/case payloads without first-paint source scans.",
+            row_limit="5000 max evidence publish rows; app default evidence limit applies",
+            pruning_predicate="expiration due/expired flags plus target filters",
+        )
     if "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT" in setup_text:
         add(
             "credential_expiration_security_packet",
@@ -184,6 +209,19 @@ def _supplemental_overwatch_rows(root: Path) -> list[dict[str, Any]]:
             value_to_app="Security overview first paint can render the credential-expiration metric from the current packet.",
             row_limit="one active packet row per scope",
             pruning_predicate="active packet logical key",
+        )
+    if "SECURITY_CREDENTIAL_EXPIRATION" in setup_text and "CREDENTIAL_EXPIRING::" in setup_text:
+        add(
+            "credential_expiration_alert_action",
+            purpose="Promote expired and expiring credentials into findings/actions.",
+            user_visible_feature="Alert Center and View all priorities credential findings",
+            source_family="daily_first_paint_packet",
+            account_usage_use="none",
+            admin_only=False,
+            daily_safe=True,
+            value_to_app="Makes credential expiration actionable with route/evidence context.",
+            row_limit="one finding/action per active packet candidate",
+            pruning_predicate="expired or expiring credential counts > 0",
         )
     if "MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT" in validation_text:
         add(
@@ -198,6 +236,31 @@ def _supplemental_overwatch_rows(root: Path) -> list[dict[str, Any]]:
             row_limit="validation metadata only",
             pruning_predicate="information_schema/object contract checks",
         )
+    if "USER_CHART_LABEL" in setup_text and "FACT_CORTEX_DAILY" in setup_text:
+        add(
+            "cortex_user_label_source",
+            purpose="Persist daily-safe Cortex user display/chart labels from the user dimension.",
+            user_visible_feature="Cortex user charts and Cost Workbench Cortex rows",
+            source_family="refresh_fast",
+            account_usage_use="none",
+            admin_only=False,
+            daily_safe=True,
+            value_to_app="Keeps Cortex user labels friendly while preserving stable USER_NAME grouping.",
+            row_limit="daily Cortex fact rows",
+            pruning_predicate="Cortex usage window and service type filters",
+        )
+    add(
+        "cortex_user_label_export_sanitizer",
+        purpose="Sanitize user labels and raw IDs in default Cortex/Security exports.",
+        user_visible_feature="Default user exports",
+        source_family="compact_evidence",
+        account_usage_use="none",
+        admin_only=False,
+        daily_safe=True,
+        value_to_app="Prevents USER_ID from appearing in default daily exports while preserving totals.",
+        row_limit="visible export rows",
+        pruning_predicate="rendered/exported row set",
+    )
     return rows
 
 

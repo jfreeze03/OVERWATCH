@@ -33,11 +33,14 @@ class UserDisplayNameMappingTests(unittest.TestCase):
 
         display_row = {"NAME": "ASMITH", "DISPLAY_NAME": "A. Smith", "FIRST_NAME": "", "LAST_NAME": ""}
         name_row = {"NAME": "BWHITE", "DISPLAY_NAME": "", "FIRST_NAME": None, "LAST_NAME": None}
+        login_row = {"NAME": "", "LOGIN_NAME": "login.user", "DISPLAY_NAME": "", "FIRST_NAME": None, "LAST_NAME": None}
 
         self.assertEqual(user_display_name(display_row), "A. Smith")
         self.assertEqual(user_chart_label(display_row), "ASMITH")
         self.assertEqual(user_display_name(name_row), "BWHITE")
         self.assertEqual(user_chart_label(name_row), "BWHITE")
+        self.assertEqual(user_display_name(login_row), "login.user")
+        self.assertEqual(user_chart_label(login_row), "login.user")
 
     def test_user_id_only_source_is_unknown_in_daily_labels(self):
         from utils.user_display import looks_like_user_id, user_chart_label, user_display_name

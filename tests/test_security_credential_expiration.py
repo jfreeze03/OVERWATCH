@@ -84,6 +84,71 @@ class SecurityCredentialExpirationTests(unittest.TestCase):
         self.assertEqual(summary["SECURITY_CREDENTIAL_NEXT_EXPIRATION_USER"], "Jane Doe")
         self.assertEqual(summary["SECURITY_CREDENTIAL_EXPIRATION_STATUS"], "due_or_expired")
 
+    def test_packet_tile_pending_zero_and_next_expiration_text(self):
+        from utils.security_credentials import credential_expiration_tile_from_packet
+
+        pending = credential_expiration_tile_from_packet({})
+        self.assertFalse(pending["available"])
+        self.assertEqual(pending["value"], "Credential expiration source pending")
+
+        due = credential_expiration_tile_from_packet(
+            {
+                "SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO": True,
+                "SECURITY_CREDENTIALS_EXPIRED_COUNT": 1,
+                "SECURITY_CREDENTIALS_EXPIRING_7D_COUNT": 1,
+                "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT": 2,
+                "SECURITY_CREDENTIAL_NEXT_EXPIRATION_USER": "Jane Doe",
+                "SECURITY_CREDENTIAL_NEXT_EXPIRATION_TYPE": "PAT",
+                "SECURITY_CREDENTIAL_NEXT_EXPIRATION_TS": "2026-07-06",
+            }
+        )
+
+        self.assertEqual(due["value"], "1 expired - 2 due within 30d")
+        self.assertIn("Jane Doe", due["detail"])
+        self.assertIn("PAT", due["detail"])
+
+    def test_credential_findings_and_case_payload_are_sanitized(self):
+        from utils.security_credentials import (
+            credential_evidence_daily_frame,
+            credential_expiration_findings,
+            make_credential_case_payload,
+        )
+
+        frame = pd.DataFrame(
+            [
+                {
+                    "USER_ID": "12345",
+                    "USER_NAME": "JDOE",
+                    "FIRST_NAME": "Jane",
+                    "LAST_NAME": "Doe",
+                    "CREDENTIAL_ID": "cred-001",
+                    "CREDENTIAL_NAME": "Jane PAT",
+                    "TYPE": "PAT",
+                    "DOMAIN": "USER",
+                    "STATUS": "ACTIVE",
+                    "EXPIRATION_DATE": "2026-07-05",
+                    "LAST_USED_ON": "2026-06-29",
+                }
+            ]
+        )
+
+        findings = credential_expiration_findings(frame, now=NOW)
+        self.assertEqual(findings[0]["FINDING_KEY"], "CREDENTIAL_EXPIRING::JDOE::cred-001")
+        self.assertEqual(findings[0]["ENTITY_TYPE"], "USER_CREDENTIAL")
+        self.assertEqual(findings[0]["OWNER_NAME"], "Jane Doe")
+        self.assertEqual(findings[0]["ROUTE_SECTION"], "Security Monitoring")
+
+        daily = credential_evidence_daily_frame(frame, now=NOW)
+        self.assertIn("User", daily.columns)
+        self.assertNotIn("USER_ID", daily.columns)
+        self.assertNotIn("CREDENTIAL_ID", daily.columns)
+
+        payload = make_credential_case_payload(frame, scope="ALFA / ALL / 7 days", now=NOW)
+        self.assertEqual(payload["source"], "credential_expiration")
+        self.assertEqual(payload["visible_row_count"], 1)
+        self.assertEqual(payload["expiring_30d_count"], 1)
+        self.assertIn("Jane Doe", payload["owner_labels"])
+
     def test_snowflake_sql_promotes_credential_metric_and_findings(self):
         setup_sql = (ROOT / "snowflake" / "mart_setup" / "05_load_procedures.sql").read_text(
             encoding="utf-8"
@@ -95,6 +160,7 @@ class SecurityCredentialExpirationTests(unittest.TestCase):
         self.assertIn("CREDENTIAL_EXPIRING::", setup_sql)
         self.assertIn("CREDENTIAL_EXPIRATIONS", setup_sql)
         self.assertIn("ROTATE OR RENEW CREDENTIAL BEFORE EXPIRATION", setup_sql)
+        self.assertIn("DUE WITHIN 30D", setup_sql)
 
     def test_security_primary_summary_includes_packet_backed_credential_metric(self):
         from sections.metric_semantic_registry import PRIMARY_METRIC_KEYS, get_metric_semantic
@@ -144,7 +210,7 @@ class SecurityCredentialExpirationTests(unittest.TestCase):
         by_key = {metric.key: metric for metric in model.metric_cells}
 
         self.assertIn("credential_expirations", by_key)
-        self.assertEqual(by_key["credential_expirations"].label, "Credential Expirations")
+        self.assertEqual(by_key["credential_expirations"].label, "Credential expirations")
         self.assertEqual(by_key["credential_expirations"].value, "3")
         self.assertIn("Jane Doe", by_key["credential_expirations"].detail)
 

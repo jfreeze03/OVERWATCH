@@ -76,17 +76,25 @@ def rank_chart_frame(
     *,
     top_n: int = 20,
     ascending: bool = False,
+    tooltip_columns: list[str] | tuple[str, ...] | None = None,
 ) -> pd.DataFrame:
     """Return a metric-ranked chart frame with one row per displayed dimension."""
     if df is None or df.empty or dimension not in df.columns or measure not in df.columns:
         return pd.DataFrame(columns=[dimension, measure])
-    chart_df = df[[dimension, measure]].dropna(subset=[dimension]).copy()
+    extra_columns = [
+        column
+        for column in (tooltip_columns or ())
+        if column in df.columns and column not in {dimension, measure}
+    ]
+    chart_df = df[[dimension, measure, *extra_columns]].dropna(subset=[dimension]).copy()
     chart_df[dimension] = chart_df[dimension].astype(str)
-    chart_df[measure] = pd.to_numeric(chart_df[measure], errors="coerce")
+    for column in [measure, *extra_columns]:
+        chart_df[column] = pd.to_numeric(chart_df[column], errors="coerce")
     chart_df = chart_df.replace([float("inf"), float("-inf")], pd.NA).dropna(subset=[measure])
     if chart_df.empty:
         return pd.DataFrame(columns=[dimension, measure])
-    chart_df = chart_df.groupby(dimension, as_index=False, dropna=False, sort=False)[measure].sum()
+    aggregations = {measure: "sum", **{column: "sum" for column in extra_columns}}
+    chart_df = chart_df.groupby(dimension, as_index=False, dropna=False, sort=False).agg(aggregations)
     chart_df = chart_df.replace([float("inf"), float("-inf")], pd.NA).dropna(subset=[measure])
     chart_df = chart_df.sort_values(measure, ascending=ascending, kind="mergesort")
     return chart_df.head(max(1, int(top_n or 20)))
@@ -217,9 +225,12 @@ def render_ranked_bar_chart(
     title: str = "",
     top_n: int = 20,
     color: str = "#38bdf8",
+    tooltip_columns: list[str] | tuple[str, ...] | None = None,
 ) -> pd.DataFrame:
     """Render a horizontal top-to-bottom ranked bar chart and return plotted rows."""
-    chart_df = add_cost_companion_columns(rank_chart_frame(df, dimension, measure, top_n=top_n))
+    chart_df = add_cost_companion_columns(
+        rank_chart_frame(df, dimension, measure, top_n=top_n, tooltip_columns=tooltip_columns)
+    )
     if chart_df.empty:
         render_chart_empty_state(title or "No ranked data", "No valid ranked rows are loaded for this scope.")
         return chart_df
@@ -231,6 +242,22 @@ def render_ranked_bar_chart(
     cost_column = f"{str(measure).upper()}_COST_USD"
     if cost_column in chart_df.columns:
         tooltips.append(alt.Tooltip(f"{cost_column}:Q", title="Cost USD", format="$,.2f"))
+    for column in tooltip_columns or ():
+        if column in chart_df.columns and column not in {dimension, measure, cost_column}:
+            upper_column = str(column).upper()
+            if upper_column.endswith("_USD") or "COST" in upper_column:
+                tooltip_format = "$,.4f"
+            elif "TOKEN" in upper_column or "REQUEST" in upper_column:
+                tooltip_format = ",.0f"
+            else:
+                tooltip_format = ",.2f"
+            tooltips.append(
+                alt.Tooltip(
+                    f"{column}:Q",
+                    title=str(column).replace("_", " ").title(),
+                    format=tooltip_format,
+                )
+            )
     chart = (
         alt.Chart(chart_df)
         .mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3, color=color)

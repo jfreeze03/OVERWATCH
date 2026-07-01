@@ -18,7 +18,7 @@ class CortexUserLabelTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn('render_ranked_bar_chart(user_agg, "USER_CHART_LABEL"', source)
+        self.assertRegex(source, r"render_ranked_bar_chart\(\s*user_agg,\s*\"USER_CHART_LABEL\"")
         self.assertIn("USER_DISPLAY_NAME", source)
         self.assertIn("USER_ADMIN_LABEL", source)
 
@@ -28,6 +28,48 @@ class CortexUserLabelTests(unittest.TestCase):
         )
 
         self.assertIn('groupby(["USER_NAME", "USER_DISPLAY_NAME", "USER_CHART_LABEL"]', source)
+
+    def test_cortex_user_chart_carries_tokens_and_efficiency_metrics(self):
+        source = (ROOT / ".overwatch_final" / "sections" / "cortex_monitor.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('TOTAL_TOKENS=("TOTAL_TOKENS", "sum")', source)
+        self.assertIn("tooltip_columns=(", source)
+        self.assertIn('"TOTAL_TOKENS"', source)
+        self.assertIn('"TOKENS_PER_DOLLAR"', source)
+        self.assertIn('"COST_PER_1K_TOKENS_USD"', source)
+
+    def test_ranked_chart_frame_preserves_opt_in_tooltip_metrics(self):
+        from utils.display import rank_chart_frame
+
+        frame = pd.DataFrame(
+            [
+                {
+                    "USER_CHART_LABEL": "Jane Doe",
+                    "COST_USD": 5.0,
+                    "TOTAL_TOKENS": 1000,
+                    "TOTAL_REQUESTS": 2,
+                },
+                {
+                    "USER_CHART_LABEL": "Jane Doe",
+                    "COST_USD": 7.0,
+                    "TOTAL_TOKENS": 3000,
+                    "TOTAL_REQUESTS": 4,
+                },
+            ]
+        )
+
+        ranked = rank_chart_frame(
+            frame,
+            "USER_CHART_LABEL",
+            "COST_USD",
+            tooltip_columns=("TOTAL_TOKENS", "TOTAL_REQUESTS"),
+        )
+
+        self.assertEqual(float(ranked.loc[0, "COST_USD"]), 12.0)
+        self.assertEqual(int(ranked.loc[0, "TOTAL_TOKENS"]), 4000)
+        self.assertEqual(int(ranked.loc[0, "TOTAL_REQUESTS"]), 6)
 
     def test_helper_builds_friendly_chart_label(self):
         from utils.user_display import apply_user_display_columns

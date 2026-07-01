@@ -1004,10 +1004,16 @@ def render():
         if st.session_state.get("cm_cc_users_data") is not None and not st.session_state["cm_cc_users_data"].empty:
             df_cc = st.session_state["cm_cc_users_data"]
             total_credits = float(df_cc["TOTAL_CREDITS"].sum())
+            total_tokens = int(
+                pd.to_numeric(df_cc.get("TOTAL_TOKENS", pd.Series(dtype=float)), errors="coerce")
+                .fillna(0)
+                .sum()
+            )
 
             render_shell_snapshot((
                 ("Active Users", f"{df_cc['USER_NAME'].nunique():,}"),
                 ("Total Requests", f"{int(df_cc['TOTAL_REQUESTS'].sum()):,}"),
+                ("Total Tokens", f"{total_tokens:,}"),
                 ("Total AI Credits", f"{total_credits:.4f}"),
                 (f"Est. Cost (${_ai_credit_rate()}/AI cr)", f"${total_credits * _ai_credit_rate():,.2f}"),
             ))
@@ -1019,9 +1025,30 @@ def render():
                 df_cc["FIRST_USAGE"] = safe_strip_tz(df_cc["FIRST_USAGE"])
             if "LAST_USAGE" in df_cc.columns:
                 df_cc["LAST_USAGE"] = safe_strip_tz(df_cc["LAST_USAGE"])
+            df_cc["TOTAL_TOKENS"] = pd.to_numeric(df_cc.get("TOTAL_TOKENS", 0), errors="coerce").fillna(0)
             df_cc["COST_USD"] = df_cc["TOTAL_CREDITS"].apply(lambda x: round(x * _ai_credit_rate(), 4))
             df_cc["COST_PER_REQUEST_USD"] = df_cc.apply(
                 lambda row: round(safe_float(row.get("COST_USD")) / max(safe_int(row.get("TOTAL_REQUESTS")), 1), 6),
+                axis=1,
+            )
+            df_cc["TOKENS_PER_REQUEST"] = df_cc.apply(
+                lambda row: round(safe_float(row.get("TOTAL_TOKENS")) / max(safe_int(row.get("TOTAL_REQUESTS")), 1), 2),
+                axis=1,
+            )
+            df_cc["COST_PER_1K_TOKENS_USD"] = df_cc.apply(
+                lambda row: (
+                    round((safe_float(row.get("COST_USD")) / safe_float(row.get("TOTAL_TOKENS"))) * 1000, 6)
+                    if safe_float(row.get("TOTAL_TOKENS")) > 0
+                    else 0.0
+                ),
+                axis=1,
+            )
+            df_cc["TOKENS_PER_DOLLAR"] = df_cc.apply(
+                lambda row: (
+                    round(safe_float(row.get("TOTAL_TOKENS")) / safe_float(row.get("COST_USD")), 2)
+                    if safe_float(row.get("COST_USD")) > 0
+                    else 0.0
+                ),
                 axis=1,
             )
 
@@ -1037,19 +1064,54 @@ def render():
                     COST_USD=("COST_USD", "sum"),
                     TOTAL_CREDITS=("TOTAL_CREDITS", "sum"),
                     TOTAL_REQUESTS=("TOTAL_REQUESTS", "sum"),
+                    TOTAL_TOKENS=("TOTAL_TOKENS", "sum"),
                     FIRST_USAGE=("FIRST_USAGE", "min"),
                     LAST_USAGE=("LAST_USAGE", "max"),
                 )
-                .sort_values("COST_USD", ascending=False)
-                .head(20)
             )
             if not user_agg.empty:
-                render_ranked_bar_chart(user_agg, "USER_CHART_LABEL", "COST_USD", top_n=20)
+                user_agg["TOKENS_PER_REQUEST"] = user_agg.apply(
+                    lambda row: round(
+                        safe_float(row.get("TOTAL_TOKENS")) / max(safe_int(row.get("TOTAL_REQUESTS")), 1),
+                        2,
+                    ),
+                    axis=1,
+                )
+                user_agg["COST_PER_1K_TOKENS_USD"] = user_agg.apply(
+                    lambda row: (
+                        round((safe_float(row.get("COST_USD")) / safe_float(row.get("TOTAL_TOKENS"))) * 1000, 6)
+                        if safe_float(row.get("TOTAL_TOKENS")) > 0
+                        else 0.0
+                    ),
+                    axis=1,
+                )
+                user_agg["TOKENS_PER_DOLLAR"] = user_agg.apply(
+                    lambda row: (
+                        round(safe_float(row.get("TOTAL_TOKENS")) / safe_float(row.get("COST_USD")), 2)
+                        if safe_float(row.get("COST_USD")) > 0
+                        else 0.0
+                    ),
+                    axis=1,
+                )
+                user_agg = user_agg.sort_values("COST_USD", ascending=False).head(20)
+                render_ranked_bar_chart(
+                    user_agg,
+                    "USER_CHART_LABEL",
+                    "COST_USD",
+                    top_n=20,
+                    tooltip_columns=(
+                        "TOTAL_TOKENS",
+                        "TOKENS_PER_DOLLAR",
+                        "COST_PER_1K_TOKENS_USD",
+                        "TOTAL_REQUESTS",
+                    ),
+                )
                 render_priority_dataframe(
                     user_agg,
-                    title="Cortex user cost and recency",
+                    title="Cortex user cost, tokens, and recency",
                     priority_columns=[
-                        "USER_DISPLAY_NAME", "COST_USD", "TOTAL_CREDITS", "TOTAL_REQUESTS",
+                        "USER_DISPLAY_NAME", "COST_USD", "TOTAL_CREDITS", "TOTAL_TOKENS",
+                        "TOKENS_PER_DOLLAR", "COST_PER_1K_TOKENS_USD", "TOTAL_REQUESTS",
                         "FIRST_USAGE", "LAST_USAGE",
                     ],
                     sort_by=["COST_USD", "LAST_USAGE"],
@@ -1061,6 +1123,9 @@ def render():
                     column_config={
                         "COST_USD": st.column_config.NumberColumn("Cost", format="$%.2f"),
                         "TOTAL_CREDITS": st.column_config.NumberColumn("AI Credits", format="%.4f"),
+                        "TOTAL_TOKENS": st.column_config.NumberColumn("Tokens", format="%d"),
+                        "TOKENS_PER_DOLLAR": st.column_config.NumberColumn("Tokens / $", format="%.2f"),
+                        "COST_PER_1K_TOKENS_USD": st.column_config.NumberColumn("Cost / 1K tokens", format="$%.4f"),
                         "TOTAL_REQUESTS": st.column_config.NumberColumn("Requests", format="%d"),
                     },
                 )
@@ -1076,6 +1141,9 @@ def render():
                     "COST_USD",
                     "TOTAL_REQUESTS",
                     "TOTAL_TOKENS",
+                    "TOKENS_PER_DOLLAR",
+                    "COST_PER_1K_TOKENS_USD",
+                    "TOKENS_PER_REQUEST",
                     "FIRST_USAGE",
                     "LAST_USAGE",
                     "COST_PER_REQUEST_USD",
@@ -1091,6 +1159,9 @@ def render():
                     "TOTAL_CREDITS": st.column_config.NumberColumn("AI Credits", format="%.4f"),
                     "TOTAL_REQUESTS": st.column_config.NumberColumn("Requests", format="%d"),
                     "TOTAL_TOKENS": st.column_config.NumberColumn("Tokens", format="%d"),
+                    "TOKENS_PER_DOLLAR": st.column_config.NumberColumn("Tokens / $", format="%.2f"),
+                    "COST_PER_1K_TOKENS_USD": st.column_config.NumberColumn("Cost / 1K tokens", format="$%.4f"),
+                    "TOKENS_PER_REQUEST": st.column_config.NumberColumn("Tokens/request", format="%.2f"),
                 },
             )
             download_csv(sanitize_user_columns_for_export(df_cc), "cortex_code_users.csv")

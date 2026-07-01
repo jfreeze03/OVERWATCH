@@ -251,7 +251,7 @@ def _preferred_metrics(section: str) -> tuple[str, ...]:
         "Alert Center": ("active_alerts", "critical_high", "overdue_alerts", "cortex_predictive"),
         "DBA Control Room": ("failed_queries", "pipeline_failures", "queue_pressure", "cost_24h"),
         "Workload Operations": ("failed_queries", "pipeline_failures", "queue_blocked_pressure", "sla_risk"),
-        "Security Monitoring": ("failed_logins", "mfa_gaps", "risky_grants", "sharing_exposure"),
+        "Security Monitoring": ("failed_logins", "credential_expirations", "mfa_gaps", "risky_grants"),
     }.get(str(section or ""), ())
 
 

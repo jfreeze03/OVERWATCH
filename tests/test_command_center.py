@@ -68,8 +68,8 @@ class CommandCenterTests(unittest.TestCase):
                 self.assertIn(name, validation)
         self.assertIn("2026.06.18-COMMAND-CENTER", setup)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_COMMAND_CENTER()", setup)
-        self.assertIn("('TABLE', 103)", validation)
-        self.assertIn("('PROCEDURE', 21)", validation)
+        self.assertIn("('TABLE', 105)", validation)
+        self.assertIn("('PROCEDURE', 22)", validation)
 
     def test_command_center_labels_are_constrained(self):
         from utils.command_center import (

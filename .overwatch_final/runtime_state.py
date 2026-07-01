@@ -173,7 +173,10 @@ def set_state(key: str, value: Any) -> None:
             return
         queue_pending_widget_state_update(key, value)
         if _test_session_state_mirror_allowed():
-            st.session_state[key] = value
+            try:
+                st.session_state[key] = value
+            except Exception:
+                pass
         return
     try:
         st.session_state[key] = value
@@ -185,7 +188,10 @@ def set_state(key: str, value: Any) -> None:
             return
         queue_pending_widget_state_update(key, value)
         if _test_session_state_mirror_allowed():
-            st.session_state[key] = value
+            try:
+                st.session_state[key] = value
+            except Exception:
+                pass
 
 
 def queue_pending_widget_state_update(key: str, value: Any) -> None:

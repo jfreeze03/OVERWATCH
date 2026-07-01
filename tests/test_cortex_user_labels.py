@@ -49,6 +49,30 @@ class CortexUserLabelTests(unittest.TestCase):
         self.assertEqual(labeled.loc[0, "USER_CHART_LABEL"], "Jane Doe")
         self.assertNotEqual(labeled.loc[0, "USER_CHART_LABEL"], labeled.loc[0, "USER_ID"])
 
+    def test_helper_never_uses_user_id_only_for_chart_label(self):
+        from utils.user_display import apply_user_display_columns
+
+        frame = pd.DataFrame([{"USER_ID": "55555", "USER_NAME": "55555", "COST_USD": 10.0}])
+
+        labeled = apply_user_display_columns(frame)
+
+        self.assertEqual(labeled.loc[0, "USER_CHART_LABEL"], "Unknown user")
+        self.assertEqual(labeled.loc[0, "USER_DISPLAY_NAME"], "Unknown user")
+
+    def test_cortex_sql_daily_label_fallbacks_do_not_use_user_id(self):
+        source = (ROOT / ".overwatch_final" / "sections" / "cortex_monitor.py").read_text(
+            encoding="utf-8"
+        )
+        cost_sql = (ROOT / ".overwatch_final" / "sections" / "cost_contract_sql.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn('_snowflake_user_chart_expr("u", "TO_VARCHAR(c.USER_ID)")', source)
+        self.assertNotIn('_snowflake_user_chart_expr("u", "TO_VARCHAR(r.USER_ID)")', source)
+        self.assertNotIn('_snowflake_user_chart_expr("u", "TO_VARCHAR(s.USER_ID)")', source)
+        self.assertNotIn('_snowflake_user_chart_expr("u", "TO_VARCHAR(c.USER_ID)")', cost_sql)
+        self.assertIn("sanitize_user_columns_for_export(df_cc)", source)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -56,7 +56,7 @@ PRIMARY_METRIC_KEYS: Mapping[str, tuple[str, ...]] = {
     "Alert Center": ("active_alerts", "critical_high", "overdue_alerts", "cortex_predictive"),
     "Cost & Contract": ("total_spend", "spend_movement_pct", "cortex_spend", "forecast_run_rate"),
     "Workload Operations": ("failed_queries", "pipeline_failures", "queue_blocked_pressure", "sla_risk"),
-    "Security Monitoring": ("failed_logins", "mfa_gaps", "risky_grants", "sharing_exposure"),
+    "Security Monitoring": ("failed_logins", "credential_expirations", "mfa_gaps", "risky_grants"),
 }
 
 
@@ -400,6 +400,22 @@ _ROWS: tuple[MetricSemantic, ...] = (
         value_unit="count",
         metric_format="integer",
         expected_max=1_000_000,
+    ),
+    _sem(
+        "Security Monitoring",
+        "credential_expirations",
+        "Credential Expirations",
+        description="Expired credentials and credentials due within 30 days from the compact credential mart.",
+        source_family="credential_expiration",
+        source_object="compact credential expiration summary",
+        aggregation="expired count plus expiring-within-30-days count",
+        value_unit="count",
+        metric_format="integer",
+        expected_max=1_000_000,
+        packet_field="SECURITY_CREDENTIALS_EXPIRING_30D_COUNT",
+        zero_policy="zero requires credential source availability proving no due credentials",
+        unavailable_policy="Credential expiration source pending",
+        live_validation_source="credential_expiration_live_or_fixture",
     ),
     _sem(
         "Security Monitoring",

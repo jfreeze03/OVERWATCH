@@ -2181,12 +2181,14 @@ BEGIN
         NULLIF(TRIM(COALESCE(u.FIRST_NAME, '') || ' ' || COALESCE(u.LAST_NAME, '')), ''),
         NULLIF(u.DISPLAY_NAME, ''),
         u.NAME,
-        raw.USER_ID::VARCHAR
+        NULLIF(u.LOGIN_NAME, ''),
+        'Unknown user'
       ) AS USER_DISPLAY_NAME,
       COALESCE(
         NULLIF(TRIM(COALESCE(u.FIRST_NAME, '') || ' ' || COALESCE(u.LAST_NAME, '')), ''),
         u.NAME,
-        raw.USER_ID::VARCHAR
+        NULLIF(u.LOGIN_NAME, ''),
+        'Unknown user'
       ) AS USER_CHART_LABEL,
       u.EMAIL AS USER_EMAIL,
       raw.SOURCE,
@@ -2415,7 +2417,7 @@ BEGIN
     'CORTEX_SPEND_AND_QUOTA',
     CASE WHEN SUM(COALESCE(EST_COST_USD, 0)) >= 500 THEN 'High' ELSE 'Medium' END,
     'USER_OR_AI_SERVICE',
-    COALESCE(USER_CHART_LABEL, USER_NAME, USER_ID, 'CORTEX'),
+    COALESCE(NULLIF(USER_CHART_LABEL, ''), 'Unknown user'),
     'AI Spend Threshold + Per-User AI Quota',
     'AI and shared resource spend threshold',
     'Cortex 7d spend $' || ROUND(SUM(COALESCE(EST_COST_USD, 0)), 2) || ' across ' || SUM(COALESCE(REQUEST_COUNT, 0)) || ' request(s).',
@@ -2425,7 +2427,7 @@ BEGIN
     'FACT_CORTEX_DAILY'
   FROM FACT_CORTEX_DAILY
   WHERE USAGE_DATE >= DATEADD('DAY', -7, CURRENT_DATE())
-  GROUP BY COMPANY, COALESCE(USER_CHART_LABEL, USER_NAME, USER_ID, 'CORTEX')
+  GROUP BY COMPANY, COALESCE(NULLIF(USER_CHART_LABEL, ''), 'Unknown user')
   HAVING SUM(COALESCE(EST_COST_USD, 0)) > 0;
 
   INSERT INTO FACT_COST_MONITORING_SIGNAL (

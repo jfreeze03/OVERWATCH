@@ -96,6 +96,94 @@ class SecurityCredentialExpirationTests(unittest.TestCase):
         self.assertIn("CREDENTIAL_EXPIRATIONS", setup_sql)
         self.assertIn("ROTATE OR RENEW CREDENTIAL BEFORE EXPIRATION", setup_sql)
 
+    def test_security_primary_summary_includes_packet_backed_credential_metric(self):
+        from sections.metric_semantic_registry import PRIMARY_METRIC_KEYS, get_metric_semantic
+        from sections.section_command_brief import SectionCommandBrief, SectionCommandMetric
+        from sections.decision_workspace_view_model import build_decision_workspace_view_model
+
+        self.assertIn("credential_expirations", PRIMARY_METRIC_KEYS["Security Monitoring"])
+        semantic = get_metric_semantic("Security Monitoring", "credential_expirations")
+        self.assertIsNotNone(semantic)
+        self.assertEqual(semantic.source_family, "credential_expiration")
+
+        brief = SectionCommandBrief(
+            "Security Monitoring",
+            "ALFA",
+            "ALL",
+            "7 days",
+            "Watch",
+            "Security posture needs review.",
+            "Security view",
+            "fixture",
+            "Updated now",
+            "2026-06-30T00:00:00",
+            metrics=(
+                SectionCommandMetric(key="failed_logins", label="Failed Logins", value="", numeric_value=0),
+                SectionCommandMetric(
+                    key="credential_expirations",
+                    label="Credential expirations",
+                    value="1 expired · 2 due within 30d",
+                    numeric_value=3,
+                    detail="Next: Jane Doe · PAT · 6d",
+                    metric_format="integer",
+                    unit="credentials",
+                ),
+                SectionCommandMetric(key="mfa_gaps", label="MFA Gaps", value="", numeric_value=1),
+                SectionCommandMetric(key="risky_grants", label="Risky Grants", value="", numeric_value=2),
+                SectionCommandMetric(key="sharing_exposure", label="Sharing Exposure", value="", numeric_value=4),
+            ),
+            raw_payload={
+                "SECURITY_CREDENTIALS_EXPIRED_COUNT": 1,
+                "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT": 2,
+                "SECURITY_CREDENTIAL_NEXT_EXPIRATION_USER": "Jane Doe",
+                "SECURITY_CREDENTIAL_NEXT_EXPIRATION_TYPE": "PAT",
+            },
+        )
+
+        model = build_decision_workspace_view_model(brief, current_workflow="Security Overview")
+        by_key = {metric.key: metric for metric in model.metric_cells}
+
+        self.assertIn("credential_expirations", by_key)
+        self.assertEqual(by_key["credential_expirations"].label, "Credential Expirations")
+        self.assertEqual(by_key["credential_expirations"].value, "3")
+        self.assertIn("Jane Doe", by_key["credential_expirations"].detail)
+
+    def test_missing_credential_metric_renders_pending_not_zero(self):
+        from sections.section_command_brief import SectionCommandBrief, SectionCommandMetric
+        from sections.decision_workspace_view_model import build_decision_workspace_view_model
+
+        brief = SectionCommandBrief(
+            "Security Monitoring",
+            "ALFA",
+            "ALL",
+            "7 days",
+            "Watch",
+            "Security posture needs review.",
+            "Security view",
+            "fixture",
+            "Updated now",
+            "2026-06-30T00:00:00",
+            metrics=(
+                SectionCommandMetric(key="failed_logins", label="Failed Logins", value="", numeric_value=0),
+                SectionCommandMetric(
+                    key="credential_expirations",
+                    label="Credential expirations",
+                    value="0",
+                    numeric_value=0,
+                    metric_format="integer",
+                    available=False,
+                    availability_state="Credential expiration source pending",
+                ),
+                SectionCommandMetric(key="mfa_gaps", label="MFA Gaps", value="", numeric_value=1),
+                SectionCommandMetric(key="risky_grants", label="Risky Grants", value="", numeric_value=2),
+            ),
+        )
+
+        model = build_decision_workspace_view_model(brief, current_workflow="Security Overview")
+        by_key = {metric.key: metric for metric in model.metric_cells}
+
+        self.assertEqual(by_key["credential_expirations"].value, "Credential expiration source pending")
+
 
 if __name__ == "__main__":
     unittest.main()

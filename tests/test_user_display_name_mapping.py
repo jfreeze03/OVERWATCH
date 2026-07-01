@@ -39,6 +39,23 @@ class UserDisplayNameMappingTests(unittest.TestCase):
         self.assertEqual(user_display_name(name_row), "BWHITE")
         self.assertEqual(user_chart_label(name_row), "BWHITE")
 
+    def test_user_id_only_source_is_unknown_in_daily_labels(self):
+        from utils.user_display import looks_like_user_id, user_chart_label, user_display_name
+
+        row = {"USER_ID": "123456789", "USER_NAME": "123456789", "FIRST_NAME": "", "LAST_NAME": ""}
+
+        self.assertTrue(looks_like_user_id(row["USER_ID"]))
+        self.assertEqual(user_display_name(row), "Unknown user")
+        self.assertEqual(user_chart_label(row), "Unknown user")
+
+    def test_opaque_stable_user_key_is_not_chart_label(self):
+        from utils.user_display import looks_like_user_id, user_chart_label
+
+        row = {"USER_NAME": "01b4a3c55e6f7788", "DISPLAY_NAME": "", "NAME": ""}
+
+        self.assertTrue(looks_like_user_id(row["USER_NAME"]))
+        self.assertEqual(user_chart_label(row), "Unknown user")
+
     def test_default_export_removes_user_ids_but_admin_export_keeps_them(self):
         from utils.user_display import sanitize_user_columns_for_export
 

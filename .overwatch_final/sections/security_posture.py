@@ -1,6 +1,5 @@
 # sections/security_posture.py - Security Monitoring compatibility facade and route shell
 from __future__ import annotations
-
 import streamlit as st
 
 import sections.security_posture_access_changes_view as _access_changes_exports

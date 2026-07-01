@@ -67,8 +67,8 @@ class ChangeIntelligenceTests(unittest.TestCase):
                 self.assertIn(name, validation)
         self.assertIn("2026.06.18-CHANGE-INTELLIGENCE", setup)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE()", setup)
-        self.assertIn("('TABLE', 103)", validation)
-        self.assertIn("('PROCEDURE', 21)", validation)
+        self.assertIn("('TABLE', 105)", validation)
+        self.assertIn("('PROCEDURE', 22)", validation)
 
     def test_change_labels_and_categories_are_constrained(self):
         from utils.change_intelligence import (

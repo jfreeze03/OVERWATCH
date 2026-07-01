@@ -27,6 +27,7 @@ from utils import (
     safe_int,
     upsert_actions,
 )
+from utils.user_display import sanitize_user_columns_for_export
 from config import DEFAULTS
 
 
@@ -187,6 +188,7 @@ def _snowflake_user_display_expr(alias: str = "u", fallback: str = "'Unknown use
         f"NULLIF(TRIM(COALESCE({alias}.FIRST_NAME, '') || ' ' || COALESCE({alias}.LAST_NAME, '')), ''), "
         f"NULLIF({alias}.DISPLAY_NAME, ''), "
         f"{alias}.NAME, "
+        f"NULLIF({alias}.LOGIN_NAME, ''), "
         f"{fallback}"
         ")"
     )
@@ -197,6 +199,7 @@ def _snowflake_user_chart_expr(alias: str = "u", fallback: str = "'Unknown user'
         "COALESCE("
         f"NULLIF(TRIM(COALESCE({alias}.FIRST_NAME, '') || ' ' || COALESCE({alias}.LAST_NAME, '')), ''), "
         f"{alias}.NAME, "
+        f"NULLIF({alias}.LOGIN_NAME, ''), "
         f"{fallback}"
         ")"
     )
@@ -239,8 +242,9 @@ def _cortex_service_detail_sql(source: dict, available_columns, days: int, ai_cr
         user_join = ""
     if user_join:
         stable_user_expr = f"COALESCE(u.NAME, {raw_name_expr}, {raw_id_expr}, 'Unknown user')"
-        display_expr = _snowflake_user_display_expr("u", stable_user_expr)
-        chart_expr = _snowflake_user_chart_expr("u", stable_user_expr)
+        friendly_fallback_expr = f"COALESCE({raw_name_expr}, 'Unknown user')" if user_name_col else "'Unknown user'"
+        display_expr = _snowflake_user_display_expr("u", friendly_fallback_expr)
+        chart_expr = _snowflake_user_chart_expr("u", friendly_fallback_expr)
         admin_expr = _snowflake_user_admin_expr("u", stable_user_expr)
     else:
         stable_user_expr = "'Unknown user'"
@@ -367,8 +371,8 @@ def _build_cortex_control_markdown(
 def _build_cortex_control_sql(days: int, budget_usd: float) -> tuple[str, str]:
     user_filter = get_user_company_filter_clause("u.NAME")
     budget_credits = safe_float(budget_usd) / max(_ai_credit_rate(), 0.01)
-    display_expr = _snowflake_user_display_expr("u", "TO_VARCHAR(c.USER_ID)")
-    chart_expr = _snowflake_user_chart_expr("u", "TO_VARCHAR(c.USER_ID)")
+    display_expr = _snowflake_user_display_expr("u", "'Unknown user'")
+    chart_expr = _snowflake_user_chart_expr("u", "'Unknown user'")
     admin_expr = _snowflake_user_admin_expr("u", "TO_VARCHAR(c.USER_ID)")
     base = f"""
         WITH combined AS (
@@ -952,7 +956,7 @@ def render():
                     "TOTAL_TOKENS": st.column_config.NumberColumn("Tokens / Units", format="%d"),
                 },
             )
-            download_csv(detail, "cortex_service_detail.csv")
+            download_csv(sanitize_user_columns_for_export(detail), "cortex_service_detail.csv")
 
     elif cortex_view == "User Attribution":
         st.subheader("Cortex Code User Breakdown")
@@ -976,8 +980,8 @@ def render():
                             WHERE USAGE_TIME >= DATEADD('day', -{cc_days}, CURRENT_TIMESTAMP())
                         )
                         SELECT COALESCE(u.NAME, TO_VARCHAR(c.USER_ID)) AS USER_NAME,
-                               {_snowflake_user_display_expr("u", "TO_VARCHAR(c.USER_ID)")} AS USER_DISPLAY_NAME,
-                               {_snowflake_user_chart_expr("u", "TO_VARCHAR(c.USER_ID)")} AS USER_CHART_LABEL,
+                               {_snowflake_user_display_expr("u", "'Unknown user'")} AS USER_DISPLAY_NAME,
+                               {_snowflake_user_chart_expr("u", "'Unknown user'")} AS USER_CHART_LABEL,
                                {_snowflake_user_admin_expr("u", "TO_VARCHAR(c.USER_ID)")} AS USER_ADMIN_LABEL,
                                u.EMAIL, c.SOURCE,
                                COUNT(*)                                   AS TOTAL_REQUESTS,
@@ -1089,7 +1093,7 @@ def render():
                     "TOTAL_TOKENS": st.column_config.NumberColumn("Tokens", format="%d"),
                 },
             )
-            download_csv(df_cc, "cortex_code_users.csv")
+            download_csv(sanitize_user_columns_for_export(df_cc), "cortex_code_users.csv")
 
             # Cost-per-request spike detection
             st.divider()
@@ -1118,8 +1122,8 @@ def render():
                             GROUP BY USER_ID HAVING COUNT(*) >= 3
                         )
                         SELECT COALESCE(u.NAME, TO_VARCHAR(r.USER_ID)) AS USER_NAME,
-                               {_snowflake_user_display_expr("u", "TO_VARCHAR(r.USER_ID)")} AS USER_DISPLAY_NAME,
-                               {_snowflake_user_chart_expr("u", "TO_VARCHAR(r.USER_ID)")} AS USER_CHART_LABEL,
+                               {_snowflake_user_display_expr("u", "'Unknown user'")} AS USER_DISPLAY_NAME,
+                               {_snowflake_user_chart_expr("u", "'Unknown user'")} AS USER_CHART_LABEL,
                                p.requests    AS PRIOR_REQUESTS,
                                ROUND(p.credits/NULLIF(p.requests,0),6) AS PRIOR_CPR,
                                r.requests    AS RECENT_REQUESTS,
@@ -1150,7 +1154,7 @@ def render():
                                 ascending=[False, False],
                                 raw_label="All cost-per-request spike rows",
                             )
-                            download_csv(df_spike, "cortex_cpr_spikes.csv")
+                            download_csv(sanitize_user_columns_for_export(df_spike), "cortex_cpr_spikes.csv")
                         else:
                             st.success("No cost-per-request spikes detected.")
                     except Exception as e:
@@ -1331,8 +1335,8 @@ def render():
                             FROM daily d
                         )
                         SELECT COALESCE(u.NAME, TO_VARCHAR(s.USER_ID)) AS USER_NAME,
-                               {_snowflake_user_display_expr("u", "TO_VARCHAR(s.USER_ID)")} AS USER_DISPLAY_NAME,
-                               {_snowflake_user_chart_expr("u", "TO_VARCHAR(s.USER_ID)")} AS USER_CHART_LABEL,
+                               {_snowflake_user_display_expr("u", "'Unknown user'")} AS USER_DISPLAY_NAME,
+                               {_snowflake_user_chart_expr("u", "'Unknown user'")} AS USER_CHART_LABEL,
                                s.USAGE_DATE, s.REQUESTS, s.CREDITS, s.CREDITS_PER_REQ,
                                ROUND(s.AVG_7D, 6) AS ROLLING_AVG,
                                ROUND(CASE WHEN s.STD_7D > 0
@@ -1407,7 +1411,7 @@ def render():
                     credit_price=_ai_credit_rate(),
                 )
 
-            download_csv(df_an, "cortex_anomalies.csv")
+            download_csv(sanitize_user_columns_for_export(df_an), "cortex_anomalies.csv")
         elif st.session_state.get("cm_cc_anom_data") is not None:
             st.success("No anomalies detected in the analysis window.")
 

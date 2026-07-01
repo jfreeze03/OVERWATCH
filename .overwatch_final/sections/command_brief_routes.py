@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import logging
 from typing import Mapping
 
+import streamlit as st
+
 from navigation import queue_section_navigation
 from runtime_state import set_state
 from route_registry import SECTION_WORKFLOW_CONTRACT
@@ -108,6 +110,12 @@ def _valid_workflow(section: str, workflow: str) -> bool:
     return workflow in SECTION_WORKFLOW_CONTRACT.get(section, ())
 
 
+def _set_route_state(key: str, value: object) -> None:
+    set_state(key, value)
+    if isinstance(st.session_state, dict):
+        st.session_state[key] = value
+
+
 def apply_command_brief_route(route_key: str) -> bool:
     """Apply an allowlisted command-brief route after section defaults are queued."""
     key = str(route_key or "").strip()
@@ -120,11 +128,11 @@ def apply_command_brief_route(route_key: str) -> bool:
         return False
     queue_section_navigation(route.section)
     if route.workflow_key and route.workflow:
-        set_state(route.workflow_key, route.workflow)
+        _set_route_state(route.workflow_key, route.workflow)
     if route.section == "Alert Center" and route.workflow:
-        set_state("alert_center_requested_view", route.workflow)
+        _set_route_state("alert_center_requested_view", route.workflow)
     for state_key, state_value in route.state_updates:
-        set_state(state_key, state_value)
+        _set_route_state(state_key, state_value)
     return True
 
 

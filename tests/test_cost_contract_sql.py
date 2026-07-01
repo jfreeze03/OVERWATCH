@@ -63,7 +63,8 @@ class CostContractSqlTests(unittest.TestCase):
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.USERS", sql)
         self.assertIn("FIRST_NAME", sql)
         self.assertIn("LAST_NAME", sql)
-        self.assertIn("DISPLAY_NAME", sql)
+        self.assertIn("LOGIN_NAME", sql)
+        self.assertNotIn("DISPLAY_NAME", sql)
 
     def test_resource_monitor_guardrail_sql_is_review_only_and_complete(self):
         from sections.cost_contract_sql import _build_resource_monitor_guardrail_sql

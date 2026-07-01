@@ -47,7 +47,7 @@ def _cortex_daily_table() -> str:
 def _snowflake_user_chart_expr(alias: str, fallback_expr: str) -> str:
     """Return the daily-safe Snowflake user chart label expression."""
     first_last = f"TRIM(COALESCE({alias}.FIRST_NAME, '') || ' ' || COALESCE({alias}.LAST_NAME, ''))"
-    return f"COALESCE(NULLIF({first_last}, ''), NULLIF({alias}.DISPLAY_NAME, ''), {alias}.NAME, {fallback_expr}, 'Unknown user')"
+    return f"COALESCE(NULLIF({first_last}, ''), {alias}.NAME, NULLIF({alias}.LOGIN_NAME, ''), {fallback_expr}, 'Unknown user')"
 
 
 def _build_cost_splash_daily_trend_sql(company: str, days: int, *, mart: bool = True) -> str:
@@ -166,7 +166,7 @@ def _build_cost_splash_cortex_sql(company: str, days: int, ai_credit_price: floa
         """
 
     stable_user_expr = "COALESCE(u.NAME, TO_VARCHAR(c.USER_ID), 'Unknown user')"
-    user_expr = _snowflake_user_chart_expr("u", "TO_VARCHAR(c.USER_ID)")
+    user_expr = _snowflake_user_chart_expr("u", "'Unknown user'")
     user_filter = get_user_company_filter_clause("COALESCE(u.NAME, TO_VARCHAR(c.USER_ID), '')", company)
     return f"""
         WITH combined AS (

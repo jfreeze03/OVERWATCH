@@ -841,7 +841,7 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("PACKET_BYTES", procs)
         self.assertIn("COUNT_IF(REQUIRED AND SOURCE_SNAPSHOT_TS IS NULL) AS REQUIRED_MISSING_SOURCE_COUNT", procs)
         self.assertIn("COUNT_IF(NOT REQUIRED AND SOURCE_SNAPSHOT_TS IS NULL) AS OPTIONAL_MISSING_SOURCE_COUNT", procs)
-        self.assertIn("DECISION_PACKET:\"REQUIRED_MISSING_SOURCE_COUNT\"::NUMBER", procs)
+        self.assertIn('TRY_TO_NUMBER(DECISION_PACKET:"REQUIRED_MISSING_SOURCE_COUNT"::VARCHAR)', procs)
         self.assertIn("TMP_SECTION_METRIC_TRENDS", procs)
         self.assertIn("DATE_SPINE AS", procs)
         self.assertIn("TABLE(GENERATOR(ROWCOUNT => 14))", procs)
@@ -1038,7 +1038,12 @@ class SectionCommandBriefTests(unittest.TestCase):
             "Alert Center": ("active_alerts", "critical_high", "overdue_alerts", "cortex_predictive"),
             "Cost & Contract": ("total_spend", "spend_movement_pct", "forecast_run_rate", "cortex_spend_share"),
             "Workload Operations": ("failed_queries", "pipeline_failures", "queue_blocked_pressure", "sla_risk"),
-            "Security Monitoring": ("failed_logins", "mfa_gaps", "risky_grants", "sharing_exposure"),
+            "Security Monitoring": (
+                "failed_logins",
+                "mfa_gaps",
+                "credential_expirations",
+                "risky_grants",
+            ),
         }
         for section, keys in required.items():
             with self.subTest(section=section):
@@ -1062,6 +1067,7 @@ class SectionCommandBriefTests(unittest.TestCase):
             ("Cost & Contract", "forecast_run_rate"): "forecast",
             ("Cost & Contract", "cortex_spend_share"): "cortex_daily",
             ("Security Monitoring", "failed_logins"): "login_daily",
+            ("Security Monitoring", "credential_expirations"): "credential_expiration",
             ("Security Monitoring", "risky_grants"): "grant_daily",
             ("Security Monitoring", "sharing_exposure"): "security_operability",
         }

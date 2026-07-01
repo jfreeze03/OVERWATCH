@@ -148,8 +148,13 @@ from tools.contracts.performance_budget_gate import (
     write_performance_budget_gate_artifacts,
 )
 from tools.contracts.security_credential_validation import (
+    CORTEX_USER_LABEL_GATE_REL,
+    SECURITY_CREDENTIAL_EXPORT_GATE_REL,
     SECURITY_CREDENTIAL_GATE_REL,
+    SECURITY_CREDENTIAL_LIVE_GATE_REL,
     USER_DISPLAY_NAME_GATE_REL,
+    USER_DISPLAY_NAME_LIVE_GATE_REL,
+    USER_DISPLAY_SURFACE_GATE_REL,
     write_security_credential_validation_artifacts,
 )
 from tools.contracts.user_stress_test import (
@@ -217,7 +222,12 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     DELETE_FIRST_GATE_REL,
     PERFORMANCE_BUDGET_GATE_REL,
     SECURITY_CREDENTIAL_GATE_REL,
+    SECURITY_CREDENTIAL_LIVE_GATE_REL,
     USER_DISPLAY_NAME_GATE_REL,
+    USER_DISPLAY_NAME_LIVE_GATE_REL,
+    USER_DISPLAY_SURFACE_GATE_REL,
+    CORTEX_USER_LABEL_GATE_REL,
+    SECURITY_CREDENTIAL_EXPORT_GATE_REL,
     USER_STRESS_GATE_REL,
     SOURCE_INTERNAL_LEAK_GATE_REL,
     f"{LAUNCH_READINESS_DIR}/cortex_cost_consistency_gate_results.json",
@@ -601,6 +611,25 @@ def _write_json(path: Path, payload: Any) -> None:
 
 def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _security_first_paint_violation_count(payloads: Mapping[str, Any]) -> int:
+    first_paint = _as_mapping(payloads.get("artifacts/full_app_validation/first_paint_performance_results.json"))
+    count = 0
+    for row in _as_list(first_paint.get("rows")):
+        item = _as_mapping(row)
+        if str(item.get("section") or "") != "Security Monitoring":
+            continue
+        violates = (
+            not bool(item.get("passed"))
+            or _as_int(item.get("account_usage_count")) > 0
+            or _as_int(item.get("evidence_query_count")) > 0
+            or _as_int(item.get("direct_sql_count")) > 0
+            or _as_int(item.get("non_packet_first_paint_event_count")) > 0
+        )
+        if violates:
+            count += 1
+    return count
 
 
 def _file_sha256(path: Path) -> str:
@@ -2639,6 +2668,23 @@ def _release_candidate_summary_bundle(
         "sql_cleanup_failure_count": _as_int(launch_summary.get("sql_cleanup_failure_count")),
         "first_paint_failure_count": _as_int(launch_summary.get("first_paint_failure_count")),
         "source_internal_leak_scan_passed": bool(launch_summary.get("source_internal_leak_scan_passed")),
+        "credential_expiration_gate_passed": bool(launch_summary.get("credential_expiration_gate_passed")),
+        "credential_expiration_live_gate_passed": bool(
+            launch_summary.get("credential_expiration_live_gate_passed")
+        ),
+        "credential_expiring_30d_count": _as_int(launch_summary.get("credential_expiring_30d_count")),
+        "credential_expired_count": _as_int(launch_summary.get("credential_expired_count")),
+        "credential_next_expiration_days": _as_int(launch_summary.get("credential_next_expiration_days")),
+        "credential_live_validation_status": str(launch_summary.get("credential_live_validation_status") or ""),
+        "user_display_name_gate_passed": bool(launch_summary.get("user_display_name_gate_passed")),
+        "user_display_name_live_gate_passed": bool(launch_summary.get("user_display_name_live_gate_passed")),
+        "user_display_surface_gate_passed": bool(launch_summary.get("user_display_surface_gate_passed")),
+        "cortex_user_label_gate_passed": bool(launch_summary.get("cortex_user_label_gate_passed")),
+        "credential_first_paint_violation_count": _as_int(
+            launch_summary.get("credential_first_paint_violation_count")
+        ),
+        "credential_export_leak_count": _as_int(launch_summary.get("credential_export_leak_count")),
+        "user_id_daily_leak_count": _as_int(launch_summary.get("user_id_daily_leak_count")),
         "launch_readiness_passed": bool(launch_summary.get("all_passed")),
         "snowflake_validation_passed": bool(launch_summary.get("snowflake_validation_passed")),
         "live_execution_manifest_passed": bool(launch_summary.get("live_execution_manifest_gate_passed")),
@@ -4579,7 +4625,14 @@ def _release_gate_matrix(
     delete_first_cleanup_gate = _as_mapping(launch_artifacts.get("delete_first_cleanup_gate_results"))
     performance_budget_gate = _as_mapping(launch_artifacts.get("performance_budget_gate_results"))
     security_credential_gate = _as_mapping(launch_artifacts.get("security_credential_expiration_gate_results"))
+    security_credential_live_gate = _as_mapping(
+        launch_artifacts.get("security_credential_expiration_live_gate_results")
+    )
     user_display_gate = _as_mapping(launch_artifacts.get("user_display_name_gate_results"))
+    user_display_live_gate = _as_mapping(launch_artifacts.get("user_display_name_live_gate_results"))
+    user_display_surface_gate = _as_mapping(launch_artifacts.get("user_display_surface_gate_results"))
+    cortex_user_label_gate = _as_mapping(launch_artifacts.get("cortex_user_label_gate_results"))
+    security_credential_export_gate = _as_mapping(launch_artifacts.get("security_credential_export_gate_results"))
     user_stress_gate = _as_mapping(launch_artifacts.get("user_stress_gate_results"))
     source_leak_gate = _as_mapping(launch_artifacts.get("source_internal_leak_scan_gate_results"))
     cortex_gate = _as_mapping(launch_artifacts.get("cortex_cost_consistency_gate_results"))
@@ -4735,12 +4788,52 @@ def _release_gate_matrix(
             else "Security credential-expiration source, packet fields, action rows, or compact evidence proof failed.",
         },
         {
+            "gate": "security_credential_expiration_live",
+            "artifact": SECURITY_CREDENTIAL_LIVE_GATE_REL,
+            "passed": bool(security_credential_live_gate.get("passed")),
+            "failure_reason": ""
+            if security_credential_live_gate.get("passed")
+            else "Live credential expiration proof is required for this launch profile or needs a signed waiver.",
+        },
+        {
             "gate": "user_display_name",
             "artifact": USER_DISPLAY_NAME_GATE_REL,
             "passed": bool(user_display_gate.get("passed")),
             "failure_reason": ""
             if user_display_gate.get("passed")
             else "User display-name dimension, Cortex chart labels, or default export hiding failed.",
+        },
+        {
+            "gate": "user_display_name_live",
+            "artifact": USER_DISPLAY_NAME_LIVE_GATE_REL,
+            "passed": bool(user_display_live_gate.get("passed")),
+            "failure_reason": ""
+            if user_display_live_gate.get("passed")
+            else "Live user display-name proof is required for this launch profile or needs a signed waiver.",
+        },
+        {
+            "gate": "user_display_surface",
+            "artifact": USER_DISPLAY_SURFACE_GATE_REL,
+            "passed": bool(user_display_surface_gate.get("passed")),
+            "failure_reason": ""
+            if user_display_surface_gate.get("passed")
+            else "A daily user chart/table/export can still expose USER_ID or bypass friendly display labels.",
+        },
+        {
+            "gate": "cortex_user_label",
+            "artifact": CORTEX_USER_LABEL_GATE_REL,
+            "passed": bool(cortex_user_label_gate.get("passed")),
+            "failure_reason": ""
+            if cortex_user_label_gate.get("passed")
+            else "Cortex user labels or exports do not preserve stable grouping with daily-safe labels.",
+        },
+        {
+            "gate": "security_credential_export",
+            "artifact": SECURITY_CREDENTIAL_EXPORT_GATE_REL,
+            "passed": bool(security_credential_export_gate.get("passed")),
+            "failure_reason": ""
+            if security_credential_export_gate.get("passed")
+            else "Security credential evidence/export/case proof can leak raw identifiers or bypass compact mart rows.",
         },
         {
             "gate": "user_stress_gate",
@@ -5338,6 +5431,15 @@ def evaluate_launch_readiness(
     export_download_gate = _as_mapping(launch_artifacts.get("export_download_gate_results"))
     live_feature_gate = _as_mapping(launch_artifacts.get("live_feature_gate_results"))
     sql_cleanup_gate = _as_mapping(launch_artifacts.get("sql_cleanup_gate_results"))
+    security_credential_gate = _as_mapping(launch_artifacts.get("security_credential_expiration_gate_results"))
+    security_credential_live_gate = _as_mapping(
+        launch_artifacts.get("security_credential_expiration_live_gate_results")
+    )
+    user_display_gate = _as_mapping(launch_artifacts.get("user_display_name_gate_results"))
+    user_display_live_gate = _as_mapping(launch_artifacts.get("user_display_name_live_gate_results"))
+    user_display_surface_gate = _as_mapping(launch_artifacts.get("user_display_surface_gate_results"))
+    cortex_user_label_gate = _as_mapping(launch_artifacts.get("cortex_user_label_gate_results"))
+    security_credential_export_gate = _as_mapping(launch_artifacts.get("security_credential_export_gate_results"))
     user_stress_gate = _as_mapping(launch_artifacts.get("user_stress_gate_results"))
     source_leak_gate = _as_mapping(launch_artifacts.get("source_internal_leak_scan_gate_results"))
     cortex_gate = _as_mapping(launch_artifacts.get("cortex_cost_consistency_gate_results"))
@@ -5433,6 +5535,7 @@ def evaluate_launch_readiness(
         "settings_failure_count": _as_int(settings_gate.get("failure_count")),
         "first_paint_gate_passed": bool(first_paint_gate.get("passed")),
         "first_paint_failure_count": _as_int(first_paint_gate.get("failure_count")),
+        "credential_first_paint_violation_count": _security_first_paint_violation_count(payloads),
         "packet_fallback_ui_passed": bool(packet_fallback_gate.get("passed")),
         "packet_fallback_ui_failure_count": _as_int(packet_fallback_gate.get("failure_count")),
         "summary_board_visual_contract_passed": bool(summary_visual_gate.get("passed")),
@@ -5445,6 +5548,22 @@ def evaluate_launch_readiness(
         "live_feature_failure_count": _as_int(live_feature_gate.get("failure_count")),
         "sql_cleanup_gate_passed": bool(sql_cleanup_gate.get("passed")),
         "sql_cleanup_failure_count": _as_int(sql_cleanup_gate.get("failure_count")),
+        "credential_expiration_gate_passed": bool(security_credential_gate.get("passed")),
+        "credential_expiration_live_gate_passed": bool(security_credential_live_gate.get("passed")),
+        "credential_expiring_30d_count": _as_int(security_credential_gate.get("credential_expiring_30d_count")),
+        "credential_expired_count": _as_int(security_credential_gate.get("credential_expired_count")),
+        "credential_next_expiration_days": _as_int(security_credential_gate.get("credential_next_expiration_days")),
+        "credential_live_validation_status": str(
+            security_credential_live_gate.get("live_validation_status")
+            or security_credential_gate.get("credential_live_validation_status")
+            or ""
+        ),
+        "user_display_name_gate_passed": bool(user_display_gate.get("passed")),
+        "user_display_name_live_gate_passed": bool(user_display_live_gate.get("passed")),
+        "user_display_surface_gate_passed": bool(user_display_surface_gate.get("passed")),
+        "user_id_daily_leak_count": _as_int(user_display_surface_gate.get("user_id_daily_leak_count")),
+        "cortex_user_label_gate_passed": bool(cortex_user_label_gate.get("passed")),
+        "credential_export_leak_count": _as_int(security_credential_export_gate.get("credential_export_leak_count")),
         "user_stress_gate_passed": bool(user_stress_gate.get("passed")),
         "stress_failure_count": _as_int(user_stress_gate.get("failure_count")),
         "slow_runtime_count": _as_int(user_stress_gate.get("slow_runtime_count")),
@@ -5625,7 +5744,11 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     payloads.update(performance_budget_artifacts)
     delete_first_cleanup_artifacts = write_delete_first_cleanup_artifacts(root_path)
     payloads.update(delete_first_cleanup_artifacts)
-    security_credential_artifacts = write_security_credential_validation_artifacts(root_path)
+    security_credential_artifacts = write_security_credential_validation_artifacts(
+        root_path,
+        profile=profile,
+        waivers=waivers,
+    )
     payloads.update(security_credential_artifacts)
 
     launch_artifacts: dict[str, Any] = {}
@@ -5669,7 +5792,20 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["security_credential_expiration_gate_results"] = security_credential_artifacts[
         SECURITY_CREDENTIAL_GATE_REL
     ]
+    launch_artifacts["security_credential_expiration_live_gate_results"] = security_credential_artifacts[
+        SECURITY_CREDENTIAL_LIVE_GATE_REL
+    ]
     launch_artifacts["user_display_name_gate_results"] = security_credential_artifacts[USER_DISPLAY_NAME_GATE_REL]
+    launch_artifacts["user_display_name_live_gate_results"] = security_credential_artifacts[
+        USER_DISPLAY_NAME_LIVE_GATE_REL
+    ]
+    launch_artifacts["user_display_surface_gate_results"] = security_credential_artifacts[
+        USER_DISPLAY_SURFACE_GATE_REL
+    ]
+    launch_artifacts["cortex_user_label_gate_results"] = security_credential_artifacts[CORTEX_USER_LABEL_GATE_REL]
+    launch_artifacts["security_credential_export_gate_results"] = security_credential_artifacts[
+        SECURITY_CREDENTIAL_EXPORT_GATE_REL
+    ]
     launch_artifacts["docs_readiness_results"] = _docs_readiness_results(root_path)
     launch_artifacts["secrets_scan_results"] = _secrets_scan_results(root_path)
     launch_artifacts["artifact_review_results"] = _artifact_review_results(root_path, payloads, missing_payloads)
@@ -5991,5 +6127,15 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
 __all__ = [
     "REQUIRED_LAUNCH_READINESS_ARTIFACTS",
     "evaluate_launch_readiness",
+    "main",
     "write_launch_readiness_artifacts",
 ]
+
+
+def main() -> int:
+    write_launch_readiness_artifacts(Path.cwd())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

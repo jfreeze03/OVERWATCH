@@ -11,7 +11,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from html import escape
 import math
 
-from utils.display_safety import contains_raw_source_token, safe_source_footer_items, scrub_daily_text
+from utils.display_safety import safe_source_footer_items, scrub_daily_text
 
 
 def _value(item: object, *names: str, default: object = "") -> object:
@@ -141,21 +141,59 @@ def render_signal_panel(findings: Sequence[object], *, title: object = "What nee
     return '<section class="ow-kit-signal-panel ow-decision-attention-panel">' f"<h4>{_safe(title)}</h4>" + "".join(rows) + "</section>"
 
 
-def render_action_row(actions: Sequence[object], *, title: object = "What to do next") -> str:
-    """Return non-clicking action descriptions; Streamlit buttons remain separate."""
+def render_action_row(actions: Sequence[object], *, title: object = "Recommended action") -> str:
+    """Return descriptive action guidance; Streamlit buttons remain the click targets."""
 
     rows = []
     for action in tuple(actions or ())[:3]:
         label = _value(action, "cta", "label", default="Open")
         detail = _value(action, "detail", "description", default="Evidence loads on request")
         rows.append(
-            '<div class="ow-kit-action-row">'
+            '<div class="ow-kit-action-row ow-kit-action-summary" data-action-like="false">'
+            '<span>Action available below</span>'
             f'<strong>{_safe(label)}</strong><small>{_safe(detail)}</small>'
             "</div>"
         )
     if not rows:
-        rows.append('<div class="ow-kit-action-row"><strong>Continue monitoring</strong><small>Evidence loads on request.</small></div>')
-    return '<section class="ow-kit-action-panel"><h4>' + _safe(title) + "</h4>" + "".join(rows) + "</section>"
+        rows.append(
+            '<div class="ow-kit-action-row ow-kit-action-summary" data-action-like="false">'
+            "<span>Recommended action</span><strong>Continue monitoring</strong>"
+            "<small>Evidence loads on request.</small></div>"
+        )
+    return (
+        '<section class="ow-kit-action-panel ow-kit-recommendation-panel" '
+        'aria-label="Recommended action summary" data-interactive="false"><h4>'
+        + _safe(title)
+        + "</h4>"
+        + "".join(rows)
+        + "</section>"
+    )
+
+
+def _trend_detail(metric: object) -> str:
+    detail = str(_value(metric, "detail", "description", default="")).strip()
+    period = str(_value(metric, "trend_period", "TREND_PERIOD", default="")).strip()
+    point_count = _value(metric, "trend_point_count", "TREND_POINT_COUNT", default="")
+    quality = str(_value(metric, "trend_quality", "TREND_QUALITY", default="")).strip()
+    zero_policy = str(_value(metric, "zero_fill_policy", "ZERO_FILL_POLICY", default="")).strip()
+    parts: list[str] = []
+    if detail:
+        parts.append(detail)
+    if period:
+        parts.append(f"Period: {period}")
+    numeric_points = _as_number(point_count)
+    if numeric_points is not None:
+        if numeric_points > 0:
+            parts.append(f"{int(numeric_points)} trend point{'s' if int(numeric_points) != 1 else ''}")
+        else:
+            parts.append("Trend unavailable")
+    elif "run-rate" in detail.lower() or quality.lower() in {"run_rate", "run-rate", "run-rate only"}:
+        parts.append("Run-rate only")
+    if quality:
+        parts.append(f"Quality: {quality}")
+    if zero_policy:
+        parts.append(f"Zero policy: {zero_policy}")
+    return " · ".join(parts) if parts else "Trend unavailable"
 
 
 def render_change_panel(model: object, *, title: object = "What changed") -> str:
@@ -168,7 +206,7 @@ def render_change_panel(model: object, *, title: object = "What changed") -> str
     for metric in candidates[:5]:
         label = _value(metric, "label", default="Metric")
         value = _value(metric, "value", "availability_state", default="Unavailable")
-        detail = _value(metric, "detail", "trend_quality", default="")
+        detail = _trend_detail(metric)
         tone = _tone(_value(metric, "tone", default="neutral"))
         rows.append(
             f'<article class="ow-kit-change-row ow-decision-trend-tile" data-tone="{tone}">'
@@ -180,8 +218,8 @@ def render_change_panel(model: object, *, title: object = "What changed") -> str
     if not rows:
         rows.append(
             '<article class="ow-kit-change-row ow-decision-trend-tile">'
-            "<span>Trend</span><strong>Not available</strong>"
-            "<small>Trend data not available for this packet.</small></article>"
+            "<span>Trend</span><strong>Trend unavailable</strong>"
+            "<small>No governed trend metadata in this packet.</small></article>"
         )
     return (
         '<section class="ow-kit-change-panel ow-decision-trend-band" aria-label="What changed">'
@@ -393,8 +431,6 @@ def render_command_brief(model: object) -> str:
         + "</section>"
         + "</div>"
     )
-    if contains_raw_source_token(html):
-        return scrub_daily_text(html)
     return html
 
 

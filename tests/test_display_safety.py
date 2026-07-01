@@ -19,6 +19,12 @@ class DisplaySafetyTests(unittest.TestCase):
             "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY": "Refresh-backed",
             "INFORMATION_SCHEMA.TABLES": "Deep diagnostics",
             "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEF()": "Deep diagnostics",
+            "OVERWATCH_ALERTS": "Evidence cache",
+            "ALERT_RUN_HISTORY": "Evidence cache",
+            "GRANTS_TO_ROLES": "Deep diagnostics",
+            "CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY": "Refresh-backed",
+            "USER_ID": "Restricted identifier",
+            "CREDENTIAL_ID": "Restricted identifier",
         }
         for raw, expected in cases.items():
             with self.subTest(raw=raw):

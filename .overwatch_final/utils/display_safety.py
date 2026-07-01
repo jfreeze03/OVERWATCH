@@ -23,7 +23,9 @@ DAILY_SOURCE_LABELS = {
 RAW_SOURCE_TOKEN_PATTERN = re.compile(
     r"\b(?:SNOWFLAKE\.ACCOUNT_USAGE|ACCOUNT_USAGE|INFORMATION_SCHEMA|MART_[A-Z0-9_]*|"
     r"FACT_[A-Z0-9_]*|SP_[A-Z0-9_]*|CALL\s+SP_[A-Z0-9_]*|CREATE\s+OR\s+REPLACE|"
-    r"SELECT\s+\*)\b",
+    r"SELECT\s+\*|OVERWATCH_ALERTS|ALERT_RUN_HISTORY|ALERT_REMEDIATION_LOG|LOGIN_HISTORY|"
+    r"GRANTS_TO_ROLES|OBJECT_DEPENDENCIES|CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY|"
+    r"CORTEX_CODE_CLI_USAGE_HISTORY|CREDENTIAL_ID|USER_ID|RAW_USER_ID)\b",
     re.IGNORECASE,
 )
 
@@ -31,6 +33,19 @@ _COMPACT_OBJECT_PATTERN = re.compile(r"\b(?:MART|FACT)_[A-Z0-9_]+\b", re.IGNOREC
 _PROCEDURE_PATTERN = re.compile(r"\bSP_[A-Z0-9_]+\b", re.IGNORECASE)
 _ACCOUNT_USAGE_PATTERN = re.compile(r"\b(?:SNOWFLAKE\.)?ACCOUNT_USAGE\b", re.IGNORECASE)
 _INFORMATION_SCHEMA_PATTERN = re.compile(r"\bINFORMATION_SCHEMA\b", re.IGNORECASE)
+_EVIDENCE_OBJECT_PATTERN = re.compile(
+    r"\b(?:OVERWATCH_ALERTS|ALERT_RUN_HISTORY|ALERT_REMEDIATION_LOG)\b",
+    re.IGNORECASE,
+)
+_REFRESH_OBJECT_PATTERN = re.compile(
+    r"\b(?:LOGIN_HISTORY|CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY|CORTEX_CODE_CLI_USAGE_HISTORY)\b",
+    re.IGNORECASE,
+)
+_DEEP_DIAGNOSTIC_OBJECT_PATTERN = re.compile(
+    r"\b(?:GRANTS_TO_ROLES|OBJECT_DEPENDENCIES)\b",
+    re.IGNORECASE,
+)
+_RAW_IDENTIFIER_PATTERN = re.compile(r"\b(?:CREDENTIAL_ID|USER_ID|RAW_USER_ID)\b", re.IGNORECASE)
 _SQL_BODY_PATTERN = re.compile(
     r"\b(?:CREATE\s+OR\s+REPLACE|SELECT\s+\*|CALL\s+SP_|WITH\s+[A-Z0-9_]+\s+AS)\b",
     re.IGNORECASE,
@@ -53,9 +68,18 @@ def source_family_for_display(value: object, *, source_key: object = "") -> str:
         return "packet"
     if "deep" in lowered or "live" in lowered or _INFORMATION_SCHEMA_PATTERN.search(text) or _PROCEDURE_PATTERN.search(text):
         return "live_deep"
-    if _ACCOUNT_USAGE_PATTERN.search(text) or "login_history" in lowered or "grants_to" in lowered:
+    if _DEEP_DIAGNOSTIC_OBJECT_PATTERN.search(text):
+        return "live_deep"
+    if _ACCOUNT_USAGE_PATTERN.search(text) or _REFRESH_OBJECT_PATTERN.search(text):
         return "account_usage"
-    if _COMPACT_OBJECT_PATTERN.search(text) or "mart" in lowered or "fact" in lowered or "evidence" in lowered or "cache" in lowered:
+    if (
+        _COMPACT_OBJECT_PATTERN.search(text)
+        or _EVIDENCE_OBJECT_PATTERN.search(text)
+        or "mart" in lowered
+        or "fact" in lowered
+        or "evidence" in lowered
+        or "cache" in lowered
+    ):
         return "compact_mart"
     if _SQL_BODY_PATTERN.search(text):
         return "live_deep"
@@ -68,6 +92,8 @@ def safe_source_label(value: object, *, source_key: object = "", admin_only: boo
     text = str(value or source_key or "").strip()
     if admin_only and text:
         return text
+    if _RAW_IDENTIFIER_PATTERN.search(text):
+        return "Restricted identifier"
     return DAILY_SOURCE_LABELS[source_family_for_display(text, source_key=source_key)]
 
 
@@ -80,7 +106,11 @@ def scrub_daily_text(value: object, *, admin_only: bool = False) -> str:
     text = _COMPACT_OBJECT_PATTERN.sub("Evidence cache", text)
     text = _ACCOUNT_USAGE_PATTERN.sub("Refresh-backed", text)
     text = _INFORMATION_SCHEMA_PATTERN.sub("Deep diagnostics", text)
+    text = _EVIDENCE_OBJECT_PATTERN.sub("Evidence cache", text)
+    text = _REFRESH_OBJECT_PATTERN.sub("Refresh-backed", text)
+    text = _DEEP_DIAGNOSTIC_OBJECT_PATTERN.sub("Deep diagnostics", text)
     text = _PROCEDURE_PATTERN.sub("Deep diagnostics", text)
+    text = _RAW_IDENTIFIER_PATTERN.sub("Restricted identifier", text)
     text = re.sub(r"\bCALL\s+Deep diagnostics\b", "Deep diagnostics", text, flags=re.IGNORECASE)
     text = re.sub(r"\bCREATE\s+OR\s+REPLACE\b", "Setup detail", text, flags=re.IGNORECASE)
     text = re.sub(r"\bSELECT\s+\*\b", "Detailed query", text, flags=re.IGNORECASE)

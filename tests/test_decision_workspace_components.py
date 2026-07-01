@@ -54,7 +54,8 @@ class DecisionWorkspaceComponentsTests(unittest.TestCase):
         self.assertIn("Total Spend", html)
         self.assertIn("What needs attention", html)
         self.assertIn("What changed", html)
-        self.assertIn("What to do next", html)
+        self.assertIn("Recommended action", html)
+        self.assertIn('data-action-like="false"', html)
         self.assertIn("Data Trust", html)
         self.assertIn("Evidence cache", html)
         self.assertNotIn("MART_COST_DAILY", html)
@@ -91,6 +92,40 @@ class DecisionWorkspaceComponentsTests(unittest.TestCase):
         self.assertIn("ow-kit-ranked-row", ranked)
         self.assertIn("ow-kit-area-panel", area)
         self.assertIn("<svg", area)
+
+    def test_change_panel_respects_governed_trend_metadata(self):
+        from sections.decision_workspace_components import render_change_panel
+
+        model = SimpleNamespace(
+            trends=(
+                SimpleNamespace(
+                    label="Spend movement",
+                    value="+4.2%",
+                    detail="Run-rate only",
+                    trend_period="7d",
+                    trend_point_count=0,
+                    trend_quality="partial",
+                    zero_fill_policy="explicit zero only",
+                ),
+            )
+        )
+
+        html = render_change_panel(model)
+
+        self.assertIn("Spend movement", html)
+        self.assertIn("Run-rate only", html)
+        self.assertIn("Period: 7d", html)
+        self.assertIn("Trend unavailable", html)
+        self.assertIn("Zero policy: explicit zero only", html)
+        self.assertIn("partial source history", html)
+
+    def test_change_panel_without_trends_does_not_imply_history(self):
+        from sections.decision_workspace_components import render_change_panel
+
+        html = render_change_panel(SimpleNamespace(trends=()))
+
+        self.assertIn("Trend unavailable", html)
+        self.assertIn("No governed trend metadata", html)
 
 
 if __name__ == "__main__":

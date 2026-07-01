@@ -179,6 +179,7 @@ from tools.contracts.user_stress_test import (
 )
 from tools.contracts.ui_kit_alignment import (
     SECTION_LAYOUT_CONTRACT_GATE_REL,
+    SOURCE_SAFE_FOOTER_GATE_REL,
     UI_KIT_ALIGNMENT_GATE_REL,
     write_ui_kit_alignment_artifacts,
 )
@@ -244,6 +245,7 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     METRIC_SOURCE_GOVERNANCE_GATE_REL,
     UI_KIT_ALIGNMENT_GATE_REL,
     SECTION_LAYOUT_CONTRACT_GATE_REL,
+    SOURCE_SAFE_FOOTER_GATE_REL,
     *METRIC_FAMILY_GATE_RELS.values(),
     CORTEX_TOKEN_EFFICIENCY_GATE_REL,
     CORTEX_TOKEN_EFFICIENCY_LIVE_GATE_REL,
@@ -4696,6 +4698,7 @@ def _release_gate_matrix(
     metric_source_governance_gate = _as_mapping(launch_artifacts.get("metric_source_governance_gate_results"))
     ui_kit_alignment_gate = _as_mapping(launch_artifacts.get("ui_kit_alignment_gate_results"))
     section_layout_gate = _as_mapping(launch_artifacts.get("section_layout_contract_gate_results"))
+    source_safe_footer_gate = _as_mapping(launch_artifacts.get("source_safe_footer_gate_results"))
     metric_family_gates = {
         family_id: _as_mapping(launch_artifacts.get(Path(rel).stem))
         for family_id, rel in METRIC_FAMILY_GATE_RELS.items()
@@ -4889,6 +4892,14 @@ def _release_gate_matrix(
             "failure_reason": ""
             if section_layout_gate.get("passed")
             else "A primary section is missing the shared CommandBrief layout pieces or contains legacy/unsafe daily UI markers.",
+        },
+        {
+            "gate": "source_safe_footer",
+            "artifact": SOURCE_SAFE_FOOTER_GATE_REL,
+            "passed": bool(source_safe_footer_gate.get("passed")),
+            "failure_reason": ""
+            if source_safe_footer_gate.get("passed")
+            else "Daily source labels were not mapped before HTML assembly or final HTML scrubbing was reintroduced.",
         },
         *[
             {
@@ -5612,6 +5623,7 @@ def evaluate_launch_readiness(
     metric_source_governance_gate = _as_mapping(launch_artifacts.get("metric_source_governance_gate_results"))
     ui_kit_alignment_gate = _as_mapping(launch_artifacts.get("ui_kit_alignment_gate_results"))
     section_layout_gate = _as_mapping(launch_artifacts.get("section_layout_contract_gate_results"))
+    source_safe_footer_gate = _as_mapping(launch_artifacts.get("source_safe_footer_gate_results"))
     cortex_token_efficiency_gate = _as_mapping(launch_artifacts.get("cortex_token_efficiency_gate_results"))
     cortex_token_efficiency_live_gate = _as_mapping(
         launch_artifacts.get("cortex_token_efficiency_live_gate_results")
@@ -5754,6 +5766,9 @@ def evaluate_launch_readiness(
         "section_layout_contract_failure_count": _as_int(section_layout_gate.get("failure_count")),
         "section_layout_command_brief_count": _as_int(section_layout_gate.get("command_brief_count")),
         "section_layout_raw_source_token_count": _as_int(section_layout_gate.get("raw_source_token_count")),
+        "source_safe_footer_passed": bool(source_safe_footer_gate.get("passed")),
+        "source_safe_footer_leak_count": _as_int(source_safe_footer_gate.get("source_footer_leak_count")),
+        "silent_scrub_count": _as_int(source_safe_footer_gate.get("silent_scrub_count")),
         "new_metric_family_count": _as_int(metric_source_governance_gate.get("new_metric_family_count")),
         "new_metric_packet_field_count": _as_int(
             metric_source_governance_gate.get("new_metric_packet_field_count")
@@ -6054,6 +6069,7 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["section_layout_contract_gate_results"] = ui_kit_alignment_artifacts[
         SECTION_LAYOUT_CONTRACT_GATE_REL
     ]
+    launch_artifacts["source_safe_footer_gate_results"] = ui_kit_alignment_artifacts[SOURCE_SAFE_FOOTER_GATE_REL]
     for rel, metric_gate_payload in metric_source_governance_artifacts.items():
         if rel in METRIC_FAMILY_GATE_RELS.values():
             launch_artifacts[Path(rel).stem] = metric_gate_payload

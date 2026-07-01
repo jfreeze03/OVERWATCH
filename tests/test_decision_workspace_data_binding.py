@@ -545,7 +545,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertIn(">9<", markup_a)
         self.assertIn("$987", markup_a)
         self.assertIn("Packet A headline", markup_a)
-        self.assertIn("Trend data not available for this packet.", markup_a)
+        self.assertIn("Trend unavailable", markup_a)
         self.assertNotIn("ow-trend-unavailable", markup_a)
 
         packet_b = _packet(
@@ -2321,7 +2321,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             ),
         )
         markup = _render_markup(brief)
-        self.assertEqual(markup.count("Trend data not available for this packet."), 1)
+        self.assertEqual(markup.count("Trend unavailable"), 1)
         self.assertNotIn("ow-trend-unavailable", markup)
 
     def test_decision_window_uses_completed_packet_days(self):

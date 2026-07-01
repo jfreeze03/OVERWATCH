@@ -43,6 +43,8 @@ from sections.decision_workspace_view_model import (
 from sections.section_command_brief import SectionCommandBrief
 from utils.display_safety import safe_source_label, scrub_daily_text
 
+_COMMAND_BRIEF_HTML = _kit_command_brief
+
 
 def _key_token(value: object) -> str:
     text = str(value or "").strip().lower()
@@ -263,18 +265,52 @@ def _render_fallback(
     fallback = model.fallback
     if fallback is None:
         return
+    fallback_metrics = tuple(model.metric_cells)
+    if len(fallback_metrics) < 3:
+        fallback_metrics = (
+            DecisionMetricCell(
+                key="summary_packet_state",
+                label="Summary",
+                value=fallback.title,
+                detail="Packet",
+                tone="warning",
+            ),
+            DecisionMetricCell(
+                key="source_status",
+                label="Source status",
+                value=model.trust.quality_label or "Unavailable",
+                detail=model.trust.freshness_label or "Freshness unavailable",
+                tone="warning",
+            ),
+            DecisionMetricCell(
+                key="evidence_state",
+                label="Evidence",
+                value="On request",
+                detail="Use the action buttons below",
+                tone="neutral",
+            ),
+        )
+    fallback_actions: list[DecisionActionView] = []
+    if refresh_action is not None:
+        fallback_actions.append(DecisionActionView(label="Refresh", cta="Refresh"))
+    if fallback.can_initialize:
+        fallback_actions.append(DecisionActionView(label=fallback.recovery_label, cta=fallback.recovery_label))
+    if detail_action is not None and fallback.can_show_evidence:
+        fallback_actions.append(DecisionActionView(label=detail_action.label, cta=detail_action.label))
+    fallback_model = replace(
+        model,
+        state=fallback.title,
+        state_token=fallback.mode,
+        headline=fallback.title,
+        summary=_public_text(fallback.message),
+        metric_cells=fallback_metrics,
+        actions=tuple(fallback_actions[:3]),
+    )
     with st.container(key=f"{key_prefix}_decision_workspace_shell", border=False):
         st.html(
             f'<div class="ow-decision-workspace-marker" data-section="{_html(model.section)}" '
             f'data-workflow="{_html(model.workflow)}" aria-hidden="true"></div>'
-            f'<div class="ow-decision-recovery ow-decision-operating-loop" '
-            f'role="region" aria-label="Decision workspace {fallback.mode}">'
-            f'<div class="ow-decision-loop-header" data-state="{_html(fallback.mode)}">'
-            f'<strong>{_html(fallback.title)}</strong>'
-            f'<span>{_html(model.trust.summary)}</span>'
-            '</div>'
-            f'<p class="ow-decision-loop-summary">{_html(_public_text(fallback.message))}</p>'
-            '</div>'
+            + _COMMAND_BRIEF_HTML(fallback_model)
         )
         actions = []
         if refresh_action is not None:
@@ -454,7 +490,7 @@ def _render_model_trend_band(model: DecisionWorkspaceViewModel) -> str:
         return (
             '<section class="ow-decision-trend-band ow-decision-trend-empty">'
             '<h4>What changed</h4>'
-            '<p>Trend data not available for this packet.</p>'
+            '<p>Trend unavailable. No governed trend metadata in this packet.</p>'
             '</section>'
         )
     return (

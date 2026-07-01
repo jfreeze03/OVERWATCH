@@ -4003,7 +4003,8 @@ div[class*="st-key-"][class*="_decision_workspace_shell"] .ow-decision-workspace
     background: rgba(37, 184, 242, .12);
 }
 .ow-kit-action-panel {
-    min-height: 272px;
+    min-height: 0;
+    background: rgba(10, 31, 43, .24);
 }
 .ow-kit-action-panel h4,
 .ow-kit-ranked-panel h4,
@@ -4017,8 +4018,17 @@ div[class*="st-key-"][class*="_decision_workspace_shell"] .ow-decision-workspace
 .ow-kit-action-row {
     display: grid;
     gap: .18rem;
-    padding: .72rem 0;
+    padding: .68rem 0 .68rem .78rem;
     border-top: 1px solid rgba(170, 188, 200, .13);
+    border-left: 2px solid rgba(37, 184, 242, .38);
+    cursor: default;
+    pointer-events: none;
+}
+.ow-kit-action-row span {
+    color: var(--ow-text-secondary) !important;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    font-size: .72rem;
 }
 .ow-kit-action-row strong,
 .ow-kit-ranked-row span,

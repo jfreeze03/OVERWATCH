@@ -17,6 +17,8 @@ class UiKitAlignmentTests(unittest.TestCase):
         self.assertTrue(results["passed"], results["failures"])
         self.assertEqual(results["command_brief_surface_count"], len(PRIMARY_SECTION_FILES))
         self.assertEqual(results["source_footer_leak_count"], 0)
+        self.assertEqual(results["silent_scrub_count"], 0)
+        self.assertEqual(results["duplicate_command_brief_count"], 0)
         self.assertEqual(results["old_board_marker_count"], 0)
         self.assertTrue(results["credential_tile_rendered"])
         self.assertTrue(results["cortex_efficiency_rendered"])
@@ -24,6 +26,8 @@ class UiKitAlignmentTests(unittest.TestCase):
         self.assertEqual(results["section_layout_passed_count"], len(PRIMARY_SECTION_FILES))
         for row in results["section_layout_rows"]:
             self.assertTrue(row["command_brief_present"], row)
+            self.assertEqual(row["decision_workspace_marker_count"], 1, row)
+            self.assertEqual(row["duplicate_command_brief_count"], 0, row)
             self.assertTrue(row["metric_row_present"], row)
             self.assertTrue(row["attention_panel_present"], row)
             self.assertTrue(row["change_panel_present"], row)
@@ -41,6 +45,8 @@ class UiKitAlignmentTests(unittest.TestCase):
         self.assertTrue(gate["passed"], gate["failures"])
         self.assertIn("command_brief_surface_count", gate)
         self.assertIn("source_footer_leak_count", gate)
+        self.assertIn("silent_scrub_count", gate)
+        self.assertIn("duplicate_command_brief_count", gate)
         self.assertIn("evidence_autoload_violation_count", gate)
         self.assertTrue(gate["renderer_uses_single_command_brief"])
         self.assertIn("section_layout_passed_count", gate)
@@ -58,7 +64,23 @@ class UiKitAlignmentTests(unittest.TestCase):
         self.assertTrue(payload["passed"], payload["failures"])
         self.assertTrue(gate["passed"], gate["failures"])
         self.assertEqual(gate["command_brief_count"], len(payload["section_rows"]))
+        self.assertEqual(gate["duplicate_command_brief_count"], 0)
         self.assertEqual(gate["raw_source_token_count"], 0)
+
+    def test_source_safe_footer_contract_blocks_silent_scrub_and_raw_tokens(self):
+        from tools.contracts.ui_kit_alignment import (
+            build_source_safe_footer_results,
+            evaluate_source_safe_footer_gate,
+        )
+
+        payload = build_source_safe_footer_results(ROOT)
+        gate = evaluate_source_safe_footer_gate(payload)
+
+        self.assertTrue(payload["passed"], payload["failures"])
+        self.assertTrue(gate["passed"], gate["failures"])
+        self.assertEqual(gate["source_footer_leak_count"], 0)
+        self.assertEqual(gate["silent_scrub_count"], 0)
+        self.assertGreater(gate["mapped_source_count"], 0)
 
     def test_launch_readiness_requires_ui_kit_gate(self):
         from tools.contracts.launch_readiness import REQUIRED_LAUNCH_READINESS_ARTIFACTS
@@ -66,14 +88,18 @@ class UiKitAlignmentTests(unittest.TestCase):
         from tools.contracts.ui_kit_alignment import (
             SECTION_LAYOUT_CONTRACT_GATE_REL,
             SECTION_LAYOUT_CONTRACT_REL,
+            SOURCE_SAFE_FOOTER_GATE_REL,
+            SOURCE_SAFE_FOOTER_REL,
             UI_KIT_ALIGNMENT_GATE_REL,
             UI_KIT_ALIGNMENT_REL,
         )
 
         self.assertIn(UI_KIT_ALIGNMENT_GATE_REL, REQUIRED_LAUNCH_READINESS_ARTIFACTS)
         self.assertIn(SECTION_LAYOUT_CONTRACT_GATE_REL, REQUIRED_LAUNCH_READINESS_ARTIFACTS)
+        self.assertIn(SOURCE_SAFE_FOOTER_GATE_REL, REQUIRED_LAUNCH_READINESS_ARTIFACTS)
         self.assertIn(UI_KIT_ALIGNMENT_REL, REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS)
         self.assertIn(SECTION_LAYOUT_CONTRACT_REL, REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS)
+        self.assertIn(SOURCE_SAFE_FOOTER_REL, REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS)
 
 
 if __name__ == "__main__":

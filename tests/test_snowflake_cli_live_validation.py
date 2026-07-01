@@ -201,6 +201,12 @@ def _runner(
 ):
     def fake_runner(args, capture_output=True, text=True, timeout=None, check=False):
         joined = " ".join(str(arg) for arg in args)
+        if "-f" in args:
+            try:
+                file_arg = str(args[args.index("-f") + 1])
+                joined += " " + Path(file_arg).read_text(encoding="utf-8")
+            except (OSError, ValueError, IndexError):
+                pass
         if "--version" in args:
             return subprocess.CompletedProcess(args, 0, "Snowflake CLI version: 3.21.0\n", "")
         if "sql" in args and "--help" in args:
@@ -234,8 +240,6 @@ def _runner(
                 ),
                 "",
             )
-        if "-f" in args:
-            return subprocess.CompletedProcess(args, 0, "validation passed\n", "")
         if "QUERY_HISTORY" in joined:
             return subprocess.CompletedProcess(args, 0, _query_budget_stdout(), "")
         if "PACKET_AVAILABILITY_PROBE" in joined:
@@ -250,6 +254,8 @@ def _runner(
             return subprocess.CompletedProcess(args, 0, _packet_stdout(mismatch=packet_mismatch), "")
         if "FACT_COST_DAILY" in joined and "FACT_WAREHOUSE_HOURLY" in joined:
             return subprocess.CompletedProcess(args, 0, _formula_stdout(), "")
+        if "-f" in args:
+            return subprocess.CompletedProcess(args, 0, "validation passed\n", "")
         return subprocess.CompletedProcess(args, 0, "[]", "")
 
     return fake_runner
@@ -317,6 +323,53 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
         self.assertNotIn("hidden_table", serialized)
         self.assertNotIn("SELECT *", serialized)
         self.assertFalse(artifacts[CLI_CONNECTION_REL]["passed"])
+
+    def test_authenticator_token_file_flags_are_used_but_not_stored(self):
+        seen_args: list[list[str]] = []
+        base_runner = _runner()
+
+        def recording_runner(args, capture_output=True, text=True, timeout=None, check=False):
+            seen_args.append([str(arg) for arg in args])
+            return base_runner(args, capture_output=capture_output, text=text, timeout=timeout, check=check)
+
+        token_path = r"C:\secrets\TOK_CJ-token-secret.txt"
+        with _root_with_validation_sql() as temp:
+            artifacts = write_snowflake_cli_live_validation_artifacts(
+                temp,
+                options=SnowflakeCliValidationOptions(
+                    connection="dev",
+                    profile="internal_live",
+                    authenticator="PROGRAMMATIC_ACCESS_TOKEN",
+                    token_file_path=token_path,
+                    skip_refresh=True,
+                ),
+                runner=recording_runner,
+            )
+
+        serialized = json.dumps(artifacts)
+        self.assertNotIn(token_path, serialized)
+        self.assertIn('"token_file_supplied": true', serialized)
+        self.assertTrue(
+            any(
+                "connection" in args
+                and "test" in args
+                and "--authenticator" in args
+                and "--token-file-path" in args
+                for args in seen_args
+            ),
+            seen_args,
+        )
+        self.assertTrue(
+            any(
+                len(args) >= 2
+                and args[1] == "sql"
+                and "-f" in args
+                and "--authenticator" in args
+                and "--token-file-path" in args
+                for args in seen_args
+            ),
+            seen_args,
+        )
 
     def test_cli_help_without_json_option_fails_capability_check(self):
         with _root_with_validation_sql() as temp:
@@ -446,6 +499,18 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
         self.assertNotIn("p4ssword-secret", sanitized)
         self.assertNotIn("account_usage.table", sanitized)
         self.assertNotIn("SELECT *", sanitized)
+
+    def test_sanitizer_removes_cli_traceback_guidance_and_credwrite_details(self):
+        sanitized = sanitize_text(
+            "An unexpected exception occurred. Use --debug option to see the traceback. "
+            "Exception message:\n\n(1783, 'CredWrite', 'The stub received bad data')"
+        )
+
+        self.assertIn("Snowflake CLI failed before query execution", sanitized)
+        self.assertIn("local credential store write failed", sanitized)
+        self.assertNotIn("traceback", sanitized.lower())
+        self.assertNotIn("CredWrite", sanitized)
+        self.assertNotIn("The stub received bad data", sanitized)
 
     def test_runbook_mentions_connection_test_artifacts_and_live_profile_policy(self):
         text = (ROOT / "docs" / "snowflake_cli_live_validation.md").read_text(encoding="utf-8")

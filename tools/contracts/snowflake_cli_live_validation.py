@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -154,6 +155,8 @@ Runner = Callable[..., subprocess.CompletedProcess[str]]
 class SnowflakeCliValidationOptions:
     connection: str = ""
     profile: str = "internal_fixture"
+    authenticator: str = ""
+    token_file_path: str = ""
     database: str = ""
     schema: str = ""
     warehouse: str = ""
@@ -225,9 +228,26 @@ def sanitize_text(value: object, *, allow_raw_sql: bool | None = None) -> str:
         r"\1=[REDACTED_PATH]",
         text,
     )
+    text = re.sub(r"(?is)(--token-file-path\s+)['\"]?[^'\"\s\r\n]+", r"\1[REDACTED_PATH]", text)
+    text = re.sub(
+        r"(?is)([A-Za-z]:\\|/)[^'\"\r\n]*overwatch_snowflake_validation_[^'\"\r\n]*\.sql",
+        "[SQL_FILE_REDACTED]",
+        text,
+    )
     text = re.sub(r"(?i)(https://)[A-Za-z0-9_.-]+\.snowflakecomputing\.com", r"\1[REDACTED_ACCOUNT].snowflakecomputing.com", text)
+    text = re.sub(
+        r"(?is)An unexpected exception occurred\.\s*Use --debug option to see the traceback\.\s*Exception message:\s*",
+        "Snowflake CLI failed before query execution: ",
+        text,
+    )
+    text = re.sub(
+        r"(?is)\(\s*\d+\s*,\s*['\"]CredWrite['\"]\s*,\s*['\"][^'\"]+['\"]\s*\)",
+        "local credential store write failed",
+        text,
+    )
     text = re.sub(r"(?is)Traceback \(most recent call last\):.*", "[STACK_TRACE_REDACTED]", text)
     text = re.sub(r'File "[^"]+", line \d+.*', "[STACK_FRAME_REDACTED]", text)
+    text = re.sub(r"(?i)\btraceback\b", "debug details", text)
     if allow_raw_sql is None:
         allow_raw_sql = os.environ.get("OVERWATCH_ALLOW_RAW_SQL_PROOF") == "1"
     if not allow_raw_sql:
@@ -260,6 +280,7 @@ def _snowflake_cli_path() -> str:
 
 def _command_scope(options: SnowflakeCliValidationOptions) -> list[str]:
     args = ["-c", options.connection]
+    args.extend(_auth_scope(options))
     if options.database:
         args.extend(["--database", options.database])
     if options.schema:
@@ -268,6 +289,21 @@ def _command_scope(options: SnowflakeCliValidationOptions) -> list[str]:
         args.extend(["--warehouse", options.warehouse])
     if options.role:
         args.extend(["--role", options.role])
+    return args
+
+
+def _auth_scope(options: SnowflakeCliValidationOptions) -> list[str]:
+    args: list[str] = []
+    if options.authenticator:
+        args.extend(["--authenticator", options.authenticator])
+    if options.token_file_path:
+        args.extend(["--token-file-path", options.token_file_path])
+    return args
+
+
+def _connection_test_scope(options: SnowflakeCliValidationOptions) -> list[str]:
+    args = ["-c", options.connection]
+    args.extend(_auth_scope(options))
     return args
 
 
@@ -308,6 +344,8 @@ def _base_row(
         "phase": phase,
         "command_kind": command_kind,
         "connection_name": _safe_label(options.connection),
+        "authenticator": _safe_label(options.authenticator),
+        "token_file_supplied": bool(options.token_file_path),
         "sanitized_account": "",
         "sanitized_role": _safe_label(options.role),
         "sanitized_database": _safe_label(options.database),
@@ -881,10 +919,27 @@ def _run_snow_sql_query(
     runner: Runner,
     timeout_seconds: int = 180,
 ) -> tuple[list[dict[str, Any]], subprocess.CompletedProcess[str] | None, int]:
-    args = [snow, "sql", *_json_output_args(), *_command_scope(options), "-q", query]
-    proc, elapsed = _run(args, runner=runner, timeout_seconds=timeout_seconds)
-    rows = _parse_json_rows(proc.stdout if proc else "")
-    return rows, proc, elapsed
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".sql",
+            prefix="overwatch_snowflake_validation_",
+            encoding="utf-8",
+            delete=False,
+        ) as handle:
+            handle.write(query)
+            temp_path = handle.name
+        args = [snow, "sql", *_json_output_args(), *_command_scope(options), "-f", temp_path]
+        proc, elapsed = _run(args, runner=runner, timeout_seconds=timeout_seconds)
+        rows = _parse_json_rows(proc.stdout if proc else "")
+        return rows, proc, elapsed
+    finally:
+        if temp_path:
+            try:
+                Path(temp_path).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _run_snow_sql_file(
@@ -976,7 +1031,7 @@ def _connection_results(
     *,
     runner: Runner,
 ) -> dict[str, Any]:
-    args = [snow, "connection", "test", "-c", options.connection]
+    args = [snow, "connection", "test", *_connection_test_scope(options)]
     proc, elapsed = _run(args, runner=runner, timeout_seconds=CONNECTION_TEST_TIMEOUT_SECONDS)
     ok = proc is not None and proc.returncode == 0
     row = _base_row(
@@ -2101,6 +2156,8 @@ def options_from_env() -> SnowflakeCliValidationOptions:
     return SnowflakeCliValidationOptions(
         connection=os.environ.get("OVERWATCH_SNOWFLAKE_CLI_CONNECTION", "").strip(),
         profile=os.environ.get("OVERWATCH_LAUNCH_PROFILE", "internal_fixture").strip() or "internal_fixture",
+        authenticator=os.environ.get("OVERWATCH_SNOWFLAKE_CLI_AUTHENTICATOR", "").strip(),
+        token_file_path=os.environ.get("OVERWATCH_SNOWFLAKE_CLI_TOKEN_FILE_PATH", "").strip(),
         database=os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_DATABASE", "").strip(),
         schema=os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_SCHEMA", "").strip(),
         warehouse=os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE", "").strip(),
@@ -2123,6 +2180,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> SnowflakeCliValidationOpti
     parser = argparse.ArgumentParser(description="Run sanitized local Snowflake CLI validation for OVERWATCH.")
     parser.add_argument("--connection", default=os.environ.get("OVERWATCH_SNOWFLAKE_CLI_CONNECTION", ""))
     parser.add_argument("--profile", default=os.environ.get("OVERWATCH_LAUNCH_PROFILE", "internal_fixture"))
+    parser.add_argument("--authenticator", default=os.environ.get("OVERWATCH_SNOWFLAKE_CLI_AUTHENTICATOR", ""))
+    parser.add_argument("--token-file-path", default=os.environ.get("OVERWATCH_SNOWFLAKE_CLI_TOKEN_FILE_PATH", ""))
     parser.add_argument("--database", default=os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_DATABASE", ""))
     parser.add_argument("--schema", default=os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_SCHEMA", ""))
     parser.add_argument("--warehouse", default=os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE", ""))
@@ -2140,6 +2199,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> SnowflakeCliValidationOpti
     return SnowflakeCliValidationOptions(
         connection=args.connection,
         profile=args.profile,
+        authenticator=args.authenticator,
+        token_file_path=args.token_file_path,
         database=args.database,
         schema=args.schema,
         warehouse=args.warehouse,

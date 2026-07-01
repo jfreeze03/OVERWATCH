@@ -48,9 +48,12 @@ class DecisionWorkspaceComponentsTests(unittest.TestCase):
         html = render_command_brief(model)
 
         self.assertIn("ow-kit-command-brief", html)
+        self.assertEqual(html.count("ow-kit-command-brief"), 1)
+        self.assertIn("Spend is inside the current action threshold.", html)
         self.assertIn("Cost &amp; Contract", html)
         self.assertIn("Total Spend", html)
         self.assertIn("What needs attention", html)
+        self.assertIn("What changed", html)
         self.assertIn("What to do next", html)
         self.assertIn("Data Trust", html)
         self.assertIn("Evidence cache", html)

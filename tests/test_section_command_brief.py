@@ -601,8 +601,10 @@ class SectionCommandBriefTests(unittest.TestCase):
             + [call.args[0] for call in html.call_args_list]
         )
         self.assertIn("ow-decision-workspace", markup)
-        self.assertIn("ow-decision-hero", markup)
+        self.assertIn("ow-kit-command-brief", markup)
+        self.assertNotIn("ow-decision-hero", markup)
         self.assertIn("WHAT NEEDS ATTENTION".lower(), markup.lower())
+        self.assertIn("WHAT CHANGED".lower(), markup.lower())
         self.assertIn("ow-decision-metric-ribbon", markup)
         labels = [call.args[0] for call in button.call_args_list]
         self.assertTrue(any(str(label).startswith("Open Active Alerts") for label in labels))
@@ -645,8 +647,10 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertNotIn("MART_SECTION_DECISION_CURRENT", first_markup)
         self.assertNotIn("FACT_COST_DAILY", first_markup)
         renderer_source = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
+        component_source = (APP_ROOT / "sections" / "decision_workspace_components.py").read_text(encoding="utf-8")
         self.assertNotIn('"Technical details"', renderer_source)
-        self.assertIn("ow-decision-trust-footer", renderer_source)
+        self.assertIn("_kit_command_brief(", renderer_source)
+        self.assertIn("ow-decision-trust-footer", component_source)
 
     def test_command_actions_are_deduped_and_unknown_routes_removed(self):
         from sections.section_command_brief import SectionCommandAction

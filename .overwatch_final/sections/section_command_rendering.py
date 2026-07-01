@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 from html import escape as _escape_markup
 import math
 import re
@@ -25,6 +26,7 @@ from sections.decision_workspace_controls import (
     render_evidence_settings,
 )
 from sections.decision_workspace_components import (
+    render_command_brief as _kit_command_brief,
     render_data_trust_footer as _kit_data_trust_footer,
     render_metric_row as _kit_metric_row,
     render_signal_panel as _kit_signal_panel,
@@ -537,6 +539,29 @@ def _render_workspace_actions(
         st.markdown("</div>", unsafe_allow_html=True)
 
 
+def _command_brief_render_model(
+    model: DecisionWorkspaceViewModel,
+    controls: DecisionWorkspaceControls,
+) -> DecisionWorkspaceViewModel:
+    """Return the view model shape used by the shared UI-kit CommandBrief."""
+
+    route_actions = dedupe_command_actions(controls.route_actions or model.actions, model.section, model.workflow)
+    actions = list(route_actions or model.actions)
+    if controls.evidence_action is not None:
+        actions.append(
+            DecisionActionView(
+                label=controls.evidence_action.label,
+                cta=controls.evidence_action.label,
+                action_key="load_evidence",
+            )
+        )
+    if not actions:
+        priority_action = _priority_route_action(model)
+        if priority_action is not None:
+            actions.append(priority_action)
+    return replace(model, actions=tuple(actions[:3]))
+
+
 def _extra_metrics_panel(metrics: tuple[DecisionMetricCell, ...]) -> str:
     extra = "".join(
         f'<div class="ow-decision-extra-metric"><strong>{_html(metric.label)}</strong>'
@@ -602,9 +627,7 @@ def render_decision_workspace(
             )
         return
 
-    state = model.state_token
     parts = tuple(breadcrumb or (model.section, model.workflow))
-    fixture_badge = '<b class="ow-fixture-badge">FIXTURE DATA</b>' if model.fixture_mode else ""
     with st.container(key=f"{key_prefix}_decision_workspace_shell", border=False):
         st.html(
             f'<div class="ow-decision-workspace-marker" data-section="{_html(model.section)}" '
@@ -612,25 +635,9 @@ def render_decision_workspace(
             'aria-label="OVERWATCH Decision Workspace"></div>'
         )
         st.html(_breadcrumb_html(parts))
-        hero_left, hero_right = st.columns([0.72, 0.28])
-        with hero_left:
-            st.html(
-                '<div class="ow-decision-hero ow-decision-hero-copy-only">'
-                f'<div class="ow-decision-state-icon" data-state="{_html(state)}">{_state_icon_svg(state)}</div>'
-                '<div class="ow-decision-state-copy">'
-                f'<strong>{_html(model.state)} {fixture_badge}</strong>'
-                f'<h2>{_html(model.headline)}</h2>'
-                f'<p>{_html(model.summary)}</p>'
-                '</div>'
-                '</div>'
-            )
-        with hero_right:
-            st.html(
-                '<div class="ow-decision-refresh ow-decision-refresh-inline">'
-                f'<b>{_html(model.trust.freshness_label)}</b>'
-                f'<span>{_html(model.trust.target_label)}</span>'
-                '</div>'
-            )
+        st.html(_kit_command_brief(_command_brief_render_model(model, controls)))
+        action_left, action_right = st.columns([0.42, 0.58])
+        with action_left:
             if controls.can_refresh and controls.refresh_packet is not None and st.button(
                 "Refresh",
                 key=f"{key_prefix}_refresh_packet",
@@ -641,10 +648,6 @@ def render_decision_workspace(
                 _close_first_paint_for_user_action()
                 controls.refresh_packet()
                 st.rerun()
-        st.html(_metric_ribbon(model, compact=False))
-        left, right = st.columns([2.05, 0.95])
-        with left:
-            st.html(_render_model_attention_panel(model))
             priority_action = _priority_route_action(model)
             if priority_action is not None and st.button(
                 "View all priorities",
@@ -661,13 +664,8 @@ def render_decision_workspace(
                     workflow=model.workflow,
                 ):
                     st.rerun()
-        with right:
-            _render_workspace_actions(
-                model,
-                controls,
-                key_prefix=key_prefix,
-            )
-        st.html(_render_model_trend_band(model) + _render_model_trust_footer(model))
+        with action_right:
+            _render_workspace_actions(model, controls, key_prefix=key_prefix)
         if model.has_sources:
             with st.expander("Data Trust details", expanded=False):
                 st.html(f'<div class="ow-decision-source-drawer">{_trust_detail_html(model)}</div>')

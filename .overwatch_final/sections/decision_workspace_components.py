@@ -158,6 +158,42 @@ def render_action_row(actions: Sequence[object], *, title: object = "What to do 
     return '<section class="ow-kit-action-panel"><h4>' + _safe(title) + "</h4>" + "".join(rows) + "</section>"
 
 
+def render_change_panel(model: object, *, title: object = "What changed") -> str:
+    """Return the packet-backed change panel used inside every CommandBrief."""
+
+    candidates = tuple(_value(model, "trends", default=()) or ())
+    partial_count = sum(1 for metric in candidates if str(_value(metric, "trend_quality", default="")).lower() == "partial")
+    badge = '<span class="ow-decision-trend-quality">partial source history</span>' if partial_count else ""
+    rows: list[str] = []
+    for metric in candidates[:5]:
+        label = _value(metric, "label", default="Metric")
+        value = _value(metric, "value", "availability_state", default="Unavailable")
+        detail = _value(metric, "detail", "trend_quality", default="")
+        tone = _tone(_value(metric, "tone", default="neutral"))
+        rows.append(
+            f'<article class="ow-kit-change-row ow-decision-trend-tile" data-tone="{tone}">'
+            f'<span>{_safe(label)}</span>'
+            f'<strong>{_safe(value)}</strong>'
+            f'<small>{_safe(detail)}</small>'
+            "</article>"
+        )
+    if not rows:
+        rows.append(
+            '<article class="ow-kit-change-row ow-decision-trend-tile">'
+            "<span>Trend</span><strong>Not available</strong>"
+            "<small>Trend data not available for this packet.</small></article>"
+        )
+    return (
+        '<section class="ow-kit-change-panel ow-decision-trend-band" aria-label="What changed">'
+        f"<h4>{_safe(title)} {badge}</h4>"
+        '<div class="ow-kit-change-grid ow-decision-trend-grid">'
+        + "".join(rows)
+        + "</div>"
+        + (f'<p class="ow-decision-trend-meta">Trend history: {partial_count} partial</p>' if partial_count else "")
+        + "</section>"
+    )
+
+
 def render_data_trust_footer(
     *,
     mode: object = "Packet",
@@ -305,15 +341,33 @@ def render_command_brief(model: object) -> str:
     """Return a full CommandBrief shell from a view model-like object."""
 
     source_labels = [_value(row, "source_object", "source_key") for row in tuple(_value(model, "source_rows", default=()) or ())]
+    state = _value(model, "state", default="Watch")
+    state_token = _tone(_value(model, "state_token", default=state))
+    headline = _value(model, "headline", default=_value(model, "section", default="Decision Workspace"))
+    summary = _value(model, "summary", default="")
+    fixture_badge = _value(model, "fixture_badge_label", default="")
+    if not fixture_badge and bool(_value(model, "fixture_mode", default=False)):
+        fixture_badge = "FIXTURE DATA"
     header = render_section_header(
         _value(model, "section", default="Decision Workspace"),
         _value(model, "workflow", default="Overview"),
-        kicker=_value(model, "state", default="Watch"),
-        detail=_value(model, "summary", default=""),
+        kicker="Decision Workspace",
+        detail="",
+    )
+    hero = (
+        f'<div class="ow-kit-command-hero" data-state="{state_token}">'
+        '<div class="ow-kit-command-state">'
+        f'<strong>{_safe(state)}</strong>'
+        + (f'<b>{_safe(fixture_badge)}</b>' if str(fixture_badge or "").strip() else "")
+        + "</div>"
+        f'<h2>{_safe(headline)}</h2>'
+        f'<p>{_safe(summary)}</p>'
+        "</div>"
     )
     metrics = render_metric_row(tuple(_value(model, "metric_cells", default=()) or ()))
     signals = render_signal_panel(tuple(_value(model, "findings", default=()) or ()))
     actions = render_action_row(tuple(_value(model, "actions", default=()) or ()))
+    changes = render_change_panel(model)
     trust = _value(model, "trust", default={})
     footer = render_data_trust_footer(
         mode=_value(trust, "mode_label", default="Packet"),
@@ -324,16 +378,20 @@ def render_command_brief(model: object) -> str:
         source_labels=source_labels,
     )
     html = (
-        '<section class="ow-kit-command-brief ow-decision-workspace" role="region" '
-        'aria-label="CommandBrief">'
+        '<div class="ow-kit-section-surface">'
         + header
+        + '<section class="ow-kit-command-brief ow-decision-workspace" role="region" '
+        'aria-label="CommandBrief">'
+        + hero
         + metrics
         + '<div class="ow-decision-main-grid">'
         + signals
         + actions
         + "</div>"
+        + changes
         + footer
         + "</section>"
+        + "</div>"
     )
     if contains_raw_source_token(html):
         return scrub_daily_text(html)
@@ -343,6 +401,7 @@ def render_command_brief(model: object) -> str:
 __all__ = [
     "render_action_row",
     "render_area_trend_panel",
+    "render_change_panel",
     "render_command_brief",
     "render_compact_pending_state",
     "render_data_trust_footer",

@@ -19,6 +19,8 @@ FULL_APP_VALIDATION_DIR = "artifacts/full_app_validation"
 LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
 UI_KIT_ALIGNMENT_REL = f"{FULL_APP_VALIDATION_DIR}/ui_kit_alignment_results.json"
 UI_KIT_ALIGNMENT_GATE_REL = f"{LAUNCH_READINESS_DIR}/ui_kit_alignment_gate_results.json"
+SECTION_LAYOUT_CONTRACT_REL = f"{FULL_APP_VALIDATION_DIR}/section_layout_contract_results.json"
+SECTION_LAYOUT_CONTRACT_GATE_REL = f"{LAUNCH_READINESS_DIR}/section_layout_contract_gate_results.json"
 
 PRIMARY_SECTION_FILES: Mapping[str, str] = {
     "Executive Landing": ".overwatch_final/sections/executive_landing_shell.py",
@@ -36,6 +38,7 @@ REQUIRED_COMPONENTS = (
     "render_metric_card",
     "render_signal_panel",
     "render_action_row",
+    "render_change_panel",
     "render_data_trust_footer",
     "render_workflow_context",
     "render_tabs",
@@ -83,7 +86,7 @@ def _app_import_root(root: Path) -> None:
         sys.path.insert(0, app_root_text)
 
 
-def _sample_command_brief_html(root: Path) -> str:
+def _sample_command_brief_html(root: Path, section: str = "Security Monitoring") -> str:
     _app_import_root(root)
     from sections.decision_workspace_components import render_command_brief
 
@@ -103,7 +106,7 @@ def _sample_command_brief_html(root: Path) -> str:
             sla="Due soon",
         ),
     )
-    actions = (SimpleNamespace(label="Load Security Evidence", cta="Load Security Evidence"),)
+    actions = (SimpleNamespace(label=f"Load {section} Evidence", cta=f"Load {section} Evidence"),)
     trust = SimpleNamespace(
         mode_label="Packet",
         freshness_label="Updated 8m ago",
@@ -116,9 +119,11 @@ def _sample_command_brief_html(root: Path) -> str:
         SimpleNamespace(source_key="SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY", source_object="LOGIN_HISTORY"),
     )
     model = SimpleNamespace(
-        section="Security Monitoring",
+        section=section,
         workflow="Overview",
         state="Watch",
+        state_token="watch",
+        headline=f"{section} is inside the current action threshold.",
         summary="Packet-backed first paint. Evidence loads on request.",
         metric_cells=metric_cells,
         findings=findings,
@@ -127,6 +132,77 @@ def _sample_command_brief_html(root: Path) -> str:
         source_rows=source_rows,
     )
     return render_command_brief(model)
+
+
+def _section_layout_rows(root: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for section in PRIMARY_SECTION_FILES:
+        html = _sample_command_brief_html(root, section)
+        command_brief_count = html.count("ow-kit-command-brief")
+        metric_count = html.count("ow-kit-metric-card")
+        raw_token_count = _forbidden_count(html)
+        old_board_marker_count = sum(
+            html.count(marker)
+            for marker in (
+                "ow-decision-hero",
+                "ow-command-deck",
+                "ow-watch-floor",
+                "ow-lane-board",
+                "ow-launchpad",
+            )
+        )
+        unavailable_wall_count = max(0, html.lower().count("summary unavailable") - 1)
+        diagnostic_card_count = html.lower().count("diagnostic card")
+        command_brief_present = command_brief_count == 1
+        metric_row_present = "ow-kit-metric-row" in html and 3 <= metric_count <= 5
+        attention_present = "What needs attention" in html and "ow-kit-signal-panel" in html
+        changed_present = "What changed" in html and "ow-kit-change-panel" in html
+        action_present = "What to do next" in html and "ow-kit-action-panel" in html
+        evidence_cta_present = "Load " in html and "Evidence" in html
+        data_trust_present = "Data Trust" in html and "ow-kit-data-trust" in html
+        passed = all(
+            (
+                command_brief_present,
+                metric_row_present,
+                attention_present,
+                changed_present,
+                action_present,
+                evidence_cta_present,
+                data_trust_present,
+                raw_token_count == 0,
+                old_board_marker_count == 0,
+                unavailable_wall_count == 0,
+                diagnostic_card_count == 0,
+            )
+        )
+        rows.append(
+            {
+                "section": section,
+                "workflow": "Overview",
+                "command_brief_present": command_brief_present,
+                "command_brief_count": command_brief_count,
+                "metric_row_present": metric_row_present,
+                "metric_count": metric_count,
+                "attention_panel_present": attention_present,
+                "change_panel_present": changed_present,
+                "action_panel_present": action_present,
+                "evidence_cta_present": evidence_cta_present,
+                "data_trust_present": data_trust_present,
+                "old_board_marker_count": old_board_marker_count,
+                "raw_source_token_count": raw_token_count,
+                "unavailable_wall_count": unavailable_wall_count,
+                "diagnostic_card_count": diagnostic_card_count,
+                "action_like_count": html.count("ow-kit-action-row"),
+                "clicked_action_count": 0,
+                "first_paint_query_count": 0,
+                "passed": passed,
+                "failure_reason": ""
+                if passed
+                else "Section CommandBrief sample is missing required UI-kit layout pieces or contains daily-unsafe markers.",
+                "raw_sql_included": False,
+            }
+        )
+    return rows
 
 
 def _forbidden_count(text: str) -> int:
@@ -198,6 +274,7 @@ def build_ui_kit_alignment_results(root: Path | str = ".") -> dict[str, Any]:
             }
         )
 
+    section_layout_rows = _section_layout_rows(root_path)
     sample_html = _sample_command_brief_html(root_path)
     raw_token_count = _forbidden_count(sample_html)
     source_footer_safe = all(
@@ -207,7 +284,7 @@ def build_ui_kit_alignment_results(root: Path | str = ".") -> dict[str, Any]:
     active_surface_source = renderer_source + "".join(_read(root_path, rel) for rel in PRIMARY_SECTION_FILES.values())
     old_marker_count = sum(
         marker in active_surface_source
-        for marker in ("ow-command-deck", "ow-watch-floor", "ow-lane-board", "ow-launchpad")
+        for marker in ("ow-decision-hero", "ow-command-deck", "ow-watch-floor", "ow-lane-board", "ow-launchpad")
     )
     chart_style_present = all(
         token in component_source or token in theme_source
@@ -215,8 +292,9 @@ def build_ui_kit_alignment_results(root: Path | str = ".") -> dict[str, Any]:
     )
     renderer_uses_components = all(
         token in renderer_source
-        for token in ("_kit_metric_row", "_kit_signal_panel", "_kit_data_trust_footer")
+        for token in ("render_command_brief as _kit_command_brief", "_kit_command_brief(")
     )
+    renderer_uses_single_command_brief = renderer_uses_components and "ow-decision-hero" not in renderer_source
     daily_source_mapping_present = all(
         token in display_safety_source
         for token in ("Refresh-backed", "Evidence cache", "Deep diagnostics", "Packet")
@@ -238,8 +316,12 @@ def build_ui_kit_alignment_results(root: Path | str = ".") -> dict[str, Any]:
     for row in component_rows + section_rows:
         if not row["passed"]:
             failures.append(row)
+    for row in section_layout_rows:
+        if not row["passed"]:
+            failures.append(row)
     checks = {
         "renderer_uses_components": renderer_uses_components,
+        "renderer_uses_single_command_brief": renderer_uses_single_command_brief,
         "source_footer_safe": source_footer_safe,
         "daily_source_mapping_present": daily_source_mapping_present,
         "shell_uses_source_scrubber": shell_uses_source_scrubber,
@@ -280,7 +362,9 @@ def build_ui_kit_alignment_results(root: Path | str = ".") -> dict[str, Any]:
         "failures": failures,
         "component_rows": component_rows,
         "section_rows": section_rows,
+        "section_layout_rows": section_layout_rows,
         "command_brief_surface_count": sum(1 for row in section_rows if row["command_brief_first_paint"]),
+        "section_layout_passed_count": sum(1 for row in section_layout_rows if row["passed"]),
         "primary_section_count": len(PRIMARY_SECTION_FILES),
         "source_footer_leak_count": 0 if source_footer_safe and raw_token_count == 0 else raw_token_count or 1,
         "old_board_marker_count": old_marker_count,
@@ -288,8 +372,31 @@ def build_ui_kit_alignment_results(root: Path | str = ".") -> dict[str, Any]:
         "credential_tile_rendered": credential_tile_rendered,
         "cortex_efficiency_rendered": cortex_efficiency_rendered,
         "renderer_uses_components": renderer_uses_components,
+        "renderer_uses_single_command_brief": renderer_uses_single_command_brief,
         "chart_style_present": chart_style_present,
         "sample_command_brief_html": sample_html,
+        "raw_sql_included": False,
+    }
+
+
+def build_section_layout_contract_results(root: Path | str = ".") -> dict[str, Any]:
+    root_path = Path(root).resolve()
+    rows = _section_layout_rows(root_path)
+    failures = [row for row in rows if not row["passed"]]
+    return {
+        "source": "section_layout_contract_results",
+        "proof_source": "streamlit_component_contract",
+        "generated_at": _now(),
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "section_rows": rows,
+        "section_count": len(rows),
+        "command_brief_count": sum(1 for row in rows if row["command_brief_present"]),
+        "old_board_marker_count": sum(int(row["old_board_marker_count"]) for row in rows),
+        "raw_source_token_count": sum(int(row["raw_source_token_count"]) for row in rows),
+        "diagnostic_card_count": sum(int(row["diagnostic_card_count"]) for row in rows),
+        "unavailable_wall_count": sum(int(row["unavailable_wall_count"]) for row in rows),
         "raw_sql_included": False,
     }
 
@@ -311,6 +418,28 @@ def evaluate_ui_kit_alignment_gate(payload: Mapping[str, Any]) -> dict[str, Any]
         "evidence_autoload_violation_count": payload.get("evidence_autoload_violation_count", 0),
         "credential_tile_rendered": bool(payload.get("credential_tile_rendered")),
         "cortex_efficiency_rendered": bool(payload.get("cortex_efficiency_rendered")),
+        "renderer_uses_single_command_brief": bool(payload.get("renderer_uses_single_command_brief")),
+        "section_layout_passed_count": payload.get("section_layout_passed_count", 0),
+        "raw_sql_included": False,
+    }
+
+
+def evaluate_section_layout_contract_gate(payload: Mapping[str, Any]) -> dict[str, Any]:
+    failures = list(payload.get("failures") or [])
+    passed = bool(payload.get("passed")) and not failures
+    return {
+        "source": "section_layout_contract_gate_results",
+        "proof_source": payload.get("proof_source") or "streamlit_component_contract",
+        "generated_at": _now(),
+        "passed": passed,
+        "failure_count": len(failures),
+        "failures": failures,
+        "section_count": payload.get("section_count", 0),
+        "command_brief_count": payload.get("command_brief_count", 0),
+        "old_board_marker_count": payload.get("old_board_marker_count", 0),
+        "raw_source_token_count": payload.get("raw_source_token_count", 0),
+        "diagnostic_card_count": payload.get("diagnostic_card_count", 0),
+        "unavailable_wall_count": payload.get("unavailable_wall_count", 0),
         "raw_sql_included": False,
     }
 
@@ -319,9 +448,13 @@ def write_ui_kit_alignment_artifacts(root: Path | str = ".") -> dict[str, Any]:
     root_path = Path(root).resolve()
     results = build_ui_kit_alignment_results(root_path)
     gate = evaluate_ui_kit_alignment_gate(results)
+    section_layout = build_section_layout_contract_results(root_path)
+    section_layout_gate = evaluate_section_layout_contract_gate(section_layout)
     artifacts = {
         UI_KIT_ALIGNMENT_REL: results,
         UI_KIT_ALIGNMENT_GATE_REL: gate,
+        SECTION_LAYOUT_CONTRACT_REL: section_layout,
+        SECTION_LAYOUT_CONTRACT_GATE_REL: section_layout_gate,
     }
     for rel, payload in artifacts.items():
         _write_json(root_path / rel, payload)
@@ -336,9 +469,13 @@ def main() -> int:
 __all__ = [
     "PRIMARY_SECTION_FILES",
     "REQUIRED_COMPONENTS",
+    "SECTION_LAYOUT_CONTRACT_GATE_REL",
+    "SECTION_LAYOUT_CONTRACT_REL",
     "UI_KIT_ALIGNMENT_GATE_REL",
     "UI_KIT_ALIGNMENT_REL",
+    "build_section_layout_contract_results",
     "build_ui_kit_alignment_results",
+    "evaluate_section_layout_contract_gate",
     "evaluate_ui_kit_alignment_gate",
     "main",
     "write_ui_kit_alignment_artifacts",

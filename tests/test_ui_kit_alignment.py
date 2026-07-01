@@ -20,6 +20,18 @@ class UiKitAlignmentTests(unittest.TestCase):
         self.assertEqual(results["old_board_marker_count"], 0)
         self.assertTrue(results["credential_tile_rendered"])
         self.assertTrue(results["cortex_efficiency_rendered"])
+        self.assertTrue(results["renderer_uses_single_command_brief"])
+        self.assertEqual(results["section_layout_passed_count"], len(PRIMARY_SECTION_FILES))
+        for row in results["section_layout_rows"]:
+            self.assertTrue(row["command_brief_present"], row)
+            self.assertTrue(row["metric_row_present"], row)
+            self.assertTrue(row["attention_panel_present"], row)
+            self.assertTrue(row["change_panel_present"], row)
+            self.assertTrue(row["action_panel_present"], row)
+            self.assertTrue(row["evidence_cta_present"], row)
+            self.assertTrue(row["data_trust_present"], row)
+            self.assertEqual(row["raw_source_token_count"], 0)
+            self.assertEqual(row["old_board_marker_count"], 0)
 
     def test_alignment_gate_has_launch_summary_fields(self):
         from tools.contracts.ui_kit_alignment import build_ui_kit_alignment_results, evaluate_ui_kit_alignment_gate
@@ -30,15 +42,38 @@ class UiKitAlignmentTests(unittest.TestCase):
         self.assertIn("command_brief_surface_count", gate)
         self.assertIn("source_footer_leak_count", gate)
         self.assertIn("evidence_autoload_violation_count", gate)
+        self.assertTrue(gate["renderer_uses_single_command_brief"])
+        self.assertIn("section_layout_passed_count", gate)
         self.assertFalse(gate["raw_sql_included"])
+
+    def test_section_layout_contract_has_launch_gate(self):
+        from tools.contracts.ui_kit_alignment import (
+            build_section_layout_contract_results,
+            evaluate_section_layout_contract_gate,
+        )
+
+        payload = build_section_layout_contract_results(ROOT)
+        gate = evaluate_section_layout_contract_gate(payload)
+
+        self.assertTrue(payload["passed"], payload["failures"])
+        self.assertTrue(gate["passed"], gate["failures"])
+        self.assertEqual(gate["command_brief_count"], len(payload["section_rows"]))
+        self.assertEqual(gate["raw_source_token_count"], 0)
 
     def test_launch_readiness_requires_ui_kit_gate(self):
         from tools.contracts.launch_readiness import REQUIRED_LAUNCH_READINESS_ARTIFACTS
         from tools.contracts.full_app_gauntlet import REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS
-        from tools.contracts.ui_kit_alignment import UI_KIT_ALIGNMENT_GATE_REL, UI_KIT_ALIGNMENT_REL
+        from tools.contracts.ui_kit_alignment import (
+            SECTION_LAYOUT_CONTRACT_GATE_REL,
+            SECTION_LAYOUT_CONTRACT_REL,
+            UI_KIT_ALIGNMENT_GATE_REL,
+            UI_KIT_ALIGNMENT_REL,
+        )
 
         self.assertIn(UI_KIT_ALIGNMENT_GATE_REL, REQUIRED_LAUNCH_READINESS_ARTIFACTS)
+        self.assertIn(SECTION_LAYOUT_CONTRACT_GATE_REL, REQUIRED_LAUNCH_READINESS_ARTIFACTS)
         self.assertIn(UI_KIT_ALIGNMENT_REL, REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS)
+        self.assertIn(SECTION_LAYOUT_CONTRACT_REL, REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS)
 
 
 if __name__ == "__main__":

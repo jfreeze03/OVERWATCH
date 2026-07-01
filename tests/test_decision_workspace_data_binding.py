@@ -1812,11 +1812,11 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         renderer = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
         marker_idx = renderer.index("ow-decision-workspace-marker")
         breadcrumb_idx = renderer.index("st.html(_breadcrumb_html(parts))")
-        hero_idx = renderer.index("ow-decision-hero ow-decision-hero-copy-only")
-        trust_idx = renderer.index("_render_model_trust_footer(model)")
+        command_idx = renderer.index("_kit_command_brief(")
+        actions_idx = renderer.index("_render_workspace_actions(model, controls")
         self.assertLess(marker_idx, breadcrumb_idx)
-        self.assertLess(breadcrumb_idx, hero_idx)
-        self.assertLess(hero_idx, trust_idx)
+        self.assertLess(breadcrumb_idx, command_idx)
+        self.assertLess(command_idx, actions_idx)
         self.assertNotIn('st.markdown("</section>"', renderer)
         self.assertNotIn('<section class="ow-decision-workspace"', renderer)
         self.assertIn('role="region"', renderer)
@@ -1854,7 +1854,8 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
     def test_refresh_lives_in_hero_contract_without_detached_refresh_class(self):
         renderer = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
         self.assertNotIn("ow-decision-hero-refresh-control", renderer)
-        self.assertIn("ow-decision-refresh-inline", renderer)
+        self.assertNotIn("ow-decision-refresh-inline", renderer)
+        self.assertIn("_kit_command_brief(", renderer)
         self.assertIn("controls.refresh_packet()", renderer)
 
     def test_fallback_panel_keeps_packet_refresh_action(self):

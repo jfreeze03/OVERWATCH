@@ -75,16 +75,21 @@ jobs:
         run: |
           python -m unittest \
             tests.test_full_app_launch_gauntlet \
+            tests.test_full_app_release_sweep \
             tests.test_deterministic_streamlit_render \
             tests.test_browser_smoke_runner \
             tests.test_rendered_ui_leak_scan \
             tests.test_render_provenance_reconciliation \
             tests.test_action_click_gauntlet \
             tests.test_export_download_gauntlet \
+            tests.test_settings_live_feature_gauntlet \
             tests.test_sql_value_inventory \
             tests.test_sql_dead_code_scan \
             tests.test_user_stress_test \
             tests.test_source_internal_leak_scan
+
+      - name: Run full app release sweep tests
+        run: python -m unittest tests.test_full_app_release_sweep tests.test_settings_live_feature_gauntlet
 
       - name: Run launch readiness tests
         run: python -m unittest tests.test_launch_readiness

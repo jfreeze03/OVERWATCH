@@ -35,3 +35,15 @@ class SourceInternalLeakScanTests(unittest.TestCase):
 
         self.assertTrue(result["passed"], result)
 
+    def test_ui_kit_demo_copy_in_daily_source_fails(self):
+        from tools.contracts.source_internal_leak_scan import build_source_internal_leak_scan
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app = root / ".overwatch_final"
+            app.mkdir()
+            (app / "layout.py").write_text("st.caption('No Snowflake connection RoleGate demo role')\n", encoding="utf-8")
+            result = build_source_internal_leak_scan(root, {})
+
+        self.assertFalse(result["passed"])
+        self.assertGreater(result["source_internal_leak_count"], 0)

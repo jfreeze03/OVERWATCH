@@ -12,7 +12,7 @@ import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 import sys
 
 
@@ -457,8 +457,8 @@ def build_ui_kit_alignment_results(root: Path | str = ".") -> dict[str, Any]:
         "sample_raw_token_count": raw_token_count,
         "old_board_marker_count": old_marker_count,
     }
-    for name, passed in checks.items():
-        if isinstance(passed, bool) and not passed:
+    for name, check_passed in checks.items():
+        if isinstance(check_passed, bool) and not check_passed:
             failures.append({"check": name, "failure_reason": "UI-kit alignment check failed.", "raw_sql_included": False})
     if raw_token_count:
         failures.append(
@@ -510,7 +510,7 @@ def build_ui_kit_alignment_results(root: Path | str = ".") -> dict[str, Any]:
 
 def _as_int(value: object, default: int = 0) -> int:
     try:
-        return int(value or 0)
+        return int(cast(Any, value) or 0)
     except (TypeError, ValueError):
         return default
 

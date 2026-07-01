@@ -48,6 +48,11 @@ FORBIDDEN_DAILY_TOKENS = (
     "DATABASE, USER, ROLE, AND QUERY COST VIEWS ARE ALLOCATED ESTIMATES",
     "Summary uses already-loaded/session data",
     "details require explicit Cortex load",
+    "No Snowflake connection",
+    "no Snowflake connection",
+    "demo role",
+    "RoleGate",
+    "Lock button",
 )
 
 PRIMARY_ROUTE_BUDGET = {

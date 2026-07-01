@@ -1,0 +1,181 @@
+from pathlib import Path
+import sys
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
+PRIMARY_ALIASES = {
+    "Executive Landing": "Executive Overview",
+    "DBA Control Room": "Morning Cockpit",
+    "Alert Center": "Active Alerts",
+    "Cost & Contract": "Cost Overview",
+    "Workload Operations": "Workload Overview",
+    "Security Monitoring": "Security Overview",
+}
+
+
+def _command_brief_html(section: str) -> str:
+    return (
+        f"<section class='ow-decision-workspace-marker'>"
+        f"<div class='ow-kit-command-brief'><h1>{section}</h1>"
+        "<p>Packet-backed first paint. Evidence loads on request.</p></div></section>"
+    )
+
+
+def _passing_payload() -> dict:
+    view_rows = []
+    first_paint_rows = []
+    for section, workflow in PRIMARY_ALIASES.items():
+        view_rows.append(
+            {
+                "section": section,
+                "workflow": workflow,
+                "rendered": True,
+                "html_fragment": _command_brief_html(section),
+                "old_board_marker_count": 0,
+                "diagnostic_card_count": 0,
+                "passed": True,
+            }
+        )
+        first_paint_rows.append(
+            {
+                "section": section,
+                "workflow": workflow,
+                "cold_first_paint_packet_query_count": 1,
+                "warm_first_paint_query_count": 0,
+                "evidence_query_count": 0,
+                "account_usage_count": 0,
+                "direct_sql_count": 0,
+                "session_open_count": 0,
+                "elapsed_ms": 100,
+                "passed": True,
+            }
+        )
+
+    fragment_rows = [
+        {"section": "Query Search", "workflow": "No click", "rendered": True, "text": "Query Search"},
+        {"section": "Query Search", "workflow": "Explicit search", "rendered": True, "text": "Exact query result"},
+        {"section": "Advanced Scope", "workflow": "Active filters", "rendered": True, "text": "Advanced Scope"},
+        {"section": "Settings", "workflow": "Default", "rendered": True, "text": "Cost estimates use configured credit rates."},
+        {
+            "section": "Settings/Admin Setup Health",
+            "workflow": "Setup Health",
+            "admin_only": True,
+            "rendered": True,
+            "text": "Setup Health",
+        },
+        {"section": "Packet Missing", "workflow": "Fallback", "rendered": True, "text": "Summary pending"},
+        {"section": "Packet Closest Fallback", "workflow": "Fallback", "rendered": True, "text": "Latest available"},
+        {"section": "Snowflake Unavailable", "workflow": "Fallback", "rendered": True, "text": "Snowflake unavailable"},
+        {"section": "Permission Denied", "workflow": "Fallback", "rendered": True, "text": "Permission needed"},
+        {"section": "Targeted Evidence", "workflow": "Route action", "rendered": True, "text": "Targeted route"},
+        {"section": "Targeted Evidence", "workflow": "Evidence action", "rendered": True, "text": "Evidence action"},
+        {"section": "Cost Workbench", "workflow": "Explicit action", "rendered": True, "text": "Cost workbench"},
+    ]
+
+    passed_gate = {"passed": True, "failure_count": 0, "raw_sql_included": False}
+    return {
+        "artifacts/full_app_validation/view_results.json": view_rows,
+        "artifacts/full_app_validation/rendered_fragments.json": fragment_rows,
+        "artifacts/full_app_validation/first_paint_performance_results.json": {
+            "passed": True,
+            "rows": first_paint_rows,
+            "failure_count": 0,
+        },
+        "artifacts/launch_readiness/action_click_gate_results.json": passed_gate,
+        "artifacts/launch_readiness/export_download_gate_results.json": passed_gate,
+        "artifacts/launch_readiness/settings_live_feature_gate_results.json": {
+            **passed_gate,
+            "settings_failure_count": 0,
+            "live_feature_failure_count": 0,
+        },
+        "artifacts/launch_readiness/performance_budget_gate_results.json": passed_gate,
+        "artifacts/launch_readiness/user_stress_gate_results.json": passed_gate,
+        "artifacts/launch_readiness/sql_cleanup_gate_results.json": passed_gate,
+        "artifacts/launch_readiness/delete_first_cleanup_gate_results.json": passed_gate,
+        "artifacts/launch_readiness/rendered_ui_leak_gate_results.json": passed_gate,
+        "artifacts/launch_readiness/security_credential_render_gate_results.json": passed_gate,
+        "artifacts/launch_readiness/security_credential_evidence_gate_results.json": passed_gate,
+        "artifacts/launch_readiness/security_credential_export_gate_results.json": passed_gate,
+        "artifacts/launch_readiness/user_display_surface_gate_results.json": passed_gate,
+        "artifacts/launch_readiness/cortex_token_efficiency_gate_results.json": {
+            **passed_gate,
+            "cortex_token_metric_count": 7,
+        },
+    }
+
+
+class FullAppReleaseSweepTests(unittest.TestCase):
+    def test_passing_payload_covers_all_required_surfaces(self):
+        from tools.contracts.full_app_release_sweep import (
+            REQUIRED_RELEASE_SURFACES,
+            build_full_app_release_sweep,
+            evaluate_full_app_release_sweep_gate,
+        )
+
+        results, failures = build_full_app_release_sweep(_passing_payload())
+        gate = evaluate_full_app_release_sweep_gate(results)
+
+        self.assertTrue(results["passed"], failures)
+        self.assertTrue(gate["passed"], gate)
+        self.assertGreaterEqual(results["surface_count"], len(REQUIRED_RELEASE_SURFACES))
+        for row in results["rows"]:
+            for field in (
+                "area",
+                "section",
+                "workflow",
+                "source_artifact",
+                "rendered",
+                "clicked",
+                "exported",
+                "passed",
+                "failure_reason",
+            ):
+                self.assertIn(field, row)
+
+    def test_missing_required_surface_fails(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        payload = _passing_payload()
+        payload["artifacts/full_app_validation/rendered_fragments.json"] = [
+            row
+            for row in payload["artifacts/full_app_validation/rendered_fragments.json"]
+            if row["section"] != "Query Search" or row["workflow"] != "Explicit search"
+        ]
+
+        results, _failures = build_full_app_release_sweep(payload)
+
+        self.assertFalse(results["passed"])
+        self.assertTrue(any(row["section"] == "Query Search" for row in results["failures"]))
+
+    def test_raw_source_token_in_daily_surface_fails(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        payload = _passing_payload()
+        payload["artifacts/full_app_validation/view_results.json"][0]["html_fragment"] += " ACCOUNT_USAGE"
+
+        results, _failures = build_full_app_release_sweep(payload)
+
+        self.assertFalse(results["passed"])
+        self.assertGreater(results["raw_source_leak_count"], 0)
+
+    def test_first_paint_over_budget_fails(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        payload = _passing_payload()
+        payload["artifacts/full_app_validation/first_paint_performance_results.json"]["rows"][0][
+            "cold_first_paint_packet_query_count"
+        ] = 2
+
+        results, _failures = build_full_app_release_sweep(payload)
+
+        self.assertFalse(results["passed"])
+        self.assertGreater(results["first_paint_failure_count"], 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

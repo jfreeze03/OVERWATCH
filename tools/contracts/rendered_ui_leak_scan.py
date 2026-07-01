@@ -54,6 +54,11 @@ EXTRA_FORBIDDEN_TOKENS = (
     "setup validation row",
     "procedure name",
     "stack trace",
+    "No Snowflake connection",
+    "no Snowflake connection",
+    "demo role",
+    "RoleGate",
+    "Lock button",
     "DATABASE, USER, ROLE, AND QUERY COST VIEWS ARE ALLOCATED ESTIMATES",
 )
 

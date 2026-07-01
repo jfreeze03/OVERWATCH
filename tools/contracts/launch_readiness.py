@@ -107,6 +107,13 @@ from tools.contracts.full_app_launch_gauntlet import (
     SUMMARY_BOARD_VISUAL_GATE_REL,
     evaluate_simple_gate,
 )
+from tools.contracts.full_app_release_sweep import (
+    FULL_APP_RELEASE_FAILURES_REL,
+    FULL_APP_RELEASE_SWEEP_GATE_REL,
+    FULL_APP_RELEASE_SWEEP_RESULTS_REL,
+    evaluate_full_app_release_sweep_gate,
+    write_full_app_release_sweep_artifacts,
+)
 from tools.contracts.rendered_ui_leak_scan import (
     DAILY_WORDING_GATE_REL,
     RENDERED_UI_LEAK_GATE_REL,
@@ -177,6 +184,12 @@ from tools.contracts.user_stress_test import (
     USER_STRESS_RESULTS_REL,
     evaluate_user_stress_gate,
 )
+from tools.contracts.settings_live_feature_gauntlet import (
+    SETTINGS_LIVE_FEATURE_GATE_REL,
+    SETTINGS_LIVE_FEATURE_RESULTS_REL,
+    evaluate_settings_live_feature_gate,
+    write_settings_live_feature_gauntlet_artifacts,
+)
 from tools.contracts.ui_kit_alignment import (
     SECTION_LAYOUT_CONTRACT_GATE_REL,
     SOURCE_SAFE_FOOTER_GATE_REL,
@@ -225,6 +238,8 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/packet_availability_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/live_cost_reconciliation_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/daily_wording_gate_results.json",
+    FULL_APP_RELEASE_SWEEP_GATE_REL,
+    SETTINGS_LIVE_FEATURE_GATE_REL,
     FULL_APP_LAUNCH_GATE_REL,
     DETERMINISTIC_RENDER_GATE_REL,
     BROWSER_SMOKE_GATE_REL,
@@ -278,6 +293,9 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/metric_semantic_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/query_budget_gate_results.json",
     PERFORMANCE_BUDGET_RESULTS_REL,
+    FULL_APP_RELEASE_SWEEP_RESULTS_REL,
+    FULL_APP_RELEASE_FAILURES_REL,
+    SETTINGS_LIVE_FEATURE_RESULTS_REL,
     f"{LAUNCH_READINESS_DIR}/workload_formula_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/cost_advisor_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/date_widget_regression_results.json",
@@ -810,6 +828,7 @@ def _workflow_upload_review(root: Path) -> dict[str, Any]:
     missing_upload_paths = sorted(path for path in CI_UPLOAD_PATHS if path not in text)
     required_steps = {
         "python -m unittest tests.test_full_app_gauntlet",
+        "python -m unittest tests.test_full_app_release_sweep tests.test_settings_live_feature_gauntlet",
         "python -m unittest tests.test_launch_readiness",
         "python -m unittest tests.test_encoding_hygiene",
         "python -m unittest tests.test_cost_db_formula_authority tests.test_cost_formula_authority tests.test_cortex_service_types tests.test_formula_end_to_end_validation tests.test_formula_packet_sql tests.test_packet_schema_upgrade",
@@ -4678,6 +4697,8 @@ def _release_gate_matrix(
     packet_availability_gate = _as_mapping(launch_artifacts.get("packet_availability_gate_results"))
     live_cost_gate = _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results"))
     daily_wording_gate = _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
+    full_app_release_sweep_gate = _as_mapping(launch_artifacts.get("full_app_release_sweep_gate_results"))
+    settings_live_feature_gate = _as_mapping(launch_artifacts.get("settings_live_feature_gate_results"))
     full_app_launch_gate = _as_mapping(launch_artifacts.get("full_app_launch_gate_results"))
     deterministic_render_gate = _as_mapping(launch_artifacts.get("deterministic_render_gate_results"))
     browser_smoke_gate = _as_mapping(launch_artifacts.get("browser_smoke_gate_results"))
@@ -4770,6 +4791,22 @@ def _release_gate_matrix(
             "artifact": FULL_APP_LAUNCH_GATE_REL,
             "passed": bool(full_app_launch_gate.get("passed")),
             "failure_reason": "" if full_app_launch_gate.get("passed") else "Launch gauntlet found failed sections, actions, fallback states, or runtime checks.",
+        },
+        {
+            "gate": "full_app_release_sweep",
+            "artifact": FULL_APP_RELEASE_SWEEP_GATE_REL,
+            "passed": bool(full_app_release_sweep_gate.get("passed")),
+            "failure_reason": ""
+            if full_app_release_sweep_gate.get("passed")
+            else "Full app release sweep found missing surfaces, leaks, click/export gaps, or first-paint budget violations.",
+        },
+        {
+            "gate": "settings_live_feature_gauntlet",
+            "artifact": SETTINGS_LIVE_FEATURE_GATE_REL,
+            "passed": bool(settings_live_feature_gate.get("passed")),
+            "failure_reason": ""
+            if settings_live_feature_gate.get("passed")
+            else "Settings or live features are missing click, admin gating, timeout, or sanitized error proof.",
         },
         {
             "gate": "deterministic_streamlit_render",
@@ -5470,6 +5507,10 @@ def evaluate_launch_readiness(
         "live_cost_reconciliation_gate_results": _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results")),
         "daily_wording_gate_results": _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
         or _daily_wording_gate_results(payloads),
+        "full_app_release_sweep_gate_results": _as_mapping(launch_artifacts.get("full_app_release_sweep_gate_results"))
+        or evaluate_full_app_release_sweep_gate(_as_mapping(payloads.get(FULL_APP_RELEASE_SWEEP_RESULTS_REL))),
+        "settings_live_feature_gate_results": _as_mapping(launch_artifacts.get("settings_live_feature_gate_results"))
+        or evaluate_settings_live_feature_gate(_as_mapping(payloads.get(SETTINGS_LIVE_FEATURE_RESULTS_REL))),
         "full_app_launch_gate_results": _as_mapping(launch_artifacts.get("full_app_launch_gate_results"))
         or evaluate_simple_gate(
             _as_mapping(payloads.get(FULL_APP_LAUNCH_RESULTS_REL)),
@@ -5605,6 +5646,8 @@ def evaluate_launch_readiness(
     packet_availability_gate = _as_mapping(launch_artifacts.get("packet_availability_gate_results"))
     live_cost_gate = _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results"))
     daily_wording_gate = _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
+    full_app_release_sweep_gate = _as_mapping(launch_artifacts.get("full_app_release_sweep_gate_results"))
+    settings_live_feature_gate = _as_mapping(launch_artifacts.get("settings_live_feature_gate_results"))
     full_app_launch_gate = _as_mapping(launch_artifacts.get("full_app_launch_gate_results"))
     deterministic_render_gate = _as_mapping(launch_artifacts.get("deterministic_render_gate_results"))
     browser_smoke_gate = _as_mapping(launch_artifacts.get("browser_smoke_gate_results"))
@@ -5713,6 +5756,8 @@ def evaluate_launch_readiness(
         "daily_wording_blocked_count": _as_int(daily_wording_gate.get("blocked_count")),
         "full_app_launch_gauntlet_passed": bool(full_app_launch_gate.get("passed")),
         "full_app_launch_gauntlet_failure_count": _as_int(full_app_launch_gate.get("failure_count")),
+        "full_app_release_sweep_passed": bool(full_app_release_sweep_gate.get("passed")),
+        "full_app_release_sweep_failure_count": _as_int(full_app_release_sweep_gate.get("failure_count")),
         "deterministic_streamlit_render_passed": bool(deterministic_render_gate.get("passed")),
         "deterministic_streamlit_render_failure_count": _as_int(deterministic_render_gate.get("failure_count")),
         "deterministic_streamlit_render_synthetic_count": _as_int(deterministic_render_gate.get("synthetic_fallback_count")),
@@ -5729,39 +5774,78 @@ def evaluate_launch_readiness(
         "render_provenance_reconciliation_failure_count": _as_int(render_provenance_gate.get("failure_count")),
         "render_provenance_reconciliation_surface_count": _as_int(render_provenance_gate.get("surface_count")),
         "rendered_ui_leak_scan_passed": bool(rendered_ui_leak_gate.get("passed")),
-        "diagnostic_leak_count": _as_int(source_leak_gate.get("diagnostic_leak_count"))
-        or _as_int(rendered_ui_leak_gate.get("failure_count")),
-        "internal_wording_leak_count": _as_int(source_leak_gate.get("internal_wording_leak_count"))
-        or _as_int(daily_wording_gate.get("blocked_count")),
-        "raw_sql_leak_count": _as_int(rendered_ui_leak_gate.get("raw_sql_leak_count"))
-        or _as_int(source_leak_gate.get("raw_sql_leak_count")),
+        "diagnostic_leak_count": max(
+            _as_int(source_leak_gate.get("diagnostic_leak_count")),
+            _as_int(rendered_ui_leak_gate.get("failure_count")),
+            _as_int(full_app_release_sweep_gate.get("diagnostic_leak_count")),
+        ),
+        "internal_wording_leak_count": max(
+            _as_int(source_leak_gate.get("internal_wording_leak_count")),
+            _as_int(daily_wording_gate.get("blocked_count")),
+            _as_int(full_app_release_sweep_gate.get("internal_wording_leak_count")),
+        ),
+        "raw_sql_leak_count": max(
+            _as_int(rendered_ui_leak_gate.get("raw_sql_leak_count")),
+            _as_int(source_leak_gate.get("raw_sql_leak_count")),
+            _as_int(full_app_release_sweep_gate.get("raw_source_leak_count")),
+        ),
         "settings_gate_passed": bool(settings_gate.get("passed")),
-        "settings_failure_count": _as_int(settings_gate.get("failure_count")),
+        "settings_failure_count": max(
+            _as_int(settings_gate.get("failure_count")),
+            _as_int(settings_live_feature_gate.get("settings_failure_count")),
+            _as_int(full_app_release_sweep_gate.get("settings_failure_count")),
+        ),
+        "settings_live_feature_gate_passed": bool(settings_live_feature_gate.get("passed")),
         "first_paint_gate_passed": bool(first_paint_gate.get("passed")),
-        "first_paint_failure_count": _as_int(first_paint_gate.get("failure_count")),
+        "first_paint_failure_count": max(
+            _as_int(first_paint_gate.get("failure_count")),
+            _as_int(full_app_release_sweep_gate.get("first_paint_failure_count")),
+        ),
         "credential_first_paint_violation_count": _security_first_paint_violation_count(payloads),
         "packet_fallback_ui_passed": bool(packet_fallback_gate.get("passed")),
         "packet_fallback_ui_failure_count": _as_int(packet_fallback_gate.get("failure_count")),
         "summary_board_visual_contract_passed": bool(summary_visual_gate.get("passed")),
         "summary_board_visual_contract_failure_count": _as_int(summary_visual_gate.get("failure_count")),
         "action_click_gate_passed": bool(action_click_gate.get("passed")),
-        "failed_action_count": _as_int(action_click_gate.get("failure_count")),
+        "failed_action_count": max(
+            _as_int(action_click_gate.get("failure_count")),
+            _as_int(full_app_release_sweep_gate.get("failed_action_count")),
+        ),
         "export_download_gate_passed": bool(export_download_gate.get("passed")),
-        "export_failure_count": _as_int(export_download_gate.get("failure_count")),
+        "export_failure_count": max(
+            _as_int(export_download_gate.get("failure_count")),
+            _as_int(full_app_release_sweep_gate.get("export_failure_count")),
+        ),
         "live_feature_gate_passed": bool(live_feature_gate.get("passed")),
-        "live_feature_failure_count": _as_int(live_feature_gate.get("failure_count")),
+        "live_feature_failure_count": max(
+            _as_int(live_feature_gate.get("failure_count")),
+            _as_int(settings_live_feature_gate.get("live_feature_failure_count")),
+            _as_int(full_app_release_sweep_gate.get("live_feature_failure_count")),
+        ),
         "sql_cleanup_gate_passed": bool(sql_cleanup_gate.get("passed")),
-        "sql_cleanup_failure_count": _as_int(sql_cleanup_gate.get("failure_count")),
+        "sql_cleanup_failure_count": max(
+            _as_int(sql_cleanup_gate.get("failure_count")),
+            _as_int(full_app_release_sweep_gate.get("sql_cleanup_failure_count")),
+        ),
         "metric_source_governance_passed": bool(metric_source_governance_gate.get("passed")),
         "ui_kit_alignment_passed": bool(ui_kit_alignment_gate.get("passed")),
         "ui_kit_command_brief_surface_count": _as_int(ui_kit_alignment_gate.get("command_brief_surface_count")),
         "ui_kit_source_footer_leak_count": _as_int(ui_kit_alignment_gate.get("source_footer_leak_count")),
         "ui_kit_old_board_marker_count": _as_int(ui_kit_alignment_gate.get("old_board_marker_count")),
+        "duplicate_command_brief_count": _as_int(full_app_release_sweep_gate.get("duplicate_command_brief_count")),
+        "old_board_marker_count": max(
+            _as_int(full_app_release_sweep_gate.get("old_board_marker_count")),
+            _as_int(ui_kit_alignment_gate.get("old_board_marker_count")),
+        ),
         "ui_kit_evidence_autoload_violation_count": _as_int(
             ui_kit_alignment_gate.get("evidence_autoload_violation_count")
         ),
         "ui_kit_credential_tile_rendered": bool(ui_kit_alignment_gate.get("credential_tile_rendered")),
         "ui_kit_cortex_efficiency_rendered": bool(ui_kit_alignment_gate.get("cortex_efficiency_rendered")),
+        "credential_tile_rendered": bool(full_app_release_sweep_gate.get("credential_tile_rendered"))
+        or bool(ui_kit_alignment_gate.get("credential_tile_rendered")),
+        "cortex_efficiency_rendered": bool(full_app_release_sweep_gate.get("cortex_efficiency_rendered"))
+        or bool(ui_kit_alignment_gate.get("cortex_efficiency_rendered")),
         "section_layout_contract_passed": bool(section_layout_gate.get("passed")),
         "section_layout_contract_failure_count": _as_int(section_layout_gate.get("failure_count")),
         "section_layout_command_brief_count": _as_int(section_layout_gate.get("command_brief_count")),
@@ -5803,9 +5887,19 @@ def evaluate_launch_readiness(
         "user_display_name_gate_passed": bool(user_display_gate.get("passed")),
         "user_display_name_live_gate_passed": bool(user_display_live_gate.get("passed")),
         "user_display_surface_gate_passed": bool(user_display_surface_gate.get("passed")),
-        "user_id_daily_leak_count": _as_int(user_display_surface_gate.get("user_id_daily_leak_count")),
+        "user_id_daily_leak_count": max(
+            _as_int(user_display_surface_gate.get("user_id_daily_leak_count")),
+            _as_int(full_app_release_sweep_gate.get("user_id_daily_leak_count")),
+        ),
         "cortex_user_label_gate_passed": bool(cortex_user_label_gate.get("passed")),
-        "credential_export_leak_count": _as_int(security_credential_export_gate.get("credential_export_leak_count")),
+        "credential_export_leak_count": max(
+            _as_int(security_credential_export_gate.get("credential_export_leak_count")),
+            _as_int(full_app_release_sweep_gate.get("credential_id_daily_leak_count")),
+        ),
+        "credential_id_daily_leak_count": max(
+            _as_int(security_credential_export_gate.get("credential_export_leak_count")),
+            _as_int(full_app_release_sweep_gate.get("credential_id_daily_leak_count")),
+        ),
         "credential_render_gate_passed": bool(security_credential_render_gate.get("passed")),
         "credential_evidence_gate_passed": bool(security_credential_evidence_gate.get("passed")),
         "credential_first_paint_gate_passed": bool(security_credential_first_paint_gate.get("passed")),
@@ -5822,7 +5916,10 @@ def evaluate_launch_readiness(
         "cortex_token_efficiency_live_passed": bool(cortex_token_efficiency_live_gate.get("live_passed")),
         "cortex_token_efficiency_live_skipped": bool(cortex_token_efficiency_live_gate.get("live_skipped")),
         "user_stress_gate_passed": bool(user_stress_gate.get("passed")),
-        "stress_failure_count": _as_int(user_stress_gate.get("failure_count")),
+        "stress_failure_count": max(
+            _as_int(user_stress_gate.get("failure_count")),
+            _as_int(full_app_release_sweep_gate.get("stress_failure_count")),
+        ),
         "slow_runtime_count": _as_int(user_stress_gate.get("slow_runtime_count")),
         "source_internal_leak_scan_passed": bool(source_leak_gate.get("passed")),
         "source_internal_leak_scan_failure_count": _as_int(source_leak_gate.get("failure_count")),
@@ -6017,6 +6114,8 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     payloads.update(metric_source_governance_artifacts)
     ui_kit_alignment_artifacts = write_ui_kit_alignment_artifacts(root_path)
     payloads.update(ui_kit_alignment_artifacts)
+    settings_live_feature_artifacts = write_settings_live_feature_gauntlet_artifacts(root_path, payloads)
+    payloads.update(settings_live_feature_artifacts)
 
     launch_artifacts: dict[str, Any] = {}
     launch_artifacts["launch_waivers"] = {
@@ -6070,6 +6169,9 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         SECTION_LAYOUT_CONTRACT_GATE_REL
     ]
     launch_artifacts["source_safe_footer_gate_results"] = ui_kit_alignment_artifacts[SOURCE_SAFE_FOOTER_GATE_REL]
+    launch_artifacts["settings_live_feature_gate_results"] = settings_live_feature_artifacts[
+        SETTINGS_LIVE_FEATURE_GATE_REL
+    ]
     for rel, metric_gate_payload in metric_source_governance_artifacts.items():
         if rel in METRIC_FAMILY_GATE_RELS.values():
             launch_artifacts[Path(rel).stem] = metric_gate_payload
@@ -6304,6 +6406,21 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         "failures": _as_list(live_cost_reconciliation_payload.get("failures")),
         "raw_sql_included": False,
     }
+    release_sweep_payloads = {
+        **payloads,
+        **{
+            f"{LAUNCH_READINESS_DIR}/{name}.json": artifact_payload
+            for name, artifact_payload in launch_artifacts.items()
+        },
+    }
+    full_app_release_sweep_artifacts = write_full_app_release_sweep_artifacts(
+        root_path,
+        release_sweep_payloads,
+    )
+    payloads.update(full_app_release_sweep_artifacts)
+    launch_artifacts["full_app_release_sweep_gate_results"] = full_app_release_sweep_artifacts[
+        FULL_APP_RELEASE_SWEEP_GATE_REL
+    ]
     raw_results, raw_failures = _raw_invariant_artifacts(root_path, payloads)
     launch_artifacts["raw_invariant_results"] = raw_results
     launch_artifacts["raw_invariant_failures"] = raw_failures

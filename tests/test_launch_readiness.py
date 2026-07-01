@@ -162,6 +162,9 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(summary["workload_formula_semantics_failure_count"], 0)
         self.assertTrue(summary["query_budget_gate_passed"])
         self.assertEqual(summary["query_budget_gate_failure_count"], 0)
+        self.assertTrue(summary["full_app_release_sweep_passed"])
+        self.assertEqual(summary["full_app_release_sweep_failure_count"], 0)
+        self.assertTrue(summary["settings_live_feature_gate_passed"])
         self.assertTrue(summary["render_provenance_reconciliation_passed"])
         self.assertEqual(summary["render_provenance_reconciliation_failure_count"], 0)
         self.assertGreater(summary["render_provenance_reconciliation_surface_count"], 0)
@@ -175,6 +178,8 @@ class LaunchReadinessTests(unittest.TestCase):
             "profile_gate_failures",
             "raw_invariants",
             "full_app_gauntlet",
+            "full_app_release_sweep",
+            "settings_live_feature_gauntlet",
             "summary_board_first_paint",
             "billing_reconciliation",
             "billing_reconciliation_live",

@@ -45,3 +45,20 @@ class RenderedUiLeakScanTests(unittest.TestCase):
 
         self.assertTrue(results["passed"], failures)
 
+    def test_ui_kit_demo_and_no_connection_copy_fails_daily_scan(self):
+        from tools.contracts.rendered_ui_leak_scan import scan_rendered_ui
+
+        results, failures = scan_rendered_ui(
+            {
+                "artifacts/full_app_validation/view_results.json": [
+                    {
+                        "section": "Executive Landing",
+                        "workflow": "Overview",
+                        "rendered_text": "No Snowflake connection. RoleGate demo role Lock button",
+                    }
+                ]
+            }
+        )
+
+        self.assertFalse(results["passed"])
+        self.assertGreaterEqual(failures["failure_count"], 1)

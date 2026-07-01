@@ -36,6 +36,11 @@ SOURCE_BLOCKED_PHRASES = (
     "lorem",
     "StreamlitAPIException",
     "Traceback",
+    "No Snowflake connection",
+    "no Snowflake connection",
+    "demo role",
+    "RoleGate",
+    "Lock button",
     "DATABASE, USER, ROLE, AND QUERY COST VIEWS ARE ALLOCATED ESTIMATES",
 )
 

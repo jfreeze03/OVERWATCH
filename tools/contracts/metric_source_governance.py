@@ -174,7 +174,7 @@ def build_metric_source_governance_results(root: Path | str = ".") -> dict[str, 
     metric_rows = _load_metric_rows(root_path)
     rows: list[dict[str, Any]] = []
     for index, metric in enumerate(metric_rows, start=1):
-        failures = _row_failures(metric)
+        row_failures = _row_failures(metric)
         rows.append(
             {
                 "row_index": index,
@@ -209,8 +209,8 @@ def build_metric_source_governance_results(root: Path | str = ".") -> dict[str, 
                 "launch_gate": metric.get("launch_gate", ""),
                 "render_surface": metric.get("render_surface", ""),
                 "export_surface": metric.get("export_surface", ""),
-                "passed": not failures,
-                "failure_reason": "; ".join(failures),
+                "passed": not row_failures,
+                "failure_reason": "; ".join(row_failures),
                 "raw_sql_included": False,
             }
         )
@@ -220,9 +220,9 @@ def build_metric_source_governance_results(root: Path | str = ".") -> dict[str, 
     for family_id, gate_rel in METRIC_FAMILY_GATE_RELS.items():
         scoped = [row for row in rows if row["metric_family"] == family_id]
         required_sql_paths = FAMILY_SQL_PATH_IDS.get(family_id, ())
-        failures = [row for row in scoped if not row["passed"]]
+        family_metric_failures = [row for row in scoped if not row["passed"]]
         if not scoped:
-            failures.append(
+            family_metric_failures.append(
                 {
                     "metric_family": family_id,
                     "failure_reason": "missing_metric_family_rows",
@@ -241,15 +241,15 @@ def build_metric_source_governance_results(root: Path | str = ".") -> dict[str, 
                 [row for row in scoped if row["account_usage_source"] and row["first_paint_allowed"]]
             ),
             "required_sql_path_ids": list(required_sql_paths),
-            "passed": not failures,
-            "failure_count": len(failures),
-            "failures": failures,
+            "passed": not family_metric_failures,
+            "failure_count": len(family_metric_failures),
+            "failures": family_metric_failures,
             "raw_sql_included": False,
         }
         family_rows.append(family_row)
-        family_failures.extend(failures)
+        family_failures.extend(family_metric_failures)
 
-    failures = [row for row in rows if not row["passed"]] + family_failures
+    failures: list[dict[str, Any]] = [row for row in rows if not row["passed"]] + family_failures
     return {
         "source": "metric_source_governance_results",
         "generated_at": _now(),

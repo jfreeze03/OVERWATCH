@@ -5,6 +5,7 @@ import streamlit as st
 
 from config import DAY_WINDOW_OPTIONS, DEFAULTS, DEFAULT_DAY_WINDOW
 from performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
+from runtime_state import set_state
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.cost_contract_advisor_panels import (
     _render_account_service_cost_lens,
@@ -405,7 +406,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
             render_escaped_bold_text(title)
             st.caption(_clean_display_text(evidence))
             if st.button(f"Open {workflow}", key=f"cost_contract_next_{idx}_{workflow}", width="stretch"):
-                st.session_state["cost_contract_workflow"] = workflow
+                set_state("cost_contract_workflow", workflow)
                 if workflow == "Cost Explorer":
                     st.session_state["cost_center_view"] = "Cost Explorer"
                     st.session_state["cc_explorer_lens"] = "Warehouse"

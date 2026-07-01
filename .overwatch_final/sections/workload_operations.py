@@ -7,6 +7,7 @@ from importlib import import_module
 import streamlit as st
 
 from performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
+from runtime_state import set_state
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.navigation import apply_section_workflow_navigation
 from sections.shell_helpers import (
@@ -50,7 +51,7 @@ def migrate_legacy_workflow_state(
     legacy_value = st.session_state.pop(legacy_key, None) if remove_legacy else st.session_state.get(legacy_key)
     mapped = mapping.get(str(legacy_value or ""))
     if mapped:
-        st.session_state[target_key] = mapped
+        set_state(target_key, mapped)
 
 
 def render_workflow_module(workflow: str, workflow_modules: Mapping[str, str]) -> None:
@@ -509,23 +510,23 @@ def _normalize_workload_workflow_state() -> None:
     current = str(st.session_state.get("workload_operations_workflow") or "")
     pipeline_focus = PIPELINE_FOCUS_ALIASES.get(current)
     if pipeline_focus:
-        st.session_state[PIPELINE_FOCUS_KEY] = pipeline_focus
+        set_state(PIPELINE_FOCUS_KEY, pipeline_focus)
     mapped = CONSOLIDATED_WORKFLOW_ALIASES.get(current)
     if mapped:
-        st.session_state["workload_operations_workflow"] = mapped
+        set_state("workload_operations_workflow", mapped)
     legacy_focus = str(st.session_state.pop(_LEGACY_TRIAGE_FOCUS_KEY, "") or "")
     existing_pipeline_focus = str(st.session_state.get(PIPELINE_FOCUS_KEY, "") or "")
     if existing_pipeline_focus in PIPELINE_FOCUS_ALIASES:
-        st.session_state[PIPELINE_FOCUS_KEY] = PIPELINE_FOCUS_ALIASES[existing_pipeline_focus]
+        set_state(PIPELINE_FOCUS_KEY, PIPELINE_FOCUS_ALIASES[existing_pipeline_focus])
     focus_workflow = CONSOLIDATED_WORKFLOW_ALIASES.get(legacy_focus)
     if focus_workflow and current not in WORKFLOWS:
-        st.session_state["workload_operations_workflow"] = focus_workflow
+        set_state("workload_operations_workflow", focus_workflow)
 
 
 def _set_workload_workflow(workflow: str, *, pipeline_focus: str = "") -> None:
-    st.session_state["workload_operations_workflow"] = workflow
+    set_state("workload_operations_workflow", workflow)
     if pipeline_focus:
-        st.session_state[PIPELINE_FOCUS_KEY] = pipeline_focus
+        set_state(PIPELINE_FOCUS_KEY, pipeline_focus)
     st.rerun()
 
 
@@ -684,7 +685,7 @@ def render() -> None:
     with with_section_first_paint_entry("Workload Operations", "Entry"):
         _apply_fast_entry_default()
         if st.session_state.get("exceptions_only_mode") and "workload_operations_workflow" not in st.session_state:
-            st.session_state["workload_operations_workflow"] = WORKLOAD_OVERVIEW_WORKFLOW
+            set_state("workload_operations_workflow", WORKLOAD_OVERVIEW_WORKFLOW)
         migrate_legacy_workflow_state(
             "query_workbench_workflow",
             "workload_operations_workflow",
@@ -692,7 +693,7 @@ def render() -> None:
         )
         _normalize_workload_workflow_state()
         if st.session_state.get("workload_operations_workflow") not in WORKFLOWS:
-            st.session_state["workload_operations_workflow"] = WORKLOAD_OVERVIEW_WORKFLOW
+            set_state("workload_operations_workflow", WORKLOAD_OVERVIEW_WORKFLOW)
 
         company = get_active_company()
         environment = get_active_environment()

@@ -406,8 +406,6 @@ def _apply_route_action(action: object, *, finding: object | None, section: str,
         route_key = _action_route_key(action)
         route = COMMAND_BRIEF_ROUTES.get(route_key)
         if route is not None:
-            if route.workflow_key and route.workflow:
-                set_state(route.workflow_key, route.workflow)
             for state_key, state_value in route.state_updates:
                 set_state(state_key, state_value)
         return bool(route_key and apply_command_brief_route(route_key))

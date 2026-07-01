@@ -210,7 +210,7 @@ class CostContractChartTests(unittest.TestCase):
         self.assertEqual(rows["ACCOUNT_BILLED_COST_USD"].tolist(), [7.36, 11.04])
         self.assertEqual(rows.attrs["credit_column"], "DAILY_CREDITS")
 
-    def test_service_distribution_and_cortex_rows_use_same_price(self):
+    def test_service_distribution_uses_account_price_and_cortex_rows_use_ai_price(self):
         from sections import cost_contract_charts
 
         service_rows = pd.DataFrame(
@@ -221,10 +221,10 @@ class CostContractChartTests(unittest.TestCase):
             }
         )
         distribution = cost_contract_charts.build_service_type_distribution_rows(service_rows, 3.68)
-        cortex = cost_contract_charts.build_cortex_ai_daily_spend_rows(service_rows, 3.68)
+        cortex = cost_contract_charts.build_cortex_ai_daily_spend_rows(service_rows, 2.20)
 
         self.assertEqual(float(distribution.loc[distribution["SERVICE_TYPE"] == "CORTEX_AI", "COST_USD"].iloc[0]), 18.4)
-        self.assertEqual(cortex["CORTEX_AI_COST_USD"].tolist(), [7.36, 11.04])
+        self.assertEqual(cortex["CORTEX_AI_COST_USD"].tolist(), [4.4, 6.6])
         self.assertEqual(distribution.attrs["credit_column"], "DAILY_CREDITS")
         self.assertEqual(cortex.attrs["credit_column"], "DAILY_CREDITS")
 
@@ -240,10 +240,10 @@ class CostContractChartTests(unittest.TestCase):
             }
         )
 
-        cortex = cost_contract_charts.build_cortex_ai_daily_spend_rows(service_rows, 3.68)
+        cortex = cost_contract_charts.build_cortex_ai_daily_spend_rows(service_rows, 2.20)
 
         self.assertEqual(cortex["CORTEX_AI_CREDITS"].tolist(), [3.0])
-        self.assertEqual(cortex["CORTEX_AI_COST_USD"].tolist(), [11.04])
+        self.assertEqual(cortex["CORTEX_AI_COST_USD"].tolist(), [6.6])
         self.assertEqual(cortex.attrs["credit_column"], "CORTEX_AI_CREDITS")
 
     def test_warehouse_top_and_weekly_rows_match_compute_plus_cloud(self):

@@ -250,10 +250,12 @@ def summarize_billing_reconciliation(
     warehouse_bridge: pd.DataFrame | None,
     *,
     credit_price: float | None = None,
+    ai_credit_price: float | None = None,
 ) -> dict[str, Any]:
     """Summarize account billed totals and warehouse bridge without double-counting."""
 
     price = float(credit_price if credit_price is not None else DEFAULTS["credit_price"])
+    ai_price = float(ai_credit_price if ai_credit_price is not None else DEFAULTS.get("ai_credit_price", 2.20))
     account_billed = _numeric_sum(account_billing, "CREDITS_BILLED", "DAILY_CREDITS")
     account_used = _numeric_sum(account_billing, "CREDITS_USED")
     account_billed = _first_numeric(account_billing, "ACCOUNT_BILLED_CREDITS") or account_billed
@@ -281,7 +283,7 @@ def summarize_billing_reconciliation(
         "DAILY_SPEND_USD",
     )
     if cortex_cost == 0.0 and cortex_credits:
-        cortex_cost = round(cortex_credits * price, 2)
+        cortex_cost = round(cortex_credits * ai_price, 2)
     warehouse_credits = _numeric_sum(warehouse_bridge, "WAREHOUSE_CREDITS", "DAILY_CREDITS")
     if warehouse_credits == 0.0 and warehouse_bridge is not None and not warehouse_bridge.empty:
         warehouse_credits = _numeric_sum(warehouse_bridge, "CREDITS_USED_COMPUTE") + _numeric_sum(

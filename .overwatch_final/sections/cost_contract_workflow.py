@@ -6,6 +6,7 @@ from collections.abc import Callable
 import streamlit as st
 
 from config import DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT
+from runtime_state import set_state
 from sections.base import lazy_util as _lazy_util
 from sections.cost_contract_contracts import (
     ADVANCED_COST_TOOL_DETAILS,
@@ -48,7 +49,7 @@ def _normalize_cost_contract_workflow_state() -> None:
         st.session_state[_PRESERVE_COST_CENTER_VIEW_KEY] = True
     mapped = LEGACY_COST_WORKFLOW_ALIASES.get(current)
     if mapped:
-        st.session_state["cost_contract_workflow"] = mapped
+        set_state("cost_contract_workflow", mapped)
 
 
 def _apply_cost_workflow_preset(workflow: str) -> None:

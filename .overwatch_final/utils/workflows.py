@@ -312,12 +312,29 @@ def add_cost_companion_columns(df, *, credit_price: float | None = None, max_col
     except Exception:
         return frame
     added = 0
+    explicit_cost_columns = {
+        str(column).upper()
+        for column in frame.columns
+        if str(column).upper() in {
+            "COST",
+            "COST_USD",
+            "AI_COST_USD",
+            "CORTEX_AI_COST_USD",
+            "DAILY_COST_USD",
+            "EST_COST_USD",
+            "ESTIMATED_COST_USD",
+            "TOTAL_COST_USD",
+        }
+    }
     for column in list(frame.columns):
         if added >= int(max_columns or _CREDIT_COST_COMPANION_LIMIT):
             break
-        if not _credit_metric_column(str(column)):
+        column_upper = str(column).upper()
+        if not _credit_metric_column(column_upper):
             continue
-        cost_column = f"{str(column).upper()}_COST_USD"
+        if column_upper in {"CREDITS", "TOTAL_CREDITS", "AI_CREDITS", "TOKEN_CREDITS"} and explicit_cost_columns:
+            continue
+        cost_column = f"{column_upper}_COST_USD"
         if cost_column in frame.columns:
             continue
         values = pd.to_numeric(frame[column], errors="coerce")
@@ -676,6 +693,7 @@ def render_priority_dataframe(
     raw_label: str = "Full detail",
     height: int | None = None,
     column_config: Mapping | None = None,
+    credit_price: float | None = None,
 ) -> None:
     """Show the actionable subset first, with raw detail hidden behind an expander."""
     if df is None or getattr(df, "empty", True):
@@ -815,7 +833,7 @@ def render_priority_dataframe(
         if columns:
             view = view[columns]
     view = prioritize_context_columns(view)
-    view = add_cost_companion_columns(view)
+    view = add_cost_companion_columns(view, credit_price=credit_price)
     display_view = clean_operator_display_text(apply_operator_status_labels(view))
 
     visible_rows = min(len(view), int(max_rows or 25))
@@ -864,10 +882,12 @@ def render_priority_dataframe(
                 if active_column_config:
                     raw_kwargs["column_config"] = active_column_config
                 raw_view = df.drop(columns=[column for column in df.columns if _is_hidden_ui_column(column)], errors="ignore")
+                raw_view = add_cost_companion_columns(
+                    prioritize_context_columns(raw_view),
+                    credit_price=credit_price,
+                )
                 st.dataframe(
-                    clean_operator_display_text(apply_operator_status_labels(
-                        add_cost_companion_columns(prioritize_context_columns(raw_view))
-                    )),
+                    clean_operator_display_text(apply_operator_status_labels(raw_view)),
                     **raw_kwargs,
                 )
 

@@ -160,6 +160,7 @@ class SnowflakeCliValidationOptions:
     environment: str = "ALL"
     window_days: int = 8
     credit_price: float = 3.68
+    ai_credit_price: float = 2.20
     run_fast_refresh: bool = False
     run_full_refresh_dry_run: bool = False
     skip_refresh: bool = False
@@ -624,10 +625,9 @@ flat AS (
   WHERE WINDOW_DAYS = {lookup_window_days}
     {company_filter}
     {env_filter}
-    AND COALESCE(IS_EXACT_SCOPE, TRUE)
   QUALIFY ROW_NUMBER() OVER (
     PARTITION BY UPPER(SECTION_NAME)
-    ORDER BY SNAPSHOT_TS DESC NULLS LAST
+    ORDER BY COALESCE(IS_EXACT_SCOPE, FALSE) DESC, SNAPSHOT_TS DESC NULLS LAST
   ) = 1
 )
 SELECT OBJECT_CONSTRUCT_KEEP_NULL(
@@ -657,7 +657,7 @@ WITH sections AS (
 available AS (
   SELECT SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, SNAPSHOT_TS, LOAD_TS,
          1 AS current_count, 0 AS flat_count, 0 AS last_good_count,
-         COALESCE(IS_ACTIVE, TRUE) AS is_active
+         TRUE AS is_active
   FROM {command_table}
   UNION ALL
   SELECT SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, SNAPSHOT_TS, LOAD_TS,
@@ -762,7 +762,7 @@ SELECT OBJECT_CONSTRUCT_KEEP_NULL(
     ELSE 'warehouse_higher_than_billed'
   END,
   'CORTEX_AI_CREDITS', c.cortex_ai_credits,
-  'CORTEX_AI_COST_USD', c.cortex_ai_credits * {float(options.credit_price)},
+  'CORTEX_AI_COST_USD', c.cortex_ai_credits * {float(options.ai_credit_price)},
   'BILLING_RECONCILIATION_STATUS', CASE WHEN a.account_billed_credits IS NULL THEN 'pending' ELSE 'available' END,
   'BILLING_WINDOW_START', {start_expr},
   'BILLING_WINDOW_END', {end_expr},
@@ -1487,7 +1487,8 @@ def _formula_value_results(
             failure_reasons.append("rendered summary value differs from flat value")
         if field in CREDIT_COLUMN_BY_FIELD and not selected_credit_column:
             failure_reasons.append("selected credit column is missing")
-        if field.endswith("_USD") and options.credit_price <= 0:
+        selected_credit_price = options.ai_credit_price if field == "CORTEX_AI_COST_USD" else options.credit_price
+        if field.endswith("_USD") and selected_credit_price <= 0:
             failure_reasons.append("selected credit price is missing")
         passed = not failure_reasons
         row = _base_row(
@@ -1513,7 +1514,7 @@ def _formula_value_results(
                 "rendered_value": rendered_value,
                 "live_expected_value": live_expected,
                 "selected_credit_column": selected_credit_column,
-                "selected_credit_price": options.credit_price,
+                "selected_credit_price": selected_credit_price,
                 "tolerance": tolerance,
                 "failure_reason": "" if passed else "; ".join(failure_reasons),
                 "raw_sql_included": False,
@@ -1545,6 +1546,7 @@ def _formula_value_results(
         "cost_executive_total_match": total_match,
         "cost_executive_cortex_match": cortex_match,
         "selected_credit_price": options.credit_price,
+        "selected_ai_credit_price": options.ai_credit_price,
         "cost_db_formula_source": "https://github.com/jfreeze03/COST_DB/blob/main/streamlit_app.py",
     }
     return _payload(source="snowflake_cli_formula_value_results", rows=rows, failures=failures, extra=extra)
@@ -1579,7 +1581,8 @@ def _cost_reconciliation_results(formula_payload: Mapping[str, Any], options: Sn
         failure_reasons: list[str] = []
         if not source:
             failure_reasons.append("formula field is missing from CLI formula validation")
-        if field.endswith("_USD") and options.credit_price <= 0:
+        selected_credit_price = options.ai_credit_price if field == "CORTEX_AI_COST_USD" else options.credit_price
+        if field.endswith("_USD") and selected_credit_price <= 0:
             failure_reasons.append("selected credit price is missing")
         if field in {"CLOUD_SERVICES_ADJUSTMENT", "ACCOUNT_CLOUD_SERVICES_ADJUSTMENT"}:
             if not source:
@@ -1613,7 +1616,7 @@ def _cost_reconciliation_results(formula_payload: Mapping[str, Any], options: Sn
                 "packet_value": source.get("packet_value"),
                 "flat_value": source.get("flat_value"),
                 "selected_credit_column": source.get("selected_credit_column", ""),
-                "selected_credit_price": options.credit_price,
+                "selected_credit_price": selected_credit_price,
                 "failure_reason": "" if passed else "; ".join(failure_reasons),
                 "raw_sql_included": False,
             }
@@ -2096,6 +2099,7 @@ def options_from_env() -> SnowflakeCliValidationOptions:
         environment=os.environ.get("OVERWATCH_ENVIRONMENT", "ALL").strip() or "ALL",
         window_days=int(os.environ.get("OVERWATCH_WINDOW_DAYS", "8") or "8"),
         credit_price=float(os.environ.get("OVERWATCH_CREDIT_PRICE", "3.68") or "3.68"),
+        ai_credit_price=float(os.environ.get("OVERWATCH_AI_CREDIT_PRICE", "2.20") or "2.20"),
         run_fast_refresh=os.environ.get("OVERWATCH_RUN_FAST_REFRESH_VALIDATION") == "1",
         run_full_refresh_dry_run=os.environ.get("OVERWATCH_RUN_FULL_REFRESH_DRY_RUN") == "1",
         skip_refresh=os.environ.get("OVERWATCH_SKIP_REFRESH_VALIDATION", "1") == "1",
@@ -2117,6 +2121,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> SnowflakeCliValidationOpti
     parser.add_argument("--environment", default=os.environ.get("OVERWATCH_ENVIRONMENT", "ALL"))
     parser.add_argument("--window-days", type=int, default=int(os.environ.get("OVERWATCH_WINDOW_DAYS", "8") or "8"))
     parser.add_argument("--credit-price", type=float, default=float(os.environ.get("OVERWATCH_CREDIT_PRICE", "3.68") or "3.68"))
+    parser.add_argument("--ai-credit-price", type=float, default=float(os.environ.get("OVERWATCH_AI_CREDIT_PRICE", "2.20") or "2.20"))
     parser.add_argument("--run-fast-refresh", action="store_true")
     parser.add_argument("--run-full-refresh-dry-run", action="store_true")
     parser.add_argument("--skip-refresh", action="store_true")
@@ -2133,6 +2138,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> SnowflakeCliValidationOpti
         environment=args.environment,
         window_days=args.window_days,
         credit_price=args.credit_price,
+        ai_credit_price=args.ai_credit_price,
         run_fast_refresh=args.run_fast_refresh,
         run_full_refresh_dry_run=args.run_full_refresh_dry_run,
         skip_refresh=args.skip_refresh or (not args.run_fast_refresh and not args.run_full_refresh_dry_run),

@@ -44,6 +44,7 @@ GLOBAL_FILTER_CHOICE_SCOPE = "_global_filter_choice_scope"
 GLOBAL_DATE_CLAMP_NOTICE_KEY = "_global_date_clamp_notice_key"
 GLOBAL_DATE_CLAMP_PENDING_WARNING = "_global_date_clamp_pending_warning"
 WIDGET_KEYS_RENDERED_THIS_RUN = "_overwatch_widget_keys_rendered_this_run"
+PENDING_WIDGET_STATE_UPDATES = "_overwatch_pending_widget_state_updates"
 PREV_ACTIVE_COMPANY = "_prev_active_company"
 CURRENT_ROLE = "_overwatch_current_role"
 CURRENT_ROLE_SOURCE = "_overwatch_current_role_source"
@@ -163,7 +164,29 @@ def get_state(key: str, default: Any = None) -> Any:
 
 def set_state(key: str, value: Any) -> None:
     """Set an app-level state key."""
-    st.session_state[key] = value
+    if widget_key_rendered_this_run(key):
+        if st.session_state.get(key) == value:
+            return
+        queue_pending_widget_state_update(key, value)
+        return
+    try:
+        st.session_state[key] = value
+    except Exception as exc:
+        message = str(exc or "")
+        if "cannot be modified after the widget with key" not in message:
+            raise
+        if st.session_state.get(key) == value:
+            return
+        queue_pending_widget_state_update(key, value)
+
+
+def queue_pending_widget_state_update(key: str, value: Any) -> None:
+    """Queue a widget-key update for the next script run."""
+    pending = st.session_state.setdefault(PENDING_WIDGET_STATE_UPDATES, {})
+    if not isinstance(pending, dict):
+        pending = {}
+        st.session_state[PENDING_WIDGET_STATE_UPDATES] = pending
+    pending[str(key)] = value
 
 
 def pop_state(key: str, default: Any = None) -> Any:
@@ -174,6 +197,15 @@ def pop_state(key: str, default: Any = None) -> Any:
 def reset_widget_render_tracking() -> None:
     """Start a fresh widget-render tracking window for the current script run."""
     st.session_state[WIDGET_KEYS_RENDERED_THIS_RUN] = []
+
+
+def apply_pending_widget_state_updates() -> None:
+    """Apply widget-key state updates queued during the previous script run."""
+    pending = st.session_state.pop(PENDING_WIDGET_STATE_UPDATES, {})
+    if not isinstance(pending, dict):
+        return
+    for key, value in pending.items():
+        st.session_state[str(key)] = value
 
 
 def widget_key_rendered_this_run(key: str) -> bool:
@@ -206,6 +238,7 @@ def clear_scoped_state(keys: list[str] | tuple[str, ...]) -> None:
 
 def ensure_startup_state() -> None:
     """Seed shell defaults before any widgets render."""
+    apply_pending_widget_state_updates()
     reset_widget_render_tracking()
     ensure_default_state(ACTIVE_COMPANY, DEFAULT_COMPANY)
     ensure_default_state(LOGGING_ENABLED, False)

@@ -4,6 +4,7 @@ from __future__ import annotations
 import streamlit as st
 
 from config import DEFAULT_DAY_WINDOW
+from runtime_state import set_state
 from sections.cost_center_contracts import COST_EXPLORER_LENSES
 from sections.cost_contract_contracts import (
     LEGACY_COST_ADVANCED_TOOL_ALIASES,
@@ -206,27 +207,27 @@ def render_cost_explorer_lens_pills(active_lens: str) -> str:
 
 
 def set_cost_workflow(workflow: str) -> None:
-    st.session_state["cost_contract_workflow"] = workflow
+    set_state("cost_contract_workflow", workflow)
     if workflow == "Cost Explorer":
-        st.session_state["cost_center_view"] = "Cost Explorer"
+        set_state("cost_center_view", "Cost Explorer")
         if st.session_state.get("cc_explorer_lens") not in COST_EXPLORER_LENSES:
-            st.session_state["cc_explorer_lens"] = "Warehouse"
+            set_state("cc_explorer_lens", "Warehouse")
     st.rerun()
 
 
 def set_cost_lens(lens: str) -> None:
-    st.session_state["cc_explorer_lens"] = lens
+    set_state("cc_explorer_lens", lens)
     st.rerun()
 
 
 def set_cost_action(action: dict[str, object]) -> None:
     workflow = str(action.get("workflow") or "Cost Overview")
     lens = str(action.get("lens") or "")
-    st.session_state["cost_contract_workflow"] = workflow
+    set_state("cost_contract_workflow", workflow)
     if workflow == "Cost Explorer":
-        st.session_state["cost_center_view"] = "Cost Explorer"
+        set_state("cost_center_view", "Cost Explorer")
     if lens:
-        st.session_state["cc_explorer_lens"] = lens
+        set_state("cc_explorer_lens", lens)
     st.rerun()
 
 

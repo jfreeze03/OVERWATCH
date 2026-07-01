@@ -69,6 +69,34 @@ class FormulaPacketSqlTests(unittest.TestCase):
         self.assertFalse(by_check["cortex_formula_uses_canonical_source"]["passed"], result)
         self.assertFalse(result["passed"], result)
 
+    def test_account_billing_without_daily_source_fails(self):
+        from tools.contracts.formula_end_to_end_validation import build_snowflake_formula_static_results
+
+        result = build_snowflake_formula_static_results(
+            ROOT,
+            sql_texts={
+                "setup": """
+                  ACCOUNT_BILLED_CREDITS CREDITS_BILLED
+                  WAREHOUSE_CREDITS CREDITS_USED_COMPUTE CREDITS_USED_CLOUD_SERVICES
+                  SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
+                  0::NUMBER(18,6) AS CREDITS_ADJUSTMENT_CLOUD_SERVICES
+                  FACT_CORTEX_DAILY CORTEX_AI_CREDITS AI_CREDIT_PRICE_USD
+                  SERVICE_OTHER_CREDITS
+                  ACCOUNT_BILLED_CREDITS - WAREHOUSE_CREDITS AS BILLING_BRIDGE_DELTA_CREDITS
+                  SPEND_MOVEMENT_PCT PRIOR_COST_USD BILLING_WINDOW_COMPLETE
+                """,
+                "tables": "",
+                "validation": "",
+                "monolith_setup": "",
+                "monolith_validation": "",
+                "drop": "",
+            },
+        )
+
+        by_check = {row["check_name"]: row for row in result["checks"]}
+        self.assertFalse(by_check["account_billing_uses_daily_billing_source"]["passed"], result)
+        self.assertFalse(result["passed"], result)
+
     def test_clipped_bridge_delta_fails(self):
         from tools.contracts.formula_end_to_end_validation import build_snowflake_formula_static_results
 

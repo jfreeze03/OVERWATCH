@@ -390,6 +390,16 @@ def _advisor_priority(severity: str) -> int:
     return {"High": 0, "Medium": 1, "Low": 2, "Info": 3}.get(str(severity or ""), 9)
 
 
+def _warehouse_advisor_impact_display(row: object) -> str:
+    savings = safe_float(row.get("EST_MONTHLY_SAVINGS_USD")) if hasattr(row, "get") else 0.0
+    value_at_risk = safe_float(row.get("VALUE_AT_RISK_USD")) if hasattr(row, "get") else 0.0
+    if savings > 0:
+        return f"${savings:,.0f}/mo savings"
+    if value_at_risk > 0:
+        return f"${value_at_risk:,.0f}/mo value at risk"
+    return "Pressure evidence captured"
+
+
 def _build_warehouse_advisor_recommendations(
     plan: pd.DataFrame | None,
     posture: pd.DataFrame | None,
@@ -402,9 +412,9 @@ def _build_warehouse_advisor_recommendations(
     columns = [
         "PRIORITY", "WAREHOUSE_NAME", "ADVISOR_TYPE", "RECOMMENDATION",
         "WHY", "CURRENT_SIGNAL", "CURRENT_SETTING", "EST_MONTHLY_COST_BASIS_USD",
-        "MONTHLY_RUN_RATE_USD", "EST_MONTHLY_SAVINGS_USD",
+        "MONTHLY_RUN_RATE_USD", "EST_MONTHLY_SAVINGS_USD", "VALUE_AT_RISK_USD",
         "VERIFIED_MONTHLY_SAVINGS_USD", "SAVINGS_STATUS", "SAVINGS_ASSUMPTION",
-        "SAVINGS_TYPE", "REMOTE_SPILL_GB", "AVG_QUEUE_SEC", "P95_ELAPSED_SEC", "PERFORMANCE_RISK",
+        "SAVINGS_TYPE", "IMPACT_DISPLAY", "REMOTE_SPILL_GB", "AVG_QUEUE_SEC", "P95_ELAPSED_SEC", "PERFORMANCE_RISK",
         "ACTION_POSTURE", "SAFE_NEXT_STEP",
         "ADMIN_WORKFLOW", "VERIFY_NEXT", "VERIFICATION_WINDOW_DAYS", "CONFIDENCE",
         "EXPECTED_VERIFICATION_IMPACT", "DO_NOT_EXECUTE_UNTIL",
@@ -429,6 +439,14 @@ def _build_warehouse_advisor_recommendations(
             or safe_float(normalized.get("MONTHLY_RUN_RATE_USD")),
             2,
         )
+        value_at_risk = safe_float(normalized.get("VALUE_AT_RISK_USD"))
+        pressure_value = max(
+            safe_float(normalized.get("EST_MONTHLY_COST_BASIS_USD")),
+            safe_float(normalized.get("MONTHLY_RUN_RATE_USD")),
+        )
+        if value_at_risk <= 0 and safe_float(normalized.get("EST_MONTHLY_SAVINGS_USD")) <= 0:
+            value_at_risk = pressure_value
+        normalized["VALUE_AT_RISK_USD"] = round(max(0.0, value_at_risk), 2)
         normalized["REMOTE_SPILL_GB"] = round(safe_float(normalized.get("REMOTE_SPILL_GB")), 2)
         normalized["AVG_QUEUE_SEC"] = round(safe_float(normalized.get("AVG_QUEUE_SEC")), 2)
         normalized["P95_ELAPSED_SEC"] = round(safe_float(normalized.get("P95_ELAPSED_SEC")), 2)
@@ -441,6 +459,7 @@ def _build_warehouse_advisor_recommendations(
         normalized["ACTION_POSTURE"] = normalized.get("ACTION_POSTURE") or (
             "Guarded admin change candidate" if normalized["EST_MONTHLY_SAVINGS_USD"] else "Review only"
         )
+        normalized["IMPACT_DISPLAY"] = normalized.get("IMPACT_DISPLAY") or _warehouse_advisor_impact_display(normalized)
         normalized["EXPECTED_VERIFICATION_IMPACT"] = (
             normalized.get("EXPECTED_VERIFICATION_IMPACT")
             or "Post-change telemetry should show lower credits without worse queue, spill, p95, or failures."
@@ -554,10 +573,11 @@ def _build_warehouse_advisor_recommendations(
                 "CURRENT_SETTING": f"size={size or 'not loaded'}",
                 "EST_MONTHLY_SAVINGS_USD": 0.0,
                 "EST_MONTHLY_COST_BASIS_USD": monthly,
+                "VALUE_AT_RISK_USD": monthly,
                 "VERIFIED_MONTHLY_SAVINGS_USD": 0.0,
-                "SAVINGS_STATUS": "Not Claimed",
+                "SAVINGS_STATUS": "Pressure evidence",
                 "SAVINGS_ASSUMPTION": "No savings claimed for pressure or upsize reviews.",
-                "SAVINGS_TYPE": "No savings claimed",
+                "SAVINGS_TYPE": "Value at risk",
                 "MONTHLY_RUN_RATE_USD": monthly,
                 "REMOTE_SPILL_GB": spill,
                 "AVG_QUEUE_SEC": queue,
@@ -641,6 +661,7 @@ def _build_warehouse_advisor_recommendations(
             "CURRENT_SETTING": str(row.get("CURRENT_SETTING") or "not loaded"),
             "EST_MONTHLY_SAVINGS_USD": 0.0,
             "EST_MONTHLY_COST_BASIS_USD": monthly,
+            "VALUE_AT_RISK_USD": monthly,
             "VERIFIED_MONTHLY_SAVINGS_USD": 0.0,
             "SAVINGS_STATUS": "Not Claimed",
             "SAVINGS_ASSUMPTION": "Guardrail finding only; no savings claimed.",
@@ -665,8 +686,8 @@ def _build_warehouse_advisor_recommendations(
     advisor = pd.DataFrame(rows)
     advisor["_PRIORITY_SORT"] = advisor["PRIORITY"].map(_advisor_priority).fillna(9)
     advisor = advisor.sort_values(
-        ["_PRIORITY_SORT", "EST_MONTHLY_SAVINGS_USD", "MONTHLY_RUN_RATE_USD", "WAREHOUSE_NAME"],
-        ascending=[True, False, False, True],
+        ["_PRIORITY_SORT", "EST_MONTHLY_SAVINGS_USD", "VALUE_AT_RISK_USD", "MONTHLY_RUN_RATE_USD", "WAREHOUSE_NAME"],
+        ascending=[True, False, False, False, True],
     ).drop(columns=["_PRIORITY_SORT"])
     return advisor[columns].reset_index(drop=True)
 
@@ -678,7 +699,7 @@ def _render_warehouse_advisor_detail(advisor: pd.DataFrame) -> None:
     options["DETAIL_LABEL"] = options.apply(
         lambda row: (
             f"{row.get('PRIORITY', 'Review')} | "
-            f"${safe_float(row.get('EST_MONTHLY_SAVINGS_USD')):,.0f}/mo | "
+            f"{row.get('IMPACT_DISPLAY') or _warehouse_advisor_impact_display(row)} | "
             f"{row.get('WAREHOUSE_NAME', 'Unknown warehouse')} | "
             f"{row.get('ADVISOR_TYPE', 'Recommendation')}"
         ),
@@ -704,6 +725,7 @@ def _render_warehouse_advisor_detail(advisor: pd.DataFrame) -> None:
         ("Posture", posture_card),
         ("Cost Basis / Mo", f"${safe_float(row.get('EST_MONTHLY_COST_BASIS_USD')):,.0f}"),
         ("Savings / Mo", f"${safe_float(row.get('EST_MONTHLY_SAVINGS_USD')):,.0f}"),
+        ("Value at Risk / Mo", f"${safe_float(row.get('VALUE_AT_RISK_USD')):,.0f}"),
         ("Remote Spill", f"{safe_float(row.get('REMOTE_SPILL_GB')):,.1f} GB"),
         ("Avg Queue", f"{safe_float(row.get('AVG_QUEUE_SEC')):,.1f}s"),
         ("Status", str(row.get("SAVINGS_STATUS") or "Needs Verification")),
@@ -778,6 +800,7 @@ def _render_warehouse_controls(session) -> None:
     st.session_state["rec_warehouse_advisor_recommendations"] = advisor
     advisor_savings = safe_float(advisor["EST_MONTHLY_SAVINGS_USD"].sum()) if not advisor.empty else 0.0
     advisor_cost_basis = safe_float(advisor["EST_MONTHLY_COST_BASIS_USD"].sum()) if not advisor.empty else 0.0
+    advisor_value_at_risk = safe_float(advisor["VALUE_AT_RISK_USD"].sum()) if not advisor.empty and "VALUE_AT_RISK_USD" in advisor.columns else 0.0
     high_advisor = int(advisor["PRIORITY"].astype(str).isin(["High", "Critical"]).sum()) if not advisor.empty else 0
     savings_candidates = int((advisor["EST_MONTHLY_SAVINGS_USD"] > 0).sum()) if not advisor.empty else 0
     guarded_changes = (
@@ -788,13 +811,19 @@ def _render_warehouse_controls(session) -> None:
         ("Recommendations", f"{len(advisor):,}"),
         ("Savings Candidates", f"{savings_candidates:,}"),
         ("Est. Savings / Mo", f"${advisor_savings:,.0f}"),
+        ("Value at Risk / Mo", f"${advisor_value_at_risk:,.0f}"),
         ("Cost Basis / Mo", f"${advisor_cost_basis:,.0f}"),
         ("Guarded Changes", f"{guarded_changes:,}"),
     ))
-    if high_advisor:
-        st.caption(f"High-priority recommendations: {high_advisor:,}. Annualized estimated savings: ${advisor_savings * 12:,.0f}.")
+    if advisor_savings > 0:
+        if high_advisor:
+            st.caption(f"High-priority recommendations: {high_advisor:,}. Annualized estimated savings: ${advisor_savings * 12:,.0f}.")
+        else:
+            st.caption(f"Annualized estimated savings: ${advisor_savings * 12:,.0f}.")
+    elif advisor_value_at_risk > 0:
+        st.caption(f"Value at risk under review: ${advisor_value_at_risk:,.0f}/mo. Savings are shown only when a formula is supportable.")
     else:
-        st.caption(f"Annualized estimated savings: ${advisor_savings * 12:,.0f}.")
+        st.caption("Recommendations are review-only for this scope; no savings formula is currently supportable.")
     source = str(st.session_state.get("rec_warehouse_control_source") or "Warehouse advisor")
     defer_source_note(
         metric_confidence_label("estimated"),
@@ -807,8 +836,9 @@ def _render_warehouse_controls(session) -> None:
             title="Warehouse recommendations ranked by impact",
             priority_columns=[
                 "PRIORITY", "WAREHOUSE_NAME", "ADVISOR_TYPE", "RECOMMENDATION",
+                "IMPACT_DISPLAY",
                 "EST_MONTHLY_COST_BASIS_USD", "MONTHLY_RUN_RATE_USD",
-                "EST_MONTHLY_SAVINGS_USD", "VERIFIED_MONTHLY_SAVINGS_USD",
+                "EST_MONTHLY_SAVINGS_USD", "VALUE_AT_RISK_USD", "VERIFIED_MONTHLY_SAVINGS_USD",
                 "REMOTE_SPILL_GB", "AVG_QUEUE_SEC", "P95_ELAPSED_SEC",
                 "SAVINGS_STATUS", "SAVINGS_TYPE", "SAVINGS_ASSUMPTION",
                 "CURRENT_SIGNAL", "CURRENT_SETTING", "PERFORMANCE_RISK",
@@ -816,7 +846,7 @@ def _render_warehouse_controls(session) -> None:
                 "EXPECTED_VERIFICATION_IMPACT", "DO_NOT_EXECUTE_UNTIL",
                 "VERIFICATION_WINDOW_DAYS", "CONFIDENCE",
             ],
-            sort_by=["PRIORITY", "EST_MONTHLY_SAVINGS_USD", "MONTHLY_RUN_RATE_USD"],
+            sort_by=["PRIORITY", "EST_MONTHLY_SAVINGS_USD", "VALUE_AT_RISK_USD"],
             ascending=[True, False, False],
             raw_label="All warehouse advisor rows",
             height=420,

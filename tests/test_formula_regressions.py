@@ -522,16 +522,24 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("('STORAGE_COST_PER_TB_USD', '23.00'", setup_sql)
         self.assertIn("credit_price := COALESCE(credit_price, 3.68)", setup_sql)
         self.assertIn("storage_cost_per_tb := COALESCE(storage_cost_per_tb, 23.00)", setup_sql)
-        self.assertNotIn("ai_credit_price := COALESCE(ai_credit_price, 2.20)", setup_sql)
+        self.assertIn("ai_credit_price := COALESCE(ai_credit_price, 2.20)", setup_sql)
         daily_block = setup_sql.split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_LOAD_DAILY()", 1)[1].split(
             "CREATE OR REPLACE PROCEDURE SP_OVERWATCH_LOAD_CORTEX()", 1
         )[0]
         cortex_block = setup_sql.split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_LOAD_CORTEX()", 1)[1].split(
             "CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_COST_MONITORING()", 1
         )[0]
-        self.assertIn("WHERE SETTING_NAME = 'CREDIT_PRICE_USD'", cortex_block)
-        self.assertIn("ROUND(SUM(raw.CREDITS_USED) * :credit_price, 2) AS EST_COST_USD", cortex_block)
-        self.assertNotIn("AI_CREDIT_PRICE_USD", cortex_block)
+        observability_block = setup_sql.split(
+            "CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY()",
+            1,
+        )[1].split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_NATIVE_SETUP_VALIDATION()", 1)[0]
+        self.assertIn("WHERE SETTING_NAME = 'AI_CREDIT_PRICE_USD'", cortex_block)
+        self.assertIn("ROUND(SUM(raw.CREDITS_USED) * :ai_credit_price, 2) AS EST_COST_USD", cortex_block)
+        self.assertNotIn("ROUND(SUM(raw.CREDITS_USED) * :credit_price, 2) AS EST_COST_USD", cortex_block)
+        self.assertIn("ai_credit_price NUMBER(18,4) DEFAULT 2.20", observability_block)
+        self.assertIn("MAX(CASE WHEN SETTING_NAME = 'AI_CREDIT_PRICE_USD' THEN TRY_TO_NUMBER(SETTING_VALUE) END)", observability_block)
+        self.assertIn("SUM(COALESCE(cx.CREDITS_USED, 0) * :ai_credit_price) AS COST_USD", observability_block)
+        self.assertNotIn("SUM(COALESCE(cx.CREDITS_USED, 0) * :credit_price) AS COST_USD", observability_block)
         self.assertIn("storage_cost_per_tb NUMBER(18,4) DEFAULT 23.00", daily_block)
         self.assertIn("SELECT TRY_TO_NUMBER(SETTING_VALUE) INTO :storage_cost_per_tb", daily_block)
         self.assertIn("WHERE SETTING_NAME = 'STORAGE_COST_PER_TB_USD'", daily_block)
@@ -804,6 +812,31 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(float(enriched_mixed["MONTHLY_LIMIT_CREDITS_COST_USD"].iloc[0]), 36.80)
         self.assertAlmostEqual(float(enriched_mixed["MONTHLY_LIMIT_CREDITS_COST_USD"].iloc[1]), 22.00)
 
+        cortex_user_rows = pd.DataFrame({
+            "USER_NAME": ["H21427"],
+            "TOTAL_CREDITS": [146.1499],
+        })
+        cortex_enriched = add_cost_companion_columns(cortex_user_rows, credit_price=2.20)
+        self.assertAlmostEqual(float(cortex_enriched["TOTAL_CREDITS_COST_USD"].iloc[0]), 321.53)
+
+        cortex_with_explicit_cost = pd.DataFrame({
+            "USER_NAME": ["H21427"],
+            "TOTAL_CREDITS": [146.1499],
+            "COST_USD": [321.53],
+        })
+        cortex_explicit = add_cost_companion_columns(cortex_with_explicit_cost, credit_price=3.68)
+        self.assertNotIn("TOTAL_CREDITS_COST_USD", cortex_explicit.columns)
+        self.assertAlmostEqual(float(cortex_explicit["COST_USD"].iloc[0]), 321.53)
+
+        cortex_with_display_cost = pd.DataFrame({
+            "USER_NAME": ["H21427"],
+            "TOTAL_CREDITS": [146.1499],
+            "Cost": [321.53],
+        })
+        cortex_display = add_cost_companion_columns(cortex_with_display_cost, credit_price=3.68)
+        self.assertNotIn("TOTAL_CREDITS_COST_USD", cortex_display.columns)
+        self.assertAlmostEqual(float(cortex_display["Cost"].iloc[0]), 321.53)
+
     def test_priority_tables_use_operator_status_labels_for_display_only(self):
         from utils.workflows import apply_operator_status_labels
 
@@ -889,6 +922,22 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("USAGE_DATE >= DATEADD('DAY', -28", mart_sql)
         self.assertIn("WHEN USAGE_DATE >= DATEADD('DAY', -14", mart_sql)
         self.assertIn("FAST COST SUMMARY", mart_sql)
+
+    def test_decision_command_cost_rollups_do_not_multiply_by_environment(self):
+        setup_sql = (ROOT / "snowflake" / "mart_setup" / "05_load_procedures.sql").read_text(encoding="utf-8").upper()
+        monolith_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+
+        for sql in (setup_sql, monolith_sql):
+            self.assertIn("SCOPE_WINDOWS AS", sql)
+            self.assertIn("SELECT DISTINCT COMPANY, WINDOW_DAYS", sql)
+            command_block = sql[
+                sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS"):
+                sql.index("QUERY_ROLLUP AS", sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS"))
+            ]
+            self.assertEqual(command_block.count("FROM SCOPE_WINDOWS S"), 4)
+            self.assertNotIn("FROM SCOPES S\n    CROSS JOIN SETTINGS CFG\n    LEFT JOIN FACT_COST_DAILY", command_block)
+            self.assertNotIn("FROM SCOPES S\n    CROSS JOIN SETTINGS CFG\n    LEFT JOIN FACT_WAREHOUSE_HOURLY", command_block)
+            self.assertNotIn("FROM SCOPES S\n    CROSS JOIN SETTINGS CFG\n    LEFT JOIN FACT_CORTEX_DAILY", command_block)
 
     def test_cost_formula_audit_tracks_source_dashboard_parity(self):
         audit = build_cost_formula_audit()
@@ -2713,12 +2762,13 @@ class FormulaRegressionTests(unittest.TestCase):
         ]:
             self.assertIn(metric, setup_upper)
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY", setup_upper)
-        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY", setup_upper)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY", setup_upper)
         self.assertIn("AI_CREDIT_PRICE_USD", setup_upper)
-        self.assertNotIn("AI_CREDIT_PRICE := COALESCE(AI_CREDIT_PRICE, 2.20)", setup_upper)
-        self.assertIn("ROUND(SUM(RAW.CREDITS_USED) * :CREDIT_PRICE, 2) AS EST_COST_USD", setup_upper)
+        self.assertIn("AI_CREDIT_PRICE := COALESCE(AI_CREDIT_PRICE, 2.20)", setup_upper)
+        self.assertIn("ROUND(SUM(RAW.CREDITS_USED) * :AI_CREDIT_PRICE, 2) AS EST_COST_USD", setup_upper)
+        self.assertNotIn("ROUND(SUM(RAW.CREDITS_USED) * :CREDIT_PRICE, 2) AS EST_COST_USD", setup_upper)
         self.assertIn("DATEADD('HOUR', -24, CURRENT_TIMESTAMP())", setup_upper)
-        self.assertIn("ROUND(SUM(TOTAL_CREDITS * RATE_USD), 2) AS EST_COST_USD", setup_upper)
+        self.assertIn("ROUND(SUM(CREDITS_BILLED * RATE_USD), 2) AS EST_COST_USD", setup_upper)
         self.assertIn("SERVICE_CATEGORY", setup_upper)
         self.assertIn("CREATE WAREHOUSE IF NOT EXISTS COMPUTE_WH", setup_upper)
         self.assertIn("STATEMENT_TIMEOUT_IN_SECONDS = 600", setup_upper)
@@ -6162,6 +6212,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("SAVINGS_TYPE", advisor.columns)
         self.assertIn("ACTION_POSTURE", advisor.columns)
         self.assertIn("EST_MONTHLY_COST_BASIS_USD", advisor.columns)
+        self.assertIn("VALUE_AT_RISK_USD", advisor.columns)
+        self.assertIn("IMPACT_DISPLAY", advisor.columns)
         self.assertIn("REMOTE_SPILL_GB", advisor.columns)
         self.assertIn("AVG_QUEUE_SEC", advisor.columns)
         self.assertIn("P95_ELAPSED_SEC", advisor.columns)
@@ -6171,6 +6223,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertNotIn("REVIEW_SQL", advisor.columns)
         self.assertGreater(float(advisor["EST_MONTHLY_SAVINGS_USD"].sum()), 0)
         self.assertGreater(float(advisor["EST_MONTHLY_COST_BASIS_USD"].sum()), 0)
+        self.assertGreater(float(advisor["VALUE_AT_RISK_USD"].sum()), 0)
         self.assertGreater(float(advisor["REMOTE_SPILL_GB"].sum()), 0)
         self.assertIn("MONTHLY_RUN_RATE_USD", advisor.columns)
         self.assertEqual(float(advisor["VERIFIED_MONTHLY_SAVINGS_USD"].sum()), 0.0)
@@ -6180,6 +6233,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Capacity or size review", set(advisor["ADVISOR_TYPE"]))
         self.assertIn("Guarded admin change candidate", set(advisor["ACTION_POSTURE"]))
         self.assertIn("Estimated right-size savings", set(advisor["SAVINGS_TYPE"]))
+        pressure_rows = advisor[advisor["ADVISOR_TYPE"].eq("Capacity or size review")]
+        self.assertTrue(pressure_rows["IMPACT_DISPLAY"].astype(str).str.contains("value at risk").all())
+        self.assertTrue((pressure_rows["VALUE_AT_RISK_USD"] > 0).all())
         self.assertTrue(advisor["DO_NOT_EXECUTE_UNTIL"].astype(str).str.len().gt(0).all())
         self.assertTrue(
             advisor["EXPECTED_VERIFICATION_IMPACT"].astype(str).str.contains(
@@ -6239,6 +6295,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertGreater(float(savings_rows["EST_MONTHLY_SAVINGS_USD"].sum()), 0)
         self.assertFalse(spill_rows.empty)
         self.assertGreater(float(spill_rows["REMOTE_SPILL_GB"].sum()), 0)
+        self.assertGreater(float(spill_rows["VALUE_AT_RISK_USD"].sum()), 0)
+        self.assertTrue(spill_rows["IMPACT_DISPLAY"].astype(str).str.contains("value at risk").all())
         self.assertFalse(plan_rows.empty)
         self.assertGreater(float(plan_rows["EST_MONTHLY_COST_BASIS_USD"].sum()), 0)
 

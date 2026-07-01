@@ -54,7 +54,7 @@ NUMERIC_DEFAULTS = {
     "BILLING_BRIDGE_DELTA_CREDITS": 10.0,
     "BILLING_BRIDGE_DELTA_USD": 36.8,
     "CORTEX_AI_CREDITS": 3.0,
-    "CORTEX_AI_COST_USD": 11.04,
+    "CORTEX_AI_COST_USD": 6.6,
     "SPEND_MOVEMENT_PCT": 2.5,
     "FORECAST_RUN_RATE_USD": 1200.0,
 }
@@ -376,6 +376,10 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
             set(REQUIRED_PACKET_FIELDS),
             {row["formula_field"] for row in artifacts[CLI_FORMULA_VALUE_REL]["rows"]},
         )
+        formula_by_field = {row["formula_field"]: row for row in artifacts[CLI_FORMULA_VALUE_REL]["rows"]}
+        self.assertEqual(formula_by_field["CORTEX_AI_COST_USD"]["live_expected_value"], 6.6)
+        self.assertEqual(formula_by_field["CORTEX_AI_COST_USD"]["selected_credit_price"], 2.2)
+        self.assertEqual(formula_by_field["ACCOUNT_BILLED_COST_USD"]["selected_credit_price"], 3.68)
         self.assertTrue(artifacts[CLI_MANIFEST_RECONCILIATION_REL]["passed"], artifacts[CLI_MANIFEST_RECONCILIATION_REL])
         self.assertTrue(artifacts[CLI_LAUNCH_GATE_REL]["passed"], artifacts[CLI_LAUNCH_GATE_REL])
         self.assertTrue(artifacts[CLI_LAUNCH_GATE_REL]["snowflake_cli_live_executed"], artifacts[CLI_LAUNCH_GATE_REL])
@@ -392,7 +396,26 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
         sql = module._formula_expected_sql(SnowflakeCliValidationOptions(connection="dev", profile="internal_live"))
 
         self.assertIn("CREDITS_ADJUSTMENT_CLOUD_SERVICES", sql)
+        self.assertIn("'CORTEX_AI_COST_USD', c.cortex_ai_credits * 2.2", sql)
+        self.assertNotIn("'CORTEX_AI_COST_USD', c.cortex_ai_credits * 3.68", sql)
         self.assertNotIn("'CLOUD_SERVICES_ADJUSTMENT', 0", sql)
+
+    def test_packet_availability_sql_does_not_require_is_active_on_command_brief(self):
+        from tools.contracts import snowflake_cli_live_validation as module
+
+        sql = module._packet_availability_sql(SnowflakeCliValidationOptions(connection="dev", profile="internal_live"))
+        command_branch = sql.split("FROM MART_SECTION_COMMAND_BRIEF", 1)[0]
+
+        self.assertIn("TRUE AS is_active", command_branch)
+        self.assertNotIn("COALESCE(IS_ACTIVE, TRUE) AS is_active", command_branch)
+
+    def test_packet_flat_sql_prefers_exact_but_keeps_fallback_rows(self):
+        from tools.contracts import snowflake_cli_live_validation as module
+
+        sql = module._packet_flat_sql(SnowflakeCliValidationOptions(connection="dev", profile="internal_live"))
+
+        self.assertIn("COALESCE(IS_EXACT_SCOPE, FALSE) DESC", sql)
+        self.assertNotIn("AND COALESCE(IS_EXACT_SCOPE, TRUE)", sql)
 
     def test_null_packet_value_with_source_rows_fails_formula_validation(self):
         with _root_with_validation_sql() as temp:

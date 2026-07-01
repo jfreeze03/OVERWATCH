@@ -10,6 +10,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from runtime_state import set_state
 from sections.cost_contract_advisor import _open_cost_action_frame
 from sections.cost_contract_dataframes import _short_label, _slide_money
 from sections.cost_contract_overview import (
@@ -72,7 +73,7 @@ def _render_cost_splash_next_move(summary: dict) -> None:
                 help=detail,
                 width="stretch",
             ):
-                st.session_state["cost_contract_workflow"] = workflow
+                set_state("cost_contract_workflow", workflow)
                 st.rerun()
 
 

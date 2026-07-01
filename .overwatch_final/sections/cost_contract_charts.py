@@ -153,7 +153,7 @@ def build_hourly_usage_pattern_rows(warehouse_rows: pd.DataFrame, credit_price: 
     return rows
 
 
-def build_cortex_ai_daily_spend_rows(service_rows: pd.DataFrame, credit_price: float) -> pd.DataFrame:
+def build_cortex_ai_daily_spend_rows(service_rows: pd.DataFrame, ai_credit_price: float) -> pd.DataFrame:
     """COST_DB service analyzer trend pattern for Cortex AI spend."""
 
     data = normalize_numeric_columns(service_rows)
@@ -170,7 +170,7 @@ def build_cortex_ai_daily_spend_rows(service_rows: pd.DataFrame, credit_price: f
         return _unavailable_rows(["USAGE_DATE", "CORTEX_AI_CREDITS", "CORTEX_AI_COST_USD"], choice.reason)
     data["CORTEX_AI_CREDITS"] = choice.values
     rows = data.dropna(subset=["USAGE_DATE"]).groupby("USAGE_DATE", as_index=False)["CORTEX_AI_CREDITS"].sum()
-    rows["CORTEX_AI_COST_USD"] = rows["CORTEX_AI_CREDITS"].map(lambda value: credits_to_usd(value, credit_price))
+    rows["CORTEX_AI_COST_USD"] = rows["CORTEX_AI_CREDITS"].map(lambda value: credits_to_usd(value, ai_credit_price))
     rows = rows.sort_values("USAGE_DATE", kind="mergesort").reset_index(drop=True)
     rows.attrs["credit_column"] = choice.selected_column
     return rows
@@ -292,17 +292,17 @@ def cost_db_chart_pattern_results() -> dict[str, object]:
             "chart_value": 2.0,
             "chart_value_source": "cost_workbench_fixture_chart_rows",
             "selected_credit_column": "CORTEX_AI_CREDITS",
-            "selected_credit_price": 3.68,
+            "selected_credit_price": 2.20,
             "passed": True,
             "raw_sql_included": False,
         },
         {
             "formula_field": "CORTEX_AI_COST_USD",
             "chart_name": "cortex_ai_daily_spend",
-            "chart_value": 7.36,
+            "chart_value": 4.40,
             "chart_value_source": "cost_workbench_fixture_chart_rows",
             "selected_credit_column": "CORTEX_AI_CREDITS",
-            "selected_credit_price": 3.68,
+            "selected_credit_price": 2.20,
             "passed": True,
             "raw_sql_included": False,
         },

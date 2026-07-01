@@ -5,6 +5,7 @@ from datetime import datetime
 
 import streamlit as st
 
+from runtime_state import set_state
 from sections.account_health_access_hygiene_view import _render_account_health_access_hygiene
 from sections.account_health_action_queue import _queue_account_health_checklist
 from sections.account_health_checklist import (
@@ -90,7 +91,7 @@ def _drill_to(
 ):
     apply_navigation_state(section)
     if workflow_key and workflow:
-        st.session_state[workflow_key] = workflow
+        set_state(workflow_key, workflow)
     for key, value in (extra_state or {}).items():
         st.session_state[str(key)] = value
     if wh_filter:
@@ -818,7 +819,7 @@ def render_account_health_overview(company: str, environment: str, credit_price:
     def _jump(tgt, workflow=None):
         apply_navigation_state(tgt)
         if workflow:
-            st.session_state["workload_operations_workflow"] = workflow
+            set_state("workload_operations_workflow", workflow)
 
     for idx, (lbl, tgt, workflow) in enumerate([
         ("Live", "Workload Operations", "Performance & Contention"),
@@ -898,7 +899,7 @@ def render_account_health_overview(company: str, environment: str, credit_price:
                 height=220,
             )
             if st.button("Task Management", key="ah_drill_tasks"):
-                st.session_state["workload_operations_workflow"] = "Pipeline & Task Health"
+                set_state("workload_operations_workflow", "Pipeline & Task Health")
                 st.session_state["workload_operations_pipeline_focus"] = "Failed Tasks"
                 _drill_to("Workload Operations")
         else:

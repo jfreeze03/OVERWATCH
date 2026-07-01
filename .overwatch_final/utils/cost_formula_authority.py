@@ -251,7 +251,7 @@ def cost_db_formula_rows() -> list[CostFormula]:
             formula_id="cortex_ai",
             title="Canonical Cortex AI spend",
             cost_db_function_or_class="Service analyzer service-type grouping",
-            cost_db_formula="Known Cortex service rows are summed as credits and converted with selected credit price.",
+            cost_db_formula="Known Cortex service rows are summed as credits and converted with the selected AI credit price.",
             cost_db_source_view="SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY",
             cost_db_columns=("SERVICE_TYPE", "CREDITS_BILLED", "COST"),
             overwatch_target_module=".overwatch_final/utils/billing_reconciliation.py",
@@ -260,7 +260,7 @@ def cost_db_formula_rows() -> list[CostFormula]:
             required_change="Executive and Cost must consume the same packet field.",
             status="matched",
             reason="Metric semantic registry maps Executive and Cost Cortex spend to CORTEX_AI_COST_USD and the service classifier uses an allowlist.",
-            overwatch_formula="CORTEX_AI_COST_USD = SUM(allowlisted Cortex service credits) * selected_credit_price",
+            overwatch_formula="CORTEX_AI_COST_USD = SUM(allowlisted Cortex service credits) * AI_CREDIT_PRICE_USD",
         ),
         CostFormula(
             formula_id="monthly_mom",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from runtime_state import set_state
 from sections.cost_contract_advisor import (
     _build_cost_advisor_board,
     _build_cost_closure_analytics,
@@ -99,7 +100,7 @@ def _render_cost_advisor_detail(board: pd.DataFrame | None) -> None:
         st.caption(f"Guardrail: {_clean_display_text(do_not_do)}")
     route = str(row.get("WORKFLOW_ROUTE") or "").strip()
     if route in WORKFLOWS and st.button(f"Open {route}", key="cost_advisor_detail_route", width="stretch"):
-        st.session_state["cost_contract_workflow"] = route
+        set_state("cost_contract_workflow", route)
         st.rerun()
 
 

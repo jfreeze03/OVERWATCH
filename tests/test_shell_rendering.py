@@ -1,6 +1,7 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 import streamlit as st
 
@@ -34,6 +35,61 @@ class ShellRenderingTests(unittest.TestCase):
         finally:
             st.session_state.clear()
             st.session_state.update(previous)
+
+    def test_rendered_widget_state_updates_are_deferred_to_next_run(self):
+        from runtime_state import (
+            PENDING_WIDGET_STATE_UPDATES,
+            apply_pending_widget_state_updates,
+            mark_widget_key_rendered,
+            reset_widget_render_tracking,
+            set_state,
+        )
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["cost_contract_workflow"] = "Cost Overview"
+            reset_widget_render_tracking()
+            mark_widget_key_rendered("cost_contract_workflow")
+
+            set_state("cost_contract_workflow", "Cortex AI")
+
+            self.assertEqual(st.session_state["cost_contract_workflow"], "Cost Overview")
+            self.assertEqual(
+                st.session_state[PENDING_WIDGET_STATE_UPDATES]["cost_contract_workflow"],
+                "Cortex AI",
+            )
+
+            apply_pending_widget_state_updates()
+
+            self.assertEqual(st.session_state["cost_contract_workflow"], "Cortex AI")
+            self.assertNotIn(PENDING_WIDGET_STATE_UPDATES, st.session_state)
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
+    def test_widget_instantiated_exception_queues_state_update(self):
+        import runtime_state
+        from runtime_state import PENDING_WIDGET_STATE_UPDATES, set_state
+
+        class LockedWidgetState(dict):
+            def __setitem__(self, key, value):
+                if key == "security_posture_view":
+                    raise RuntimeError(
+                        "st.session_state.security_posture_view cannot be modified after the widget "
+                        "with key security_posture_view is instantiated."
+                    )
+                return super().__setitem__(key, value)
+
+        locked = LockedWidgetState({"security_posture_view": "Overview"})
+        with patch.object(runtime_state.st, "session_state", locked):
+            set_state("security_posture_view", "Security Alerts")
+
+        self.assertEqual(locked["security_posture_view"], "Overview")
+        self.assertEqual(
+            locked[PENDING_WIDGET_STATE_UPDATES]["security_posture_view"],
+            "Security Alerts",
+        )
 
     def test_shell_uses_single_global_command_bar_path(self):
         shell_text = (APP_ROOT / "shell.py").read_text(encoding="utf-8")

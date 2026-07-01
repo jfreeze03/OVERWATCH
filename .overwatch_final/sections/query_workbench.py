@@ -4,6 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from runtime_state import set_state
 from sections.shell_helpers import render_escaped_bold_text, render_shell_snapshot
 from utils import (
     CortexRateLimitError,
@@ -168,7 +169,7 @@ def _seed_ai_query_diagnosis_from_row(row, *, days: int) -> None:
             f"lookback_days={int(days)}. Operator stats still need to be loaded for final proof."
         ),
     }
-    st.session_state["workload_operations_workflow"] = WORKLOAD_QUERY_WORKFLOW
+    set_state("workload_operations_workflow", WORKLOAD_QUERY_WORKFLOW)
     st.session_state["query_analysis_active_view"] = "AI Diagnosis"
     st.session_state["ai_query_id"] = query_id
     st.session_state["ai_query_text"] = query_text
@@ -230,10 +231,10 @@ def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row:
                     st.session_state["qs_status"] = "ALL"
                     st.session_state["qs_days"] = min(max(int(days), 1), 30)
                     st.session_state["qs_autorun"] = True
-                    st.session_state["workload_operations_workflow"] = WORKLOAD_QUERY_WORKFLOW
+                    set_state("workload_operations_workflow", WORKLOAD_QUERY_WORKFLOW)
                     st.session_state["query_analysis_active_view"] = "History Search"
                 elif workflow == "Contention Center":
-                    st.session_state["workload_operations_workflow"] = WORKLOAD_CONTENTION_WORKFLOW
+                    set_state("workload_operations_workflow", WORKLOAD_CONTENTION_WORKFLOW)
                     st.session_state["contention_focus_query_id"] = query_id
                     st.session_state["contention_center_view"] = "Brief"
                     st.session_state["contention_active_view"] = "Brief"
@@ -251,15 +252,15 @@ def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row:
                     st.session_state["dd_days"] = min(max(int(days), 1), 30)
                     st.session_state["dd_focus_query_id"] = query_id
                     st.session_state["query_analysis_active_view"] = "Detailed Diagnosis"
-                    st.session_state["workload_operations_workflow"] = WORKLOAD_QUERY_WORKFLOW
+                    set_state("workload_operations_workflow", WORKLOAD_QUERY_WORKFLOW)
                 elif workflow == "Patterns":
                     st.session_state["query_analysis_active_view"] = "Pattern Degradation"
-                    st.session_state["workload_operations_workflow"] = WORKLOAD_QUERY_WORKFLOW
+                    set_state("workload_operations_workflow", WORKLOAD_QUERY_WORKFLOW)
                 elif workflow == "History Search":
-                    st.session_state["workload_operations_workflow"] = WORKLOAD_QUERY_WORKFLOW
+                    set_state("workload_operations_workflow", WORKLOAD_QUERY_WORKFLOW)
                     st.session_state["query_analysis_active_view"] = "History Search"
                 elif workflow == "Live Triage":
-                    st.session_state["workload_operations_workflow"] = WORKLOAD_CONTENTION_WORKFLOW
+                    set_state("workload_operations_workflow", WORKLOAD_CONTENTION_WORKFLOW)
                 st.rerun()
 
 

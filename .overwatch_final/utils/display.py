@@ -261,6 +261,7 @@ def render_chart_with_data_toggle(
     ascending: list[bool] | tuple[bool, ...] | bool = False,
     max_rows: int = 25,
     raw_label: str | None = None,
+    credit_price: float | None = None,
 ) -> str:
     """Render a chart or its backing table with a clear return path."""
     if title:
@@ -296,6 +297,7 @@ def render_chart_with_data_toggle(
                 max_rows=max_rows,
                 raw_label=raw_label or f"{title or 'Chart'} full data",
                 height=260,
+                credit_price=credit_price,
             )
         return "Data"
     chart_renderer()

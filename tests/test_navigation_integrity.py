@@ -2220,7 +2220,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("st.session_state[requested_key] = \"Chart\"", display_text)
         self.assertIn('st.button("Back to chart"', display_text)
         self.assertIn("def add_cost_companion_columns", workflows_text)
-        self.assertIn("view = add_cost_companion_columns(view)", workflows_text)
+        self.assertIn("view = add_cost_companion_columns(view, credit_price=credit_price)", workflows_text)
         self.assertIn(
             "display_view = clean_operator_display_text(apply_operator_status_labels(view))",
             workflows_text,

@@ -6,9 +6,8 @@ from dataclasses import dataclass
 import logging
 from typing import Mapping
 
-import streamlit as st
-
 from navigation import queue_section_navigation
+from runtime_state import set_state
 from route_registry import SECTION_WORKFLOW_CONTRACT
 
 
@@ -121,11 +120,11 @@ def apply_command_brief_route(route_key: str) -> bool:
         return False
     queue_section_navigation(route.section)
     if route.workflow_key and route.workflow:
-        st.session_state[route.workflow_key] = route.workflow
+        set_state(route.workflow_key, route.workflow)
     if route.section == "Alert Center" and route.workflow:
-        st.session_state["alert_center_requested_view"] = route.workflow
+        set_state("alert_center_requested_view", route.workflow)
     for state_key, state_value in route.state_updates:
-        st.session_state[state_key] = state_value
+        set_state(state_key, state_value)
     return True
 
 

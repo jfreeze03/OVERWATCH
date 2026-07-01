@@ -9,6 +9,7 @@ from typing import Any
 import streamlit as st
 
 from performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
+from runtime_state import set_state
 from sections.decision_workspace_target_filters import (
     SECTION_TARGET_COLUMNS,
     apply_target_dataframe_filter,
@@ -214,9 +215,9 @@ def apply_finding_evidence_target(finding: object | None, section: str, workflow
     elif section_name == "Security Monitoring":
         st.session_state["security_posture_evidence_target"] = target
         if entity_type in {"user", "role"}:
-            st.session_state["security_posture_view"] = "Failed Logins" if entity_type == "user" else "Risky Grants"
+            set_state("security_posture_view", "Failed Logins" if entity_type == "user" else "Risky Grants")
         elif entity_type in {"database", "share", "grant"}:
-            st.session_state["security_posture_view"] = "Data Sharing" if entity_type == "share" else "Risky Grants"
+            set_state("security_posture_view", "Data Sharing" if entity_type == "share" else "Risky Grants")
         if entity_value:
             st.session_state["security_posture_entity_filter"] = entity_value
     elif section_name == "DBA Control Room":

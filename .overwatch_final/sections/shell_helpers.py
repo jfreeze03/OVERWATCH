@@ -11,6 +11,8 @@ import re
 
 import streamlit as st
 
+from runtime_state import mark_widget_key_rendered, set_state
+
 FRESHNESS_TARGET_MINUTES = {
     "live": 5,
     "pressure": 30,
@@ -658,7 +660,7 @@ def render_single_choice_navigation(
     if active not in values:
         active = values[0]
     if st.session_state.get(key) not in values:
-        st.session_state[key] = active
+        set_state(key, active)
 
     formatter = format_func or (lambda value: _clean_display_text(value))
     st.html(
@@ -697,6 +699,7 @@ def render_single_choice_navigation(
             values,
             **radio_kwargs,
         )
+    mark_widget_key_rendered(key)
     return str(selected or active)
 
 

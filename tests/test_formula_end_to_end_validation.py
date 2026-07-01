@@ -100,6 +100,7 @@ class FormulaEndToEndValidationTests(unittest.TestCase):
         self.assertTrue(static["passed"], static)
         by_check = {row["check_name"]: row for row in static["checks"]}
         self.assertTrue(by_check["account_billed_total_not_warehouse_bridge"]["passed"])
+        self.assertTrue(by_check["account_billing_uses_daily_billing_source"]["passed"])
         self.assertTrue(by_check["service_other_and_signed_bridge_delta_present"]["passed"])
         self.assertTrue(by_check["decision_packet_fields_inserted"]["passed"])
         self.assertTrue(by_check["flat_packet_fields_extracted"]["passed"])
@@ -379,6 +380,7 @@ class FormulaEndToEndValidationTests(unittest.TestCase):
             "account_billed_cost_formula",
             "warehouse_cost_formula",
             "cortex_cost_formula",
+            "cortex_ai_credit_price_source",
             "bridge_delta_signed_formula",
             "service_other_floor_formula",
             "billing_bridge_status_formula",
@@ -409,7 +411,7 @@ class FormulaEndToEndValidationTests(unittest.TestCase):
                 row("WAREHOUSE_COST_ESTIMATE_USD", 22.08),
                 row("WAREHOUSE_COST_USD", 22.08),
                 row("CORTEX_AI_CREDITS", 2),
-                row("CORTEX_AI_COST_USD", 7.36),
+                row("CORTEX_AI_COST_USD", 4.40),
                 row("SERVICE_OTHER_CREDITS", 4),
                 row("SERVICE_OTHER_COST_USD", 14.72),
                 row("BILLING_BRIDGE_DELTA_CREDITS", 99),

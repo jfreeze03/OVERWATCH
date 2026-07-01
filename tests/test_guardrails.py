@@ -292,6 +292,15 @@ class GuardrailTests(unittest.TestCase):
         self.assertNotIn("SELECT", message)
         self.assertNotIn("Traceback", message)
 
+    def test_invalid_identifier_message_hides_internal_column_name(self):
+        message = query_utils.format_snowflake_error(
+            RuntimeError("SQL compilation error: invalid identifier 'TARGET_QUERY_ID'")
+        )
+
+        self.assertIn("Historical detail is unavailable", message)
+        self.assertNotIn("TARGET_QUERY_ID", message)
+        self.assertNotIn("invalid identifier", message.lower())
+
     def test_query_guardrail_messages_are_hash_deduped(self):
         previous = dict(st.session_state)
         try:

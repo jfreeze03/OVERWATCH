@@ -727,9 +727,10 @@ def format_snowflake_error(error: Exception, max_len: int = 320) -> str:
             "Use the ACCOUNT_USAGE fallback or a role/context that can query live metadata."
         )
     if "invalid identifier" in lower:
-        match = re.search(r"invalid identifier ['\"]?([^'\"\n]+)['\"]?", text, flags=re.IGNORECASE)
-        ident = match.group(1).strip() if match else "a column"
-        return f"Snowflake does not expose {ident} in this account/view for the current role."
+        return (
+            "Historical detail is unavailable for this role. "
+            "The cached summary remains available."
+        )
     if "does not exist or not authorized" in lower or "not authorized" in lower:
         return "The current role cannot access this Snowflake object or operation."
     if "insufficient privileges" in lower or "insufficient privilege" in lower:

@@ -9,6 +9,7 @@ from config import (
     normalize_section_name,
 )
 from performance import SECTION_ROUTE_QUERY_BUDGET, query_budget_context
+from runtime_state import set_state
 from utils.primitives import (
     safe_float,
     safe_int,
@@ -364,16 +365,16 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
             if title in {"Query Workbench", "Workload Operations"}:
                 st.session_state["_workload_operations_explicit_workflow_request"] = True
                 if workflow == "Diagnosis":
-                    st.session_state["workload_operations_workflow"] = "Query Investigation"
+                    set_state("workload_operations_workflow", "Query Investigation")
                 elif workflow == "History Search":
-                    st.session_state["workload_operations_workflow"] = "Query Investigation"
+                    set_state("workload_operations_workflow", "Query Investigation")
                     st.session_state["query_analysis_active_view"] = "History Search"
                 else:
-                    st.session_state["workload_operations_workflow"] = workflow
+                    set_state("workload_operations_workflow", workflow)
             elif title == "DBA Control Room":
                 st.session_state["dba_control_room_active_view"] = normalize_dba_control_room_pane(workflow)
             elif title == "Cost & Contract":
-                st.session_state["cost_contract_workflow"] = workflow
+                set_state("cost_contract_workflow", workflow)
             elif title == "Security Monitoring":
                 security_workflow = workflow if workflow in {
                     "Security Overview",
@@ -385,10 +386,10 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
                     "Security Alerts",
                     "Security Admin / Advanced",
                 } else "Security Overview"
-                st.session_state["security_posture_view"] = security_workflow
+                set_state("security_posture_view", security_workflow)
                 st.session_state["security_posture_workflow"] = security_workflow
             elif title == "Security Posture":
-                st.session_state["security_posture_view"] = workflow
+                set_state("security_posture_view", workflow)
                 st.session_state["security_posture_workflow"] = workflow
         if warehouse:
             st.session_state["global_warehouse"] = warehouse

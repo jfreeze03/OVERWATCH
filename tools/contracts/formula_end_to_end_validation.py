@@ -91,7 +91,7 @@ _FORMULA_BY_FIELD = {
     "BILLING_BRIDGE_DELTA_USD": ("billing_reconciliation_bridge", "BILLING_BRIDGE_DELTA_CREDITS * CREDIT_PRICE_USD", "BILLING_BRIDGE_DELTA_CREDITS", 14.72),
     "BILLING_BRIDGE_STATUS": ("billing_reconciliation_bridge", "CASE matched / warehouse_lower_than_billed / warehouse_higher_than_billed / pending", "ACCOUNT_BILLED_CREDITS - WAREHOUSE_CREDITS", "warehouse_lower_than_billed"),
     "CORTEX_AI_CREDITS": ("cortex_ai", "SUM(allowlisted CORTEX_AI_CREDITS)", "CORTEX_AI_CREDITS", 2.0),
-    "CORTEX_AI_COST_USD": ("cortex_ai", "CORTEX_AI_CREDITS * CREDIT_PRICE_USD", "CORTEX_AI_CREDITS", 7.36),
+    "CORTEX_AI_COST_USD": ("cortex_ai", "CORTEX_AI_CREDITS * AI_CREDIT_PRICE_USD", "CORTEX_AI_CREDITS", 4.40),
     "BILLING_RECONCILIATION_STATUS": ("billing_reconciliation_bridge", "Billing bridge status with pending state", "ACCOUNT_BILLED_CREDITS - WAREHOUSE_CREDITS", "warehouse_lower_than_billed"),
     "BILLING_WINDOW_START": ("billing_window", "DATEADD(day, -WINDOW_DAYS, current date)", "USAGE_DATE", "2026-06-21"),
     "BILLING_WINDOW_END": ("billing_window", "current date minus one day", "USAGE_DATE", "2026-06-28"),
@@ -393,6 +393,21 @@ def build_snowflake_formula_static_results(
             "recommendation": "Keep ACCOUNT_BILLED_* sourced from billing/reconciliation rows.",
         },
         {
+            "check_name": "account_billing_uses_daily_billing_source",
+            "passed": _safe_contains(setup_sql, "SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY")
+            and _safe_contains(setup_sql, "CREDITS_ADJUSTMENT_CLOUD_SERVICES")
+            and not bool(
+                re.search(
+                    r"0::NUMBER\([^)]*\)\s+AS\s+CREDITS_ADJUSTMENT_CLOUD_SERVICES",
+                    setup_sql,
+                    flags=re.IGNORECASE,
+                )
+            ),
+            "actual": "account billed fields use the billing-facing daily source and carry cloud-services adjustment",
+            "expected": "account billing uses METERING_DAILY_HISTORY and never silently zeros CREDITS_ADJUSTMENT_CLOUD_SERVICES",
+            "recommendation": "Use daily billing rows for account totals; keep hourly/warehouse metering only for bridge/breakdown.",
+        },
+        {
             "check_name": "warehouse_bridge_compute_cloud_services",
             "passed": _safe_contains(setup_sql, "WAREHOUSE_CREDITS")
             and _safe_contains(setup_sql, "CREDITS_USED_COMPUTE")
@@ -405,10 +420,10 @@ def build_snowflake_formula_static_results(
             "check_name": "cortex_formula_uses_canonical_source",
             "passed": _safe_contains(setup_sql, "FACT_CORTEX_DAILY")
             and _safe_contains(setup_sql, "CORTEX_AI_CREDITS")
-            and _safe_contains(setup_sql, "CREDIT_PRICE_USD")
+            and _safe_contains(setup_sql, "AI_CREDIT_PRICE_USD")
             and not bool(re.search(r"SERVICE_TYPE\s+(ILIKE|LIKE)\s+'%AI%'", setup_sql, flags=re.IGNORECASE)),
-            "actual": "Cortex packet formula uses FACT_CORTEX_DAILY and canonical credit price",
-            "expected": "Cortex daily total uses approved Cortex source/allowlist, not broad AI substring",
+            "actual": "Cortex packet formula uses FACT_CORTEX_DAILY and the canonical AI credit price",
+            "expected": "Cortex daily total uses approved Cortex source/allowlist and AI_CREDIT_PRICE_USD, not broad AI substring",
             "recommendation": "Keep broad service-type unknowns in admin review, not daily Cortex total.",
         },
         {
@@ -501,7 +516,7 @@ def build_formula_chain_results(root: Path | str = ".") -> dict[str, Any]:
             "rendered_section": ", ".join(rendered_sections),
             "rendered_metric_key": rendered_metric_key,
             "selected_credit_column": selected_credit_column,
-            "selected_credit_price": "CREDIT_PRICE_USD",
+            "selected_credit_price": "AI_CREDIT_PRICE_USD" if field == "CORTEX_AI_COST_USD" else "CREDIT_PRICE_USD",
             "source_rows_present": fixture_expected is not None,
             "packet_value": fixture_expected,
             "flat_value": fixture_expected,
@@ -1098,8 +1113,12 @@ def build_snowflake_formula_value_results(
         credit_price = account_cost / account_credits
     elif warehouse_credits is not None and warehouse_credits != 0 and warehouse_cost is not None:
         credit_price = warehouse_cost / warehouse_credits
-    elif cortex_credits is not None and cortex_credits != 0 and cortex_cost is not None:
-        credit_price = cortex_cost / cortex_credits
+    ai_credit_price: float | None = None
+    if cortex_credits is not None and cortex_credits != 0 and cortex_cost is not None:
+        ai_credit_price = cortex_cost / cortex_credits
+        if credit_price is None:
+            credit_price = ai_credit_price
+    cortex_price_marker = str(rows_by_field.get("CORTEX_AI_COST_USD", {}).get("selected_credit_price") or "")
 
     def add_check(name: str, passed: bool, actual: Any, expected: Any, fields: list[str], recommendation: str) -> None:
         checks.append(
@@ -1139,11 +1158,22 @@ def build_snowflake_formula_value_results(
     )
     add_check(
         "cortex_cost_formula",
-        credit_price is not None and cortex_credits is not None and cortex_cost is not None and abs(cortex_cost - cortex_credits * credit_price) <= tolerance,
+        ai_credit_price is not None
+        and cortex_credits is not None
+        and cortex_cost is not None
+        and abs(cortex_cost - cortex_credits * ai_credit_price) <= tolerance,
         cortex_cost,
-        None if credit_price is None or cortex_credits is None else round(cortex_credits * credit_price, 6),
+        None if ai_credit_price is None or cortex_credits is None else round(cortex_credits * ai_credit_price, 6),
         ["CORTEX_AI_CREDITS", "CORTEX_AI_COST_USD"],
-        "Cortex cost must use the same selected credit price as Cost and Executive summaries.",
+        "Cortex cost must use the selected AI credit price.",
+    )
+    add_check(
+        "cortex_ai_credit_price_source",
+        cortex_price_marker == "AI_CREDIT_PRICE_USD",
+        cortex_price_marker,
+        "AI_CREDIT_PRICE_USD",
+        ["CORTEX_AI_COST_USD"],
+        "Cortex AI spend must be mapped to AI_CREDIT_PRICE_USD, not the account compute credit price.",
     )
     expected_delta = None if account_credits is None or warehouse_credits is None else account_credits - warehouse_credits
     add_check(
@@ -1253,6 +1283,7 @@ def build_snowflake_formula_value_results(
         "generated_at": _utc_now(),
         "formula_validation_mode": str(value.get("formula_validation_mode") or _formula_validation_mode()),
         "selected_credit_price": credit_price,
+        "selected_ai_credit_price": ai_credit_price,
         "passed": not failures,
         "failure_count": len(failures),
         "failures": failures,

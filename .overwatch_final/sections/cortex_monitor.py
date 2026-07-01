@@ -643,6 +643,7 @@ def _render_cortex_control_brief(session, company: str) -> None:
                 sort_by=["PROJECTED_30D_COST", "TOTAL_CREDITS", "TOTAL_REQUESTS"],
                 ascending=[False, False, False],
                 raw_label="All Cortex cost exceptions",
+                credit_price=_ai_credit_rate(),
             )
             if st.button("Save Cortex Findings to Action Queue", key="cortex_control_queue"):
                 try:
@@ -687,6 +688,7 @@ def _render_cortex_control_brief(session, company: str) -> None:
                 ascending=True,
                 max_rows=90,
                 raw_label="All daily Cortex burn rows",
+                credit_price=_ai_credit_rate(),
             )
             source_split = (
                 daily.groupby("SOURCE", as_index=False)
@@ -701,6 +703,7 @@ def _render_cortex_control_brief(session, company: str) -> None:
                 sort_by=["COST_USD", "TOTAL_CREDITS"],
                 ascending=[False, False, False],
                 raw_label="All Cortex workload rows",
+                credit_price=_ai_credit_rate(),
             )
 
         st.download_button(
@@ -875,6 +878,7 @@ def render():
                 ascending=True,
                 max_rows=90,
                 raw_label="All Cortex service daily rows",
+                credit_price=_ai_credit_rate(),
             )
             render_priority_dataframe(
                 detail,
@@ -892,6 +896,7 @@ def render():
                 ascending=[False, False, False],
                 raw_label="All Cortex service detail rows",
                 height=360,
+                credit_price=_ai_credit_rate(),
                 column_config={
                     "COST_USD": st.column_config.NumberColumn("Cost", format="$%.2f"),
                     "TOTAL_CREDITS": st.column_config.NumberColumn("AI Credits", format="%.4f"),
@@ -996,6 +1001,7 @@ def render():
                     raw_label="All Cortex user cost and recency rows",
                     height=240,
                     max_rows=20,
+                    credit_price=_ai_credit_rate(),
                     column_config={
                         "COST_USD": st.column_config.NumberColumn("Cost", format="$%.2f"),
                         "TOTAL_CREDITS": st.column_config.NumberColumn("AI Credits", format="%.4f"),
@@ -1022,6 +1028,7 @@ def render():
                 ascending=[False, False, False],
                 raw_label="All Cortex user attribution rows",
                 height=350,
+                credit_price=_ai_credit_rate(),
                 column_config={
                     "COST_USD": st.column_config.NumberColumn("Cost", format="$%.2f"),
                     "COST_PER_REQUEST_USD": st.column_config.NumberColumn("Cost/request", format="$%.4f"),
@@ -1154,6 +1161,7 @@ def render():
                     ascending=True,
                     max_rows=90,
                     raw_label="All daily AI credit rows",
+                    credit_price=_ai_credit_rate(),
                 )
             with col_t2:
                 render_chart_with_data_toggle(
@@ -1166,6 +1174,7 @@ def render():
                     ascending=True,
                     max_rows=90,
                     raw_label="All daily active-user rows",
+                    credit_price=_ai_credit_rate(),
                 )
 
             render_chart_with_data_toggle(
@@ -1178,6 +1187,7 @@ def render():
                 ascending=True,
                 max_rows=90,
                 raw_label="All daily request rows",
+                credit_price=_ai_credit_rate(),
             )
 
             source_agg = df_tr.groupby("SOURCE").agg(
@@ -1193,6 +1203,7 @@ def render():
                 sort_by=["AI_COST_USD", "TOTAL_CREDITS", "TOTAL_REQUESTS"],
                 ascending=[False, False],
                 raw_label="All Cortex trend source rows",
+                credit_price=_ai_credit_rate(),
             )
 
             # 7-day rolling average overlay
@@ -1219,6 +1230,7 @@ def render():
                 ascending=True,
                 max_rows=90,
                 raw_label="All rolling Cortex credit rows",
+                credit_price=_ai_credit_rate(),
             )
 
             download_csv(df_tr, "cortex_trends.csv")
@@ -1315,6 +1327,7 @@ def render():
                     sort_by=["ANOMALY_FLAG", "ZSCORE", "CREDITS"],
                     ascending=[True, False, False],
                     raw_label="All Cortex anomaly rows",
+                    credit_price=_ai_credit_rate(),
                 )
 
             with st.expander("Full anomaly telemetry", expanded=False):
@@ -1335,6 +1348,7 @@ def render():
                     ascending=[False, False],
                     raw_label="All anomaly telemetry rows",
                     max_rows=50,
+                    credit_price=_ai_credit_rate(),
                 )
 
             download_csv(df_an, "cortex_anomalies.csv")
@@ -1433,6 +1447,7 @@ def render():
                 ascending=True,
                 max_rows=30,
                 raw_label="All predictive daily credit rows",
+                credit_price=_ai_credit_rate(),
             )
 
             # MV Refresh History tab extra (bonus)

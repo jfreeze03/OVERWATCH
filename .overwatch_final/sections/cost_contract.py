@@ -186,6 +186,7 @@ from sections.cost_contract_workflow import (
     set_cost_overview_renderer,
 )
 from sections.cost_contract_overview_floor import _render_cost_watch_floor
+from runtime_state import set_state
 
 
 get_active_environment = _lazy_util("get_active_environment")
@@ -201,11 +202,11 @@ def render() -> None:
         environment = get_active_environment()
         _normalize_cost_contract_workflow_state()
         if st.session_state.get("cost_contract_workflow") not in WORKFLOWS:
-            st.session_state["cost_contract_workflow"] = "Cost Overview"
+            set_state("cost_contract_workflow", "Cost Overview")
         workflow = str(st.session_state.get("cost_contract_workflow") or "Cost Overview")
         routed_workflow = apply_pending_cost_routes(workflow)
         if routed_workflow != workflow:
-            st.session_state["cost_contract_workflow"] = routed_workflow
+            set_state("cost_contract_workflow", routed_workflow)
             st.rerun()
         workflow = str(st.session_state.get("cost_contract_workflow") or "Cost Overview")
         if workflow == "Cost Explorer":

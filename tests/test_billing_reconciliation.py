@@ -130,7 +130,7 @@ class BillingReconciliationTests(unittest.TestCase):
         summary = summarize_billing_reconciliation(account_rows, pd.DataFrame({"WAREHOUSE_CREDITS": [1.0]}), credit_price=3.68)
 
         self.assertEqual(summary["CORTEX_AI_CREDITS"], 2.0)
-        self.assertEqual(summary["CORTEX_AI_COST_USD"], 7.36)
+        self.assertEqual(summary["CORTEX_AI_COST_USD"], 4.4)
 
     def test_daily_labels_do_not_expose_raw_objects(self):
         from utils.billing_reconciliation import daily_safe_billing_labels

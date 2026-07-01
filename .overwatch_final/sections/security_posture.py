@@ -53,6 +53,7 @@ from sections.decision_workspace_controls import make_decision_refresh_action, m
 from sections.decision_workspace_performance import with_section_first_paint_entry
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.decision_workspace_state import section_state_from_brief
+from runtime_state import set_state
 
 
 day_window_selectbox = _lazy_util("day_window_selectbox")
@@ -69,7 +70,7 @@ def _apply_queued_security_workflow() -> None:
     requested_view = SECURITY_VIEW_ALIASES.get(str(requested_view or ""), requested_view)
     requested_workflow = SECURITY_VIEW_ALIASES.get(str(requested_workflow or ""), requested_workflow)
     if requested_view in SECURITY_POSTURE_VIEWS:
-        st.session_state["security_posture_view"] = requested_view
+        set_state("security_posture_view", requested_view)
     if requested_workflow in WORKFLOWS:
         st.session_state["security_posture_workflow"] = requested_workflow
 
@@ -176,15 +177,15 @@ def render() -> None:
         if st.session_state.get("exceptions_only_mode") and "security_posture_workflow" not in st.session_state:
             st.session_state["security_posture_workflow"] = SECURITY_OVERVIEW_WORKFLOW
         if st.session_state.get("exceptions_only_mode") and "security_posture_view" not in st.session_state:
-            st.session_state["security_posture_view"] = SECURITY_OVERVIEW_WORKFLOW
+            set_state("security_posture_view", SECURITY_OVERVIEW_WORKFLOW)
         current_security_view = SECURITY_VIEW_ALIASES.get(
             str(st.session_state.get("security_posture_view") or ""),
             st.session_state.get("security_posture_view"),
         )
         if current_security_view in SECURITY_POSTURE_VIEWS:
-            st.session_state["security_posture_view"] = current_security_view
+            set_state("security_posture_view", current_security_view)
         if st.session_state.get("security_posture_view") not in SECURITY_POSTURE_VIEWS:
-            st.session_state["security_posture_view"] = SECURITY_POSTURE_VIEWS[0]
+            set_state("security_posture_view", SECURITY_POSTURE_VIEWS[0])
         _apply_queued_security_workflow()
 
         days = int(st.session_state.setdefault("security_posture_evidence_days", 30) or 30)

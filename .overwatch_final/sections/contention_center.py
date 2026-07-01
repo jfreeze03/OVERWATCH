@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import pandas as pd
 import streamlit as st
 
+from runtime_state import set_state
 from sections.navigation import apply_navigation_state
 from sections.shell_helpers import render_escaped_bold_text, render_shell_snapshot
 from utils import (
@@ -1693,10 +1694,10 @@ def _open_contention_owner_route(row: pd.Series | dict) -> None:
     if route == "Active Locks":
         st.session_state["contention_center_view"] = "Active Locks"
     elif route in {"Task graphs", "Pipeline & Task Health"}:
-        st.session_state["workload_operations_workflow"] = "Pipeline & Task Health"
+        set_state("workload_operations_workflow", "Pipeline & Task Health")
         st.session_state["workload_operations_pipeline_focus"] = "Failed Tasks"
     elif route in {"Query diagnosis", "Query Investigation"}:
-        st.session_state["workload_operations_workflow"] = "Query Investigation"
+        set_state("workload_operations_workflow", "Query Investigation")
         st.session_state["query_analysis_active_view"] = "AI Diagnosis"
         if query_id:
             st.session_state["ai_query_id"] = query_id
@@ -1704,7 +1705,7 @@ def _open_contention_owner_route(row: pd.Series | dict) -> None:
             st.session_state["ai_object_ctx"] = target_object
     elif route in {"Warehouse Health", "Cost & Contract"}:
         apply_navigation_state("Cost & Contract")
-        st.session_state["cost_contract_workflow"] = "Recommendations"
+        set_state("cost_contract_workflow", "Recommendations")
     else:
         st.session_state["contention_center_view"] = "Brief"
     st.rerun()

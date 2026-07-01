@@ -278,3 +278,41 @@ class ExportDownloadGauntletTests(unittest.TestCase):
             )
 
         self.assertTrue(gate["passed"], gate)
+
+    def test_default_export_with_token_or_temp_sql_path_fails(self):
+        from tools.contracts.export_download_gauntlet import evaluate_export_download_gate
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            root = Path(tmp)
+            payload_path = root / "artifacts/full_app_validation/query.csv"
+            payload_path.parent.mkdir(parents=True)
+            payload_text = (
+                "query_id,warehouse,status,note\n"
+                "01abc,COMPUTE_WH,OK,C:\\secure\\overwatch_pat_token.txt\n"
+                "01def,COMPUTE_WH,OK,C:\\Temp\\overwatch_snowflake_validation_abc.sql\n"
+            )
+            payload_path.write_text(payload_text, encoding="utf-8")
+            gate = evaluate_export_download_gate(
+                [
+                    {
+                        "section": "Query Search",
+                        "workflow": "Default export",
+                        "payload_file": "artifacts/full_app_validation/query.csv",
+                        "sha256": hashlib.sha256(payload_text.encode("utf-8")).hexdigest(),
+                        "size_bytes": len(payload_text.encode("utf-8")),
+                        "content_type": "text/csv",
+                        "parsed_row_count": 2,
+                        "visible_row_count": 2,
+                        "row_count": 2,
+                        "passed": True,
+                    }
+                ],
+                {"passed": True, "download_count": 1},
+                [],
+                root=root,
+            )
+
+        self.assertFalse(gate["passed"], gate)
+        failure_text = json.dumps(gate["failures"])
+        self.assertIn("token file path", failure_text)
+        self.assertIn("temp SQL file path", failure_text)

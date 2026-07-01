@@ -356,7 +356,7 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(summary["credential_expiring_30d_count"], 0)
         self.assertEqual(summary["credential_expired_count"], 0)
         self.assertEqual(summary["credential_next_expiration_days"], 0)
-        self.assertEqual(summary["credential_live_validation_status"], "not_executed_static_contract")
+        self.assertEqual(summary["credential_live_validation_status"], "fixture_runtime_chain_ready_live_not_executed")
         self.assertTrue(summary["user_display_name_gate_passed"])
         self.assertTrue(summary["user_display_name_live_gate_passed"])
         self.assertTrue(summary["user_display_surface_gate_passed"])

@@ -1171,8 +1171,12 @@ def build_full_app_release_sweep(
         ("sql_cleanup_gate", "sql_cleanup_gate_results"),
         ("delete_first_cleanup_gate", "delete_first_cleanup_gate_results"),
         ("security_credential_evidence", "security_credential_evidence_gate_results"),
+        ("security_credential_expiration_live", "security_credential_expiration_live_gate_results"),
         ("security_credential_snapshot", "security_credential_snapshot_gate_results"),
         ("cortex_token_efficiency", "cortex_token_efficiency_gate_results"),
+        ("cortex_token_efficiency_live", "cortex_token_efficiency_live_gate_results"),
+        ("snowflake_cli_live_validation", "snowflake_cli_live_gate_results"),
+        ("snowflake_cli_temp_file_hygiene", "snowflake_cli_temp_file_hygiene_gate_results"),
     )
     gate_rows: list[dict[str, Any]] = []
     for area, key in gate_checks:
@@ -1249,6 +1253,9 @@ def build_full_app_release_sweep(
         if row.get("area") == "primary_overview"
     )
     credential_row = next((row for row in rows if row.get("area") == "security_credential"), {})
+    snowflake_cli_gate = _gate(payloads, "snowflake_cli_live_gate_results")
+    snowflake_temp_gate = _gate(payloads, "snowflake_cli_temp_file_hygiene_gate_results")
+    cortex_live_gate = _gate(payloads, "cortex_token_efficiency_live_gate_results")
     first_paint_failure_count = sum(
         1
         for row in rows
@@ -1299,6 +1306,17 @@ def build_full_app_release_sweep(
             _gate(payloads, "security_credential_expiration_live_gate_results").get("live_validation_status") or ""
         ),
         "cortex_efficiency_rendered": bool(_gate(payloads, "cortex_token_efficiency_gate_results").get("passed")),
+        "cortex_token_efficiency_live_status": str(cortex_live_gate.get("live_validation_status") or ""),
+        "snowflake_cli_token_auth_used": bool(snowflake_cli_gate.get("snowflake_cli_token_auth_used")),
+        "snowflake_cli_token_file_supplied": bool(snowflake_cli_gate.get("snowflake_cli_token_file_supplied")),
+        "snowflake_cli_token_path_leak_count": _as_int(snowflake_cli_gate.get("snowflake_cli_token_path_leak_count")),
+        "snowflake_cli_temp_sql_path_leak_count": _as_int(snowflake_cli_gate.get("snowflake_cli_temp_sql_path_leak_count")),
+        "snowflake_cli_temp_file_hygiene_passed": bool(
+            snowflake_cli_gate.get("temp_file_hygiene_passed", snowflake_temp_gate.get("passed"))
+        ),
+        "temp_sql_file_leftover_count": _as_int(
+            snowflake_cli_gate.get("temp_sql_file_leftover_count", snowflake_temp_gate.get("temp_sql_file_leftover_count"))
+        ),
         "user_id_daily_leak_count": _as_int(_gate(payloads, "user_display_surface_gate_results").get("user_id_daily_leak_count")),
         "credential_id_daily_leak_count": _as_int(_gate(payloads, "security_credential_export_gate_results").get("credential_export_leak_count")),
         "rows": rows,
@@ -1350,6 +1368,13 @@ def evaluate_full_app_release_sweep_gate(payload: object) -> dict[str, Any]:
         "credential_case_payload_validated": bool(results.get("credential_case_payload_validated")),
         "credential_live_validation_status": str(results.get("credential_live_validation_status") or ""),
         "cortex_efficiency_rendered": bool(results.get("cortex_efficiency_rendered")),
+        "cortex_token_efficiency_live_status": str(results.get("cortex_token_efficiency_live_status") or ""),
+        "snowflake_cli_token_auth_used": bool(results.get("snowflake_cli_token_auth_used")),
+        "snowflake_cli_token_file_supplied": bool(results.get("snowflake_cli_token_file_supplied")),
+        "snowflake_cli_token_path_leak_count": _as_int(results.get("snowflake_cli_token_path_leak_count")),
+        "snowflake_cli_temp_sql_path_leak_count": _as_int(results.get("snowflake_cli_temp_sql_path_leak_count")),
+        "snowflake_cli_temp_file_hygiene_passed": bool(results.get("snowflake_cli_temp_file_hygiene_passed")),
+        "temp_sql_file_leftover_count": _as_int(results.get("temp_sql_file_leftover_count")),
         "user_id_daily_leak_count": _as_int(results.get("user_id_daily_leak_count")),
         "credential_id_daily_leak_count": _as_int(results.get("credential_id_daily_leak_count")),
         "failures": failures,
@@ -1393,6 +1418,9 @@ def write_full_app_release_sweep_artifacts(
                 "artifacts/launch_readiness/security_credential_export_gate_results.json",
                 "artifacts/launch_readiness/user_display_surface_gate_results.json",
                 "artifacts/launch_readiness/cortex_token_efficiency_gate_results.json",
+                "artifacts/launch_readiness/cortex_token_efficiency_live_gate_results.json",
+                "artifacts/launch_readiness/snowflake_cli_live_gate_results.json",
+                "artifacts/launch_readiness/snowflake_cli_temp_file_hygiene_gate_results.json",
             ),
         )
     results, failures = build_full_app_release_sweep(payloads, root=root_path)

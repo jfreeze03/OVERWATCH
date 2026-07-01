@@ -25,9 +25,13 @@ from tools.contracts.snowflake_cli_live_validation import (
     CLI_COST_RECONCILIATION_REL,
     CLI_QUERY_BUDGET_REL,
     CLI_SETUP_REL,
+    CLI_TEMP_FILE_HYGIENE_GATE_REL,
+    CLI_TEMP_FILE_HYGIENE_REL,
     REQUIRED_QUERY_BUDGET_BOUNDARIES,
     SnowflakeCliValidationOptions,
+    TEMP_SQL_PREFIX,
     evaluate_snowflake_cli_live_gate,
+    evaluate_temp_file_hygiene_gate,
     run_snowflake_cli_live_validation,
     sanitize_text,
     write_snowflake_cli_live_validation_artifacts,
@@ -371,6 +375,63 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
             seen_args,
         )
 
+    def test_temp_sql_file_hygiene_is_proven_without_paths_or_sql_body(self):
+        seen_files: list[str] = []
+        base_runner = _runner()
+
+        def recording_runner(args, capture_output=True, text=True, timeout=None, check=False):
+            if "-f" in args:
+                file_arg = str(args[args.index("-f") + 1])
+                if TEMP_SQL_PREFIX in Path(file_arg).name:
+                    seen_files.append(file_arg)
+            return base_runner(args, capture_output=capture_output, text=text, timeout=timeout, check=check)
+
+        with _root_with_validation_sql() as temp:
+            artifacts = write_snowflake_cli_live_validation_artifacts(
+                temp,
+                options=SnowflakeCliValidationOptions(
+                    connection="dev",
+                    profile="internal_live",
+                    skip_refresh=True,
+                    query_history_enabled=True,
+                ),
+                runner=recording_runner,
+            )
+
+        serialized = json.dumps(artifacts)
+        self.assertTrue(seen_files)
+        self.assertTrue(all(not Path(path).exists() for path in seen_files))
+        self.assertTrue(artifacts[CLI_TEMP_FILE_HYGIENE_REL]["passed"], artifacts[CLI_TEMP_FILE_HYGIENE_REL])
+        self.assertTrue(artifacts[CLI_TEMP_FILE_HYGIENE_GATE_REL]["passed"], artifacts[CLI_TEMP_FILE_HYGIENE_GATE_REL])
+        self.assertGreater(artifacts[CLI_TEMP_FILE_HYGIENE_REL]["temp_sql_file_used_count"], 0)
+        self.assertEqual(artifacts[CLI_TEMP_FILE_HYGIENE_REL]["temp_sql_file_leftover_count"], 0)
+        self.assertNotIn("MART_SECTION_COMMAND_BRIEF", serialized)
+        for path in seen_files:
+            self.assertNotIn(path, serialized)
+
+    def test_temp_sql_leftover_fails_hygiene_gate_without_storing_full_path(self):
+        leftover = Path(tempfile.gettempdir()) / f"{TEMP_SQL_PREFIX}unit_leftover.sql"
+        leftover.write_text("select 1", encoding="utf-8")
+        try:
+            payload = {
+                "source": "snowflake_cli_temp_file_hygiene_results",
+                "passed": True,
+                "failure_count": 0,
+                "rows": [],
+                "temp_sql_file_used_count": 1,
+                "temp_sql_file_deleted_count": 1,
+                "temp_sql_file_leftover_count": 1,
+                "raw_sql_included": False,
+            }
+            gate = evaluate_temp_file_hygiene_gate(payload)
+        finally:
+            leftover.unlink(missing_ok=True)
+
+        self.assertFalse(gate["passed"], gate)
+        serialized = json.dumps(gate)
+        self.assertIn("SNOWFLAKE_CLI_TEMP_SQL_FILE_LEFTOVER", serialized)
+        self.assertNotIn(str(leftover), serialized)
+
     def test_cli_help_without_json_option_fails_capability_check(self):
         with _root_with_validation_sql() as temp:
             artifacts = write_snowflake_cli_live_validation_artifacts(
@@ -404,6 +465,23 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
         self.assertFalse(artifacts[CLI_PACKET_VALUE_REL]["passed"], artifacts[CLI_PACKET_VALUE_REL])
         self.assertFalse(artifacts[CLI_LAUNCH_GATE_REL]["passed"], artifacts[CLI_LAUNCH_GATE_REL])
         self.assertIn("SNOWFLAKE_CLI_ARTIFACT_FAILED", {row["code"] for row in artifacts[CLI_LAUNCH_GATE_REL]["failures"]})
+
+    def test_failed_live_value_check_still_reports_live_executed(self):
+        with _root_with_validation_sql() as temp:
+            artifacts = write_snowflake_cli_live_validation_artifacts(
+                temp,
+                options=SnowflakeCliValidationOptions(
+                    connection="dev",
+                    profile="internal_live",
+                    skip_refresh=True,
+                    query_history_enabled=True,
+                ),
+                runner=_runner(packet_mismatch=True),
+            )
+
+        self.assertFalse(artifacts[CLI_LAUNCH_GATE_REL]["passed"], artifacts[CLI_LAUNCH_GATE_REL])
+        self.assertTrue(artifacts[CLI_LAUNCH_GATE_REL]["snowflake_cli_live_executed"], artifacts[CLI_LAUNCH_GATE_REL])
+        self.assertFalse(artifacts[CLI_LAUNCH_GATE_REL]["snowflake_cli_live_passed"], artifacts[CLI_LAUNCH_GATE_REL])
 
     def test_successful_live_run_reconciles_packet_formula_and_query_budget(self):
         with _root_with_validation_sql() as temp:

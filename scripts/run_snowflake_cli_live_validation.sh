@@ -29,6 +29,8 @@ if [[ -n "${OVERWATCH_SNOWFLAKE_VALIDATION_DATABASE:-}" ]]; then args+=(--databa
 if [[ -n "${OVERWATCH_SNOWFLAKE_VALIDATION_SCHEMA:-}" ]]; then args+=(--schema "$OVERWATCH_SNOWFLAKE_VALIDATION_SCHEMA"); fi
 if [[ -n "${OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE:-}" ]]; then args+=(--warehouse "$OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE"); fi
 if [[ -n "${OVERWATCH_SNOWFLAKE_VALIDATION_ROLE:-}" ]]; then args+=(--role "$OVERWATCH_SNOWFLAKE_VALIDATION_ROLE"); fi
+if [[ -n "${OVERWATCH_SNOWFLAKE_CLI_AUTHENTICATOR:-}" ]]; then args+=(--authenticator "$OVERWATCH_SNOWFLAKE_CLI_AUTHENTICATOR"); fi
+if [[ -n "${OVERWATCH_SNOWFLAKE_CLI_TOKEN_FILE_PATH:-}" ]]; then args+=(--token-file-path "$OVERWATCH_SNOWFLAKE_CLI_TOKEN_FILE_PATH"); fi
 if [[ "${OVERWATCH_RUN_FAST_REFRESH_VALIDATION:-0}" == "1" ]]; then args+=(--run-fast-refresh); fi
 if [[ "${OVERWATCH_RUN_FULL_REFRESH_DRY_RUN:-0}" == "1" ]]; then args+=(--run-full-refresh-dry-run); fi
 if [[ "${OVERWATCH_SKIP_REFRESH_VALIDATION:-1}" == "1" ]]; then args+=(--skip-refresh); fi

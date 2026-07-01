@@ -7,6 +7,8 @@ param(
     [string]$Schema = $env:OVERWATCH_SNOWFLAKE_VALIDATION_SCHEMA,
     [string]$Warehouse = $env:OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE,
     [string]$Role = $env:OVERWATCH_SNOWFLAKE_VALIDATION_ROLE,
+    [string]$Authenticator = $env:OVERWATCH_SNOWFLAKE_CLI_AUTHENTICATOR,
+    [string]$TokenFilePath = $env:OVERWATCH_SNOWFLAKE_CLI_TOKEN_FILE_PATH,
     [string]$Company = $(if ($env:OVERWATCH_COMPANY) { $env:OVERWATCH_COMPANY } else { "ALL" }),
     [string]$Environment = $(if ($env:OVERWATCH_ENVIRONMENT) { $env:OVERWATCH_ENVIRONMENT } else { "ALL" }),
     [int]$WindowDays = $(if ($env:OVERWATCH_WINDOW_DAYS) { [int]$env:OVERWATCH_WINDOW_DAYS } else { 8 }),
@@ -45,6 +47,8 @@ if ($Database) { $argsList += @("--database", $Database) }
 if ($Schema) { $argsList += @("--schema", $Schema) }
 if ($Warehouse) { $argsList += @("--warehouse", $Warehouse) }
 if ($Role) { $argsList += @("--role", $Role) }
+if ($Authenticator) { $argsList += @("--authenticator", $Authenticator) }
+if ($TokenFilePath) { $argsList += @("--token-file-path", $TokenFilePath) }
 if ($RunFastRefresh) { $argsList += "--run-fast-refresh" }
 if ($RunFullRefreshDryRun) { $argsList += "--run-full-refresh-dry-run" }
 if ($SkipRefresh) { $argsList += "--skip-refresh" }

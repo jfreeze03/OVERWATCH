@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import hashlib
 import json
 from pathlib import Path
+import re
 from typing import Any, Mapping
 
 from tools.contracts.full_app_launch_gauntlet import (
@@ -53,6 +54,12 @@ FORBIDDEN_DEFAULT_EXPORT_TOKENS = (
     "proof",
     "internal test",
     "diagnostic card",
+    "token_file_path",
+    "--token-file-path",
+    "overwatch_snowflake_validation_",
+    "snowflakecomputing.com",
+    "CredWrite",
+    "The stub received bad data",
 )
 
 CORTEX_EFFICIENCY_EXPORT_FIELDS = {
@@ -139,7 +146,15 @@ def _contains_forbidden(text: str) -> list[str]:
             if token.upper() in upper_text:
                 hits.append(token)
         elif token.lower() in lower_text:
-            hits.append(token)
+                hits.append(token)
+    pattern_checks = {
+        "token file path": r"(?i)([A-Za-z]:\\|/)[^\"'\r\n,]*token[^\"'\r\n,]*",
+        "temp SQL file path": r"(?i)([A-Za-z]:\\|/)[^\"'\r\n,]*overwatch_snowflake_validation_[^\"'\r\n,]*\.sql",
+        "raw Snowflake account URL": r"(?i)https://[A-Za-z0-9_.-]+\.snowflakecomputing\.com",
+    }
+    for label, pattern in pattern_checks.items():
+        if re.search(pattern, text):
+            hits.append(label)
     return sorted(set(hits))
 
 

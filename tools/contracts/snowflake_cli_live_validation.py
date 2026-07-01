@@ -47,9 +47,11 @@ CLI_PACKET_VALUE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_packet_value_r
 CLI_SUMMARY_CARD_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_summary_card_value_results.json"
 CLI_QUERY_BUDGET_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_query_budget_results.json"
 CLI_MANIFEST_RECONCILIATION_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_manifest_reconciliation_results.json"
+CLI_TEMP_FILE_HYGIENE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_temp_file_hygiene_results.json"
 CLI_LAUNCH_GATE_REL = f"{LAUNCH_READINESS_DIR}/snowflake_cli_live_gate_results.json"
 CLI_FORMULA_VALUE_GATE_REL = f"{LAUNCH_READINESS_DIR}/snowflake_cli_formula_value_gate_results.json"
 CLI_COST_RECONCILIATION_GATE_REL = f"{LAUNCH_READINESS_DIR}/live_cost_reconciliation_gate_results.json"
+CLI_TEMP_FILE_HYGIENE_GATE_REL = f"{LAUNCH_READINESS_DIR}/snowflake_cli_temp_file_hygiene_gate_results.json"
 CLI_RELEASE_REL = f"{RELEASE_CANDIDATE_DIR}/snowflake_cli_release_results.json"
 
 CONNECTION_TEST_TIMEOUT_SECONDS = 240
@@ -67,12 +69,18 @@ REQUIRED_CLI_ARTIFACTS = {
     CLI_SUMMARY_CARD_REL,
     CLI_QUERY_BUDGET_REL,
     CLI_MANIFEST_RECONCILIATION_REL,
+    CLI_TEMP_FILE_HYGIENE_REL,
     CLI_LAUNCH_GATE_REL,
     CLI_FORMULA_VALUE_GATE_REL,
     CLI_COST_RECONCILIATION_GATE_REL,
+    CLI_TEMP_FILE_HYGIENE_GATE_REL,
     PACKET_AVAILABILITY_GATE_REL,
     CLI_RELEASE_REL,
 }
+
+TEMP_SQL_PREFIX = "overwatch_snowflake_validation_"
+TEMP_SQL_SUFFIX = ".sql"
+_TEMP_SQL_EVENTS: list[dict[str, Any]] = []
 
 PRIMARY_SECTIONS = (
     "Executive Landing",
@@ -356,6 +364,9 @@ def _base_row(
         "row_count": row_count,
         "sanitized_error": sanitize_text(sanitized_error),
         "raw_sql_included": False,
+        "temp_sql_file_used": False,
+        "temp_sql_file_deleted": False,
+        "temp_sql_file_path_stored": False,
         "recommendation": recommendation,
     }
 
@@ -372,6 +383,7 @@ def _assign_validation_ids(artifacts: Mapping[str, Any]) -> None:
         CLI_COST_RECONCILIATION_REL,
         CLI_SUMMARY_CARD_REL,
         CLI_QUERY_BUDGET_REL,
+        CLI_TEMP_FILE_HYGIENE_REL,
     ):
         payload = artifacts.get(rel)
         if not isinstance(payload, dict):
@@ -439,6 +451,7 @@ def _manifest_reconciliation_results(artifacts: Mapping[str, Any], manifest: Map
         CLI_COST_RECONCILIATION_REL,
         CLI_SUMMARY_CARD_REL,
         CLI_QUERY_BUDGET_REL,
+        CLI_TEMP_FILE_HYGIENE_REL,
     ):
         payload = artifacts.get(rel)
         raw_payload_rows = payload.get("rows") if isinstance(payload, Mapping) else None
@@ -556,6 +569,7 @@ def _skipped_artifacts(
         (CLI_COST_RECONCILIATION_REL, "cost_reconciliation_validation"),
         (CLI_SUMMARY_CARD_REL, "summary_card_value_validation"),
         (CLI_QUERY_BUDGET_REL, "query_budget_validation"),
+        (CLI_TEMP_FILE_HYGIENE_REL, "temp_sql_file_hygiene"),
     ):
         rows_by_rel[rel] = [
             {
@@ -585,6 +599,7 @@ def _skipped_artifacts(
     artifacts[CLI_MANIFEST_RECONCILIATION_REL] = _manifest_reconciliation_results(artifacts, manifest)
     artifacts[CLI_FORMULA_VALUE_GATE_REL] = _formula_value_gate_results(artifacts.get(CLI_FORMULA_VALUE_REL, {}))
     artifacts[CLI_COST_RECONCILIATION_GATE_REL] = _cost_reconciliation_gate_results(artifacts.get(CLI_COST_RECONCILIATION_REL, {}))
+    artifacts[CLI_TEMP_FILE_HYGIENE_GATE_REL] = evaluate_temp_file_hygiene_gate(artifacts.get(CLI_TEMP_FILE_HYGIENE_REL, {}))
     artifacts[PACKET_AVAILABILITY_GATE_REL] = evaluate_packet_availability_gate(
         artifacts.get(PACKET_AVAILABILITY_MATRIX_REL, {})
     )
@@ -602,6 +617,12 @@ def _skipped_artifacts(
         "snowflake_cli_live_passed": bool(gate.get("snowflake_cli_live_passed")),
         "snowflake_cli_live_skipped": True,
         "snowflake_cli_live_waived": bool(gate.get("snowflake_cli_live_waived")),
+        "snowflake_cli_token_auth_used": bool(gate.get("snowflake_cli_token_auth_used")),
+        "snowflake_cli_token_file_supplied": bool(gate.get("snowflake_cli_token_file_supplied")),
+        "snowflake_cli_token_path_leak_count": int(gate.get("snowflake_cli_token_path_leak_count") or 0),
+        "snowflake_cli_temp_sql_path_leak_count": int(gate.get("snowflake_cli_temp_sql_path_leak_count") or 0),
+        "snowflake_cli_temp_file_hygiene_passed": bool(gate.get("temp_file_hygiene_passed")),
+        "temp_sql_file_leftover_count": int(gate.get("temp_sql_file_leftover_count") or 0),
         "skip_reason": reason,
         "raw_sql_included": False,
     }
@@ -911,6 +932,162 @@ def _parse_json_rows(stdout: str) -> list[dict[str, Any]]:
     return []
 
 
+def _record_temp_sql_event(
+    *,
+    temp_sql_file_used: bool,
+    temp_sql_file_deleted: bool,
+    temp_sql_file_path_internal: str = "",
+    elapsed_ms: int = 0,
+    sanitized_error: str = "",
+) -> dict[str, Any]:
+    event = {
+        "event_id": f"temp-sql-{len(_TEMP_SQL_EVENTS) + 1:04d}",
+        "temp_sql_file_used": temp_sql_file_used,
+        "temp_sql_file_deleted": temp_sql_file_deleted,
+        "temp_sql_file_path_stored": False,
+        "temp_sql_file_basename_prefix": TEMP_SQL_PREFIX,
+        "elapsed_ms": elapsed_ms,
+        "sanitized_error": sanitize_text(sanitized_error),
+        "raw_sql_included": False,
+        "_temp_sql_file_path_internal": temp_sql_file_path_internal,
+    }
+    _TEMP_SQL_EVENTS.append(event)
+    return event
+
+
+def _row_temp_sql_metadata(event: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "temp_sql_event_id": str(event.get("event_id") or ""),
+        "temp_sql_file_used": bool(event.get("temp_sql_file_used")),
+        "temp_sql_file_deleted": bool(event.get("temp_sql_file_deleted")),
+        "temp_sql_file_path_stored": False,
+        "raw_sql_included": False,
+    }
+
+
+def _scan_leftover_temp_sql_files() -> list[str]:
+    leftovers: list[str] = []
+    for event in _TEMP_SQL_EVENTS:
+        path_text = str(event.get("_temp_sql_file_path_internal") or "")
+        if not path_text:
+            continue
+        path = Path(path_text)
+        try:
+            if path.exists():
+                leftovers.append(path.name)
+        except OSError:
+            continue
+    return sorted(leftovers)
+
+
+def _temp_file_hygiene_results(options: SnowflakeCliValidationOptions) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    for index, event in enumerate(_TEMP_SQL_EVENTS):
+        passed = bool(event.get("temp_sql_file_used")) and bool(event.get("temp_sql_file_deleted"))
+        row = _base_row(
+            phase="temp_sql_file_hygiene",
+            command_kind="validation",
+            options=options,
+            elapsed_ms=int(event.get("elapsed_ms") or 0),
+            status="passed" if passed else "failed",
+            sanitized_error=str(event.get("sanitized_error") or ""),
+            recommendation="" if passed else "Investigate local temp-file cleanup before trusting CLI live proof.",
+        )
+        row.update(
+            {
+                "artifact": Path(CLI_TEMP_FILE_HYGIENE_REL).name,
+                "row_index": index,
+                "temp_sql_event_id": str(event.get("event_id") or ""),
+                "temp_sql_file_used": bool(event.get("temp_sql_file_used")),
+                "temp_sql_file_deleted": bool(event.get("temp_sql_file_deleted")),
+                "temp_sql_file_path_stored": False,
+                "temp_sql_file_basename_prefix": TEMP_SQL_PREFIX,
+            }
+        )
+        rows.append(row)
+        if not passed:
+            failures.append({"code": "SNOWFLAKE_CLI_TEMP_SQL_FILE_NOT_CLEANED", "temp_sql_event_id": row["temp_sql_event_id"]})
+    leftovers = _scan_leftover_temp_sql_files()
+    if leftovers:
+        failures.append(
+            {
+                "code": "SNOWFLAKE_CLI_TEMP_SQL_FILE_LEFTOVER",
+                "leftover_count": len(leftovers),
+                "basename_prefix": TEMP_SQL_PREFIX,
+            }
+        )
+    if not rows:
+        rows.append(
+            {
+                **_base_row(
+                    phase="temp_sql_file_hygiene",
+                    command_kind="validation",
+                    options=options,
+                    status="skipped",
+                    sanitized_error="",
+                    recommendation="Run live SQL validation to exercise temporary SQL file hygiene.",
+                ),
+                "artifact": Path(CLI_TEMP_FILE_HYGIENE_REL).name,
+                "row_index": 0,
+                "temp_sql_file_used": False,
+                "temp_sql_file_deleted": False,
+                "temp_sql_file_path_stored": False,
+                "temp_sql_file_basename_prefix": TEMP_SQL_PREFIX,
+            }
+        )
+    return _payload(
+        source="snowflake_cli_temp_file_hygiene_results",
+        rows=rows,
+        failures=failures,
+        skipped=not _TEMP_SQL_EVENTS,
+        skip_reason="" if _TEMP_SQL_EVENTS else "No generated Snowflake CLI SQL files were used in this run.",
+        extra={
+            "temp_sql_file_used_count": len(_TEMP_SQL_EVENTS),
+            "temp_sql_file_deleted_count": sum(1 for event in _TEMP_SQL_EVENTS if bool(event.get("temp_sql_file_deleted"))),
+            "temp_sql_file_leftover_count": len(leftovers),
+            "temp_sql_file_path_stored": False,
+            "raw_sql_included": False,
+        },
+    )
+
+
+def evaluate_temp_file_hygiene_gate(payload: Mapping[str, Any]) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+    if not isinstance(payload, Mapping):
+        failures.append({"code": "SNOWFLAKE_CLI_TEMP_FILE_HYGIENE_ARTIFACT_MISSING"})
+    else:
+        if not bool(payload.get("passed")):
+            failures.append(
+                {
+                    "code": "SNOWFLAKE_CLI_TEMP_FILE_HYGIENE_FAILED",
+                    "failure_count": int(payload.get("failure_count") or 0),
+                }
+            )
+        if int(payload.get("temp_sql_file_leftover_count") or 0) > 0:
+            failures.append(
+                {
+                    "code": "SNOWFLAKE_CLI_TEMP_SQL_FILE_LEFTOVER",
+                    "leftover_count": int(payload.get("temp_sql_file_leftover_count") or 0),
+                }
+            )
+        serialized = json.dumps(payload, default=str)
+        if re.search(r"(?i)overwatch_snowflake_validation_[^\"'\\s]+\\.sql", serialized):
+            failures.append({"code": "SNOWFLAKE_CLI_TEMP_SQL_FILE_PATH_LEAK"})
+    return {
+        "source": "snowflake_cli_temp_file_hygiene_gate_results",
+        "generated_at": _utc_now(),
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "snowflake_cli_temp_file_hygiene_passed": not failures,
+        "temp_sql_file_used_count": int(payload.get("temp_sql_file_used_count") or 0) if isinstance(payload, Mapping) else 0,
+        "temp_sql_file_leftover_count": int(payload.get("temp_sql_file_leftover_count") or 0) if isinstance(payload, Mapping) else 0,
+        "temp_sql_file_path_stored": False,
+        "raw_sql_included": False,
+    }
+
+
 def _run_snow_sql_query(
     snow: str,
     options: SnowflakeCliValidationOptions,
@@ -918,13 +1095,15 @@ def _run_snow_sql_query(
     *,
     runner: Runner,
     timeout_seconds: int = 180,
-) -> tuple[list[dict[str, Any]], subprocess.CompletedProcess[str] | None, int]:
+) -> tuple[list[dict[str, Any]], subprocess.CompletedProcess[str] | None, int, dict[str, Any]]:
     temp_path = ""
+    event: dict[str, Any] = {}
+    elapsed = 0
     try:
         with tempfile.NamedTemporaryFile(
             mode="w",
             suffix=".sql",
-            prefix="overwatch_snowflake_validation_",
+            prefix=TEMP_SQL_PREFIX,
             encoding="utf-8",
             delete=False,
         ) as handle:
@@ -933,13 +1112,27 @@ def _run_snow_sql_query(
         args = [snow, "sql", *_json_output_args(), *_command_scope(options), "-f", temp_path]
         proc, elapsed = _run(args, runner=runner, timeout_seconds=timeout_seconds)
         rows = _parse_json_rows(proc.stdout if proc else "")
-        return rows, proc, elapsed
+        return rows, proc, elapsed, event
     finally:
         if temp_path:
+            deleted = False
+            error = ""
             try:
                 Path(temp_path).unlink(missing_ok=True)
+                deleted = not Path(temp_path).exists()
             except OSError:
-                pass
+                deleted = False
+                error = "Temporary SQL file cleanup failed."
+            if not event:
+                event.update(
+                    _record_temp_sql_event(
+                        temp_sql_file_used=True,
+                        temp_sql_file_deleted=deleted,
+                        temp_sql_file_path_internal=temp_path,
+                        elapsed_ms=elapsed,
+                        sanitized_error=error,
+                    )
+                )
 
 
 def _run_snow_sql_file(
@@ -1094,7 +1287,7 @@ def _setup_validation_results(
     if options.skip_refresh:
         refresh_reason = "Refresh validation skipped because --skip-refresh was provided."
     elif options.run_fast_refresh:
-        signature_rows, signature_proc, signature_elapsed = _run_snow_sql_query(
+        signature_rows, signature_proc, signature_elapsed, signature_temp = _run_snow_sql_query(
             snow,
             options,
             _procedure_signature_sql(options),
@@ -1124,6 +1317,7 @@ def _setup_validation_results(
                 "procedure_name": "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEF",
                 "signature_count": int(_as_float(signature.get("signature_count")) or 0),
                 "supports_mode_boolean_signature": int(_as_float(signature.get("supports_mode_boolean_signature")) or 0),
+                **_row_temp_sql_metadata(signature_temp),
             }
         )
         rows.append(signature_row)
@@ -1135,7 +1329,7 @@ def _setup_validation_results(
                 failures=failures,
                 extra={"refresh_status": "incompatible_signature", "refresh_skip_reason": "Refresh call not executed because procedure signature was incompatible."},
             )
-        rows2, proc2, elapsed2 = _run_snow_sql_query(
+        rows2, proc2, elapsed2, temp2 = _run_snow_sql_query(
             snow,
             options,
             "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEF('FAST', TRUE)",
@@ -1154,7 +1348,7 @@ def _setup_validation_results(
             sanitized_error="" if refresh_status == "passed" else sanitize_text((proc2.stderr if proc2 else "") or (proc2.stdout if proc2 else "")),
             recommendation="" if refresh_status == "passed" else "Fix FAST refresh validation or run with --skip-refresh for non-refresh proof.",
         )
-        row2.update({"artifact": Path(CLI_SETUP_REL).name, "row_index": len(rows)})
+        row2.update({"artifact": Path(CLI_SETUP_REL).name, "row_index": len(rows), **_row_temp_sql_metadata(temp2)})
         rows.append(row2)
         if refresh_status == "failed":
             failures.append({"code": "SNOWFLAKE_CLI_FAST_REFRESH_FAILED", "sanitized_error": row2["sanitized_error"]})
@@ -1177,7 +1371,7 @@ def _setup_validation_results(
                 failures=failures,
                 extra={"refresh_status": "blocked", "refresh_skip_reason": "FULL dry-run blocked without destructive validation flag."},
             )
-        rows3, proc3, elapsed3 = _run_snow_sql_query(
+        rows3, proc3, elapsed3, temp3 = _run_snow_sql_query(
             snow,
             options,
             "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEF('FULL', TRUE)",
@@ -1195,7 +1389,7 @@ def _setup_validation_results(
             sanitized_error="" if status == "passed" else sanitize_text((proc3.stderr if proc3 else "") or (proc3.stdout if proc3 else "")),
             recommendation="" if status == "passed" else "Fix FULL dry-run validation.",
         )
-        row3.update({"artifact": Path(CLI_SETUP_REL).name, "row_index": len(rows)})
+        row3.update({"artifact": Path(CLI_SETUP_REL).name, "row_index": len(rows), **_row_temp_sql_metadata(temp3)})
         rows.append(row3)
         if status == "failed":
             failures.append({"code": "SNOWFLAKE_CLI_FULL_DRY_RUN_FAILED", "sanitized_error": row3["sanitized_error"]})
@@ -1221,7 +1415,7 @@ def _packet_value_results(
     *,
     runner: Runner,
 ) -> dict[str, Any]:
-    rows_raw, proc, elapsed = _run_snow_sql_query(snow, options, _packet_flat_sql(options), runner=runner)
+    rows_raw, proc, elapsed, temp_meta = _run_snow_sql_query(snow, options, _packet_flat_sql(options), runner=runner)
     failures: list[dict[str, Any]] = []
     rows: list[dict[str, Any]] = []
     if proc is None or proc.returncode != 0:
@@ -1234,7 +1428,7 @@ def _packet_value_results(
             sanitized_error=sanitize_text((proc.stderr if proc else "") or (proc.stdout if proc else "")),
             recommendation="Validate MART_SECTION_COMMAND_BRIEF and MART_SECTION_DECISION_CURRENT_FLAT are deployed and populated.",
         )
-        row.update({"artifact": Path(CLI_PACKET_VALUE_REL).name, "row_index": 0})
+        row.update({"artifact": Path(CLI_PACKET_VALUE_REL).name, "row_index": 0, **_row_temp_sql_metadata(temp_meta)})
         return _payload(
             source="snowflake_cli_packet_value_results",
             rows=[row],
@@ -1285,6 +1479,7 @@ def _packet_value_results(
                 "missing_flat_fields": missing_flat_fields,
                 "packet_values": packet,
                 "flat_values": flat,
+                **_row_temp_sql_metadata(temp_meta),
             }
         )
         rows.append(row)
@@ -1321,7 +1516,7 @@ def _packet_availability_results(
     *,
     runner: Runner,
 ) -> dict[str, dict[str, Any]]:
-    rows_raw, proc, elapsed = _run_snow_sql_query(snow, options, _packet_availability_sql(options), runner=runner)
+    rows_raw, proc, elapsed, temp_meta = _run_snow_sql_query(snow, options, _packet_availability_sql(options), runner=runner)
     if proc is None or proc.returncode != 0:
         row = _base_row(
             phase="packet_availability_validation",
@@ -1340,6 +1535,7 @@ def _packet_availability_results(
                 "selected_environment": options.environment,
                 "selected_window_days": options.window_days,
                 "raw_sql_included": False,
+                **_row_temp_sql_metadata(temp_meta),
             }
         )
         payload = _payload(
@@ -1379,7 +1575,7 @@ def _packet_availability_results(
             recommendation=str(item.get("recommended_fix") or ""),
         )
         row.update(dict(item))
-        row.update({"artifact": Path(SNOWFLAKE_CLI_PACKET_AVAILABILITY_REL).name, "row_index": index})
+        row.update({"artifact": Path(SNOWFLAKE_CLI_PACKET_AVAILABILITY_REL).name, "row_index": index, **_row_temp_sql_metadata(temp_meta)})
         cli_rows.append(row)
     cli_payload = _payload(
         source="snowflake_cli_packet_availability_results",
@@ -1499,7 +1695,7 @@ def _formula_value_results(
     *,
     runner: Runner,
 ) -> dict[str, Any]:
-    rows_raw, proc, elapsed = _run_snow_sql_query(snow, options, _formula_expected_sql(options), runner=runner)
+    rows_raw, proc, elapsed, temp_meta = _run_snow_sql_query(snow, options, _formula_expected_sql(options), runner=runner)
     failures: list[dict[str, Any]] = []
     rows: list[dict[str, Any]] = []
     if proc is None or proc.returncode != 0:
@@ -1512,7 +1708,7 @@ def _formula_value_results(
             sanitized_error=sanitize_text((proc.stderr if proc else "") or (proc.stdout if proc else "")),
             recommendation="Grant read access to billing/warehouse metering views or provide a signed live-proof waiver.",
         )
-        row.update({"artifact": Path(CLI_FORMULA_VALUE_REL).name, "row_index": 0})
+        row.update({"artifact": Path(CLI_FORMULA_VALUE_REL).name, "row_index": 0, **_row_temp_sql_metadata(temp_meta)})
         return _payload(
             source="snowflake_cli_formula_value_results",
             rows=[row],
@@ -1558,7 +1754,7 @@ def _formula_value_results(
         passed = not failure_reasons
         row = _base_row(
             phase="formula_value_validation",
-            command_kind="validation",
+            command_kind="sql_query",
             options=options,
             elapsed_ms=elapsed,
             status="passed" if passed else "failed",
@@ -1583,6 +1779,7 @@ def _formula_value_results(
                 "tolerance": tolerance,
                 "failure_reason": "" if passed else "; ".join(failure_reasons),
                 "raw_sql_included": False,
+                **_row_temp_sql_metadata(temp_meta),
             }
         )
         rows.append(row)
@@ -1816,7 +2013,7 @@ def _query_budget_results(
             skip_reason="OVERWATCH_QUERY_PLAN_PROOF is not enabled.",
             extra={"query_history_required": options.profile in {"internal_live", "prod_candidate"}},
         )
-    rows_raw, proc, elapsed = _run_snow_sql_query(snow, options, _query_history_sql(options), runner=runner)
+    rows_raw, proc, elapsed, temp_meta = _run_snow_sql_query(snow, options, _query_history_sql(options), runner=runner)
     failures: list[dict[str, Any]] = []
     rows: list[dict[str, Any]] = []
     if proc is None or proc.returncode != 0:
@@ -1830,7 +2027,7 @@ def _query_budget_results(
             sanitized_error=sanitize_text((proc.stderr if proc else "") or (proc.stdout if proc else "")),
             recommendation="Grant query history access or provide a profile-aware waiver.",
         )
-        row.update({"artifact": Path(CLI_QUERY_BUDGET_REL).name, "row_index": 0})
+        row.update({"artifact": Path(CLI_QUERY_BUDGET_REL).name, "row_index": 0, **_row_temp_sql_metadata(temp_meta)})
         return _payload(
             source="snowflake_cli_query_budget_results",
             rows=[row],
@@ -1877,6 +2074,7 @@ def _query_budget_results(
                 "query_tag_prefix": _safe_label(str(parsed.get("query_tag_prefix") or options.query_tag_prefix)),
                 "failure_reason": "" if passed else "; ".join(failure_reasons),
                 "raw_sql_included": False,
+                **_row_temp_sql_metadata(temp_meta),
             }
         )
         rows.append(row)
@@ -1911,6 +2109,7 @@ def _all_rows(artifacts: Mapping[str, Any]) -> list[dict[str, Any]]:
         CLI_COST_RECONCILIATION_REL,
         CLI_SUMMARY_CARD_REL,
         CLI_QUERY_BUDGET_REL,
+        CLI_TEMP_FILE_HYGIENE_REL,
     ):
         payload = artifacts.get(rel)
         if isinstance(payload, Mapping):
@@ -1955,6 +2154,7 @@ def evaluate_snowflake_cli_live_gate(
         CLI_MANIFEST_RECONCILIATION_REL,
         CLI_FORMULA_VALUE_GATE_REL,
         CLI_COST_RECONCILIATION_GATE_REL,
+        CLI_TEMP_FILE_HYGIENE_GATE_REL,
         PACKET_AVAILABILITY_GATE_REL,
     ):
         payload = artifacts.get(rel)
@@ -1971,6 +2171,20 @@ def evaluate_snowflake_cli_live_gate(
     manifest_reconciliation = artifacts.get(CLI_MANIFEST_RECONCILIATION_REL)
     if isinstance(manifest_reconciliation, Mapping) and not bool(manifest_reconciliation.get("passed")):
         failures.append({"code": "SNOWFLAKE_CLI_MANIFEST_RECONCILIATION_FAILED"})
+    artifacts_serialized = json.dumps(artifacts, default=str)
+    token_path_leak_count = len(
+        re.findall(
+            r"(?i)(token[_-]?file[_-]?path|--token-file-path|TOK_[A-Za-z0-9_-]*token-secret|[A-Za-z]:\\\\[^\"']*token[^\"']*)",
+            artifacts_serialized,
+        )
+    )
+    temp_path_leak_count = len(
+        re.findall(r"(?i)([A-Za-z]:\\\\|/)[^\"'\\s]*overwatch_snowflake_validation_[^\"'\\s]*\\.sql", artifacts_serialized)
+    )
+    if token_path_leak_count:
+        failures.append({"code": "SNOWFLAKE_CLI_TOKEN_FILE_PATH_LEAK", "leak_count": token_path_leak_count})
+    if temp_path_leak_count:
+        failures.append({"code": "SNOWFLAKE_CLI_TEMP_SQL_FILE_PATH_LEAK", "leak_count": temp_path_leak_count})
     for row in _all_rows(artifacts):
         serialized = json.dumps(row, default=str)
         if bool(row.get("raw_sql_included")):
@@ -1982,8 +2196,12 @@ def evaluate_snowflake_cli_live_gate(
         payload = artifacts.get(rel)
         return isinstance(payload, Mapping) and bool(payload.get("passed")) and not bool(payload.get("skipped"))
 
+    def executed_not_skipped(rel: str) -> bool:
+        payload = artifacts.get(rel)
+        return isinstance(payload, Mapping) and not bool(payload.get("skipped"))
+
     live_executed = all(
-        passed_not_skipped(rel)
+        executed_not_skipped(rel)
         for rel in (
             CLI_CONNECTION_REL,
             CLI_SETUP_REL,
@@ -2021,6 +2239,14 @@ def evaluate_snowflake_cli_live_gate(
         "snowflake_cli_live_waived": waived,
         "snowflake_cli_live_executed": live_executed,
         "snowflake_cli_live_passed": live_passed,
+        "snowflake_cli_token_auth_used": bool(
+            any(bool(row.get("authenticator")) for row in _all_rows(artifacts))
+        ),
+        "snowflake_cli_token_file_supplied": bool(
+            any(bool(row.get("token_file_supplied")) for row in _all_rows(artifacts))
+        ),
+        "snowflake_cli_token_path_leak_count": token_path_leak_count,
+        "snowflake_cli_temp_sql_path_leak_count": temp_path_leak_count,
         "connection_passed": passed_not_skipped(CLI_CONNECTION_REL),
         "setup_validation_passed": passed_not_skipped(CLI_SETUP_REL),
         "packet_value_passed": passed_not_skipped(CLI_PACKET_VALUE_REL),
@@ -2029,6 +2255,13 @@ def evaluate_snowflake_cli_live_gate(
         "cost_reconciliation_passed": passed_not_skipped(CLI_COST_RECONCILIATION_REL),
         "summary_card_value_passed": passed_not_skipped(CLI_SUMMARY_CARD_REL),
         "query_budget_passed": passed_not_skipped(CLI_QUERY_BUDGET_REL),
+        "temp_file_hygiene_passed": isinstance(artifacts.get(CLI_TEMP_FILE_HYGIENE_GATE_REL), Mapping)
+        and bool(artifacts.get(CLI_TEMP_FILE_HYGIENE_GATE_REL, {}).get("passed")),
+        "temp_sql_file_leftover_count": int(
+            (artifacts.get(CLI_TEMP_FILE_HYGIENE_GATE_REL, {}) or {}).get("temp_sql_file_leftover_count") or 0
+        )
+        if isinstance(artifacts.get(CLI_TEMP_FILE_HYGIENE_GATE_REL), Mapping)
+        else 0,
         "manifest_reconciliation_passed": isinstance(manifest_reconciliation, Mapping) and bool(manifest_reconciliation.get("passed")),
         "raw_sql_included": False,
     }
@@ -2041,6 +2274,7 @@ def run_snowflake_cli_live_validation(
     runner: Runner = subprocess.run,
 ) -> dict[str, Any]:
     root_path = Path(root).resolve()
+    _TEMP_SQL_EVENTS.clear()
     if not options.connection:
         reason = "Snowflake CLI live validation skipped because no --connection or OVERWATCH_SNOWFLAKE_CLI_CONNECTION was provided."
         return _skipped_artifacts(options, reason=reason)
@@ -2103,6 +2337,8 @@ def run_snowflake_cli_live_validation(
                     rows=[],
                     failures=[{"code": "SNOWFLAKE_CLI_CONNECTION_REQUIRED"}],
                 )
+    artifacts[CLI_TEMP_FILE_HYGIENE_REL] = _temp_file_hygiene_results(options)
+    artifacts[CLI_TEMP_FILE_HYGIENE_GATE_REL] = evaluate_temp_file_hygiene_gate(artifacts.get(CLI_TEMP_FILE_HYGIENE_REL, {}))
     artifacts[CLI_FORMULA_VALUE_GATE_REL] = _formula_value_gate_results(artifacts.get(CLI_FORMULA_VALUE_REL, {}))
     artifacts[CLI_COST_RECONCILIATION_GATE_REL] = _cost_reconciliation_gate_results(artifacts.get(CLI_COST_RECONCILIATION_REL, {}))
     artifacts[PACKET_AVAILABILITY_GATE_REL] = evaluate_packet_availability_gate(
@@ -2125,6 +2361,12 @@ def run_snowflake_cli_live_validation(
         "snowflake_cli_live_skipped": bool(artifacts[CLI_LAUNCH_GATE_REL].get("snowflake_cli_live_skipped")),
         "snowflake_cli_live_waived": bool(artifacts[CLI_LAUNCH_GATE_REL].get("snowflake_cli_live_waived")),
         "snowflake_cli_skip_reason": str(artifacts[CLI_LAUNCH_GATE_REL].get("snowflake_cli_skip_reason") or ""),
+        "snowflake_cli_token_auth_used": bool(artifacts[CLI_LAUNCH_GATE_REL].get("snowflake_cli_token_auth_used")),
+        "snowflake_cli_token_file_supplied": bool(artifacts[CLI_LAUNCH_GATE_REL].get("snowflake_cli_token_file_supplied")),
+        "snowflake_cli_token_path_leak_count": int(artifacts[CLI_LAUNCH_GATE_REL].get("snowflake_cli_token_path_leak_count") or 0),
+        "snowflake_cli_temp_sql_path_leak_count": int(artifacts[CLI_LAUNCH_GATE_REL].get("snowflake_cli_temp_sql_path_leak_count") or 0),
+        "snowflake_cli_temp_file_hygiene_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("temp_file_hygiene_passed")),
+        "temp_sql_file_leftover_count": int(artifacts[CLI_LAUNCH_GATE_REL].get("temp_sql_file_leftover_count") or 0),
         "connection_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("connection_passed")),
         "setup_validation_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("setup_validation_passed")),
         "packet_availability_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("packet_availability_passed")),
@@ -2252,10 +2494,14 @@ __all__ = [
     "CLI_RELEASE_REL",
     "CLI_SETUP_REL",
     "CLI_SUMMARY_CARD_REL",
+    "CLI_TEMP_FILE_HYGIENE_GATE_REL",
+    "CLI_TEMP_FILE_HYGIENE_REL",
     "REQUIRED_CLI_ARTIFACTS",
     "REQUIRED_QUERY_BUDGET_BOUNDARIES",
     "SnowflakeCliValidationOptions",
+    "TEMP_SQL_PREFIX",
     "evaluate_snowflake_cli_live_gate",
+    "evaluate_temp_file_hygiene_gate",
     "run_snowflake_cli_live_validation",
     "sanitize_text",
     "write_snowflake_cli_live_validation_artifacts",

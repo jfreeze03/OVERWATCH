@@ -39,6 +39,16 @@ The wrappers set safe defaults, create artifact folders, avoid echoing secrets, 
 python -m tools.contracts.snowflake_cli_live_validation --connection <connection> --profile internal_live
 ```
 
+Programmatic access token (PAT) runs are supported without recording the token file path in artifacts:
+
+```powershell
+$env:OVERWATCH_SNOWFLAKE_CLI_AUTHENTICATOR = "PROGRAMMATIC_ACCESS_TOKEN"
+$env:OVERWATCH_SNOWFLAKE_CLI_TOKEN_FILE_PATH = "C:\secure\overwatch_pat.txt"
+python -m tools.contracts.snowflake_cli_live_validation --connection <connection> --profile internal_live --authenticator PROGRAMMATIC_ACCESS_TOKEN --token-file-path "C:\secure\overwatch_pat.txt" --database DBA_MAINT_DB --schema OVERWATCH --warehouse COMPUTE_WH --company ALFA --environment ALL --window-days 7 --skip-refresh
+```
+
+Artifacts only record `token_file_supplied=true`; they must never record the PAT, token file path, temp SQL file path, raw SQL body, account URL, stack trace, or raw Snowflake error text.
+
 Common options:
 
 ```powershell
@@ -77,9 +87,11 @@ The validator writes:
 - `artifacts/snowflake_validation/snowflake_cli_summary_card_value_results.json`
 - `artifacts/snowflake_validation/snowflake_cli_cost_reconciliation_results.json`
 - `artifacts/snowflake_validation/snowflake_cli_query_budget_results.json`
+- `artifacts/snowflake_validation/snowflake_cli_temp_file_hygiene_results.json`
 - `artifacts/launch_readiness/packet_availability_gate_results.json`
 - `artifacts/launch_readiness/live_cost_reconciliation_gate_results.json`
 - `artifacts/launch_readiness/snowflake_cli_formula_value_gate_results.json`
+- `artifacts/launch_readiness/snowflake_cli_temp_file_hygiene_gate_results.json`
 - `artifacts/launch_readiness/snowflake_cli_live_gate_results.json`
 - `artifacts/release_candidate/snowflake_cli_release_results.json`
 
@@ -97,6 +109,12 @@ snow connection test -c <connection>
 
 ```powershell
 python -m tools.contracts.snowflake_cli_live_validation --connection <connection> --profile internal_live --company ALFA --environment ALL --window-days 7 --skip-refresh
+```
+
+Token-backed equivalent:
+
+```powershell
+python -m tools.contracts.snowflake_cli_live_validation --connection <connection> --profile internal_live --authenticator PROGRAMMATIC_ACCESS_TOKEN --token-file-path "C:\secure\overwatch_pat.txt" --database DBA_MAINT_DB --schema OVERWATCH --warehouse COMPUTE_WH --company ALFA --environment ALL --window-days 7 --skip-refresh
 ```
 
 3. Run FAST refresh validation only when you want that procedure exercised:
@@ -130,6 +148,8 @@ scripts/run_snowflake_cli_live_validation.sh <connection>
 `snowflake_cli_gate_passed=true` means the profile-specific gate passed. In `internal_fixture`, a skipped CLI run may pass the gate so CI can run without credentials. That is not live proof. Real live proof requires `snowflake_cli_live_executed=true` and `snowflake_cli_live_passed=true`.
 
 The capability artifact must show JSON output support. The validator uses machine-readable Snowflake CLI output and fails rather than scraping table text. Formula rows compare live expected values, packet values, flat values, and rendered values when rendered summary artifacts are available.
+
+Generated validation SQL is executed through short-lived temporary `snow sql -f` files so command lines do not expose SQL bodies. `snowflake_cli_temp_file_hygiene_results.json` proves those files were deleted and that no temp file path was stored.
 
 ## Waiver Policy
 

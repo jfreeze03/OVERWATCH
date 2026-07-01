@@ -291,6 +291,22 @@ def _passing_payload(root: Path) -> dict:
         }
 
     passed_gate = {"passed": True, "failure_count": 0, "raw_sql_included": False}
+    snowflake_cli_gate = {
+        **passed_gate,
+        "snowflake_cli_token_auth_used": True,
+        "snowflake_cli_token_file_supplied": True,
+        "snowflake_cli_token_path_leak_count": 0,
+        "snowflake_cli_temp_sql_path_leak_count": 0,
+        "temp_file_hygiene_passed": True,
+        "temp_sql_file_leftover_count": 0,
+    }
+    temp_hygiene_gate = {
+        **passed_gate,
+        "snowflake_cli_temp_file_hygiene_passed": True,
+        "temp_sql_file_used_count": 4,
+        "temp_sql_file_leftover_count": 0,
+        "temp_sql_file_path_stored": False,
+    }
     return {
         "artifacts/full_app_validation/view_results.json": view_rows,
         "artifacts/full_app_validation/rendered_fragments.json": fragment_rows,
@@ -318,6 +334,10 @@ def _passing_payload(root: Path) -> dict:
         "artifacts/launch_readiness/rendered_ui_leak_gate_results.json": passed_gate,
         "artifacts/launch_readiness/security_credential_render_gate_results.json": passed_gate,
         "artifacts/launch_readiness/security_credential_evidence_gate_results.json": _feature_gate("Security Credential Evidence"),
+        "artifacts/launch_readiness/security_credential_expiration_live_gate_results.json": {
+            **passed_gate,
+            "live_validation_status": "passed",
+        },
         "artifacts/launch_readiness/security_credential_snapshot_gate_results.json": passed_gate,
         "artifacts/launch_readiness/security_credential_export_gate_results.json": passed_gate,
         "artifacts/launch_readiness/user_display_surface_gate_results.json": passed_gate,
@@ -325,6 +345,12 @@ def _passing_payload(root: Path) -> dict:
             **_feature_gate("Cortex Efficiency"),
             "cortex_token_metric_count": 7,
         },
+        "artifacts/launch_readiness/cortex_token_efficiency_live_gate_results.json": {
+            **passed_gate,
+            "live_validation_status": "passed",
+        },
+        "artifacts/launch_readiness/snowflake_cli_live_gate_results.json": snowflake_cli_gate,
+        "artifacts/launch_readiness/snowflake_cli_temp_file_hygiene_gate_results.json": temp_hygiene_gate,
     }
 
 

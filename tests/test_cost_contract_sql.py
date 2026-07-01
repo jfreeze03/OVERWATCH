@@ -46,6 +46,8 @@ class CostContractSqlTests(unittest.TestCase):
         sql = _build_cost_splash_cortex_sql("ALFA", 30, 2.2, mart=True).upper()
 
         self.assertIn("FACT_CORTEX_DAILY", sql)
+        self.assertIn("USER_CHART_LABEL", sql)
+        self.assertIn("USER_DISPLAY_NAME", sql)
         self.assertIn("USAGE_DATE >=", sql)
         self.assertIn("FAST CORTEX SUMMARY", sql)
         self.assertIn("UPPER(COALESCE(COMPANY, '')) = UPPER('ALFA')", sql)
@@ -59,6 +61,9 @@ class CostContractSqlTests(unittest.TestCase):
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY", sql)
         self.assertIn("LIVE FALLBACK: CORTEX_CODE USAGE HISTORY", sql)
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.USERS", sql)
+        self.assertIn("FIRST_NAME", sql)
+        self.assertIn("LAST_NAME", sql)
+        self.assertIn("DISPLAY_NAME", sql)
 
     def test_resource_monitor_guardrail_sql_is_review_only_and_complete(self):
         from sections.cost_contract_sql import _build_resource_monitor_guardrail_sql

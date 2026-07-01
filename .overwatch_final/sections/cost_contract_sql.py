@@ -44,6 +44,12 @@ def _cortex_daily_table() -> str:
     return f"{safe_identifier(ETL_AUDIT_DB)}.{safe_identifier(ETL_AUDIT_SCHEMA)}.{safe_identifier('FACT_CORTEX_DAILY')}"
 
 
+def _snowflake_user_chart_expr(alias: str, fallback_expr: str) -> str:
+    """Return the daily-safe Snowflake user chart label expression."""
+    first_last = f"TRIM(COALESCE({alias}.FIRST_NAME, '') || ' ' || COALESCE({alias}.LAST_NAME, ''))"
+    return f"COALESCE(NULLIF({first_last}, ''), NULLIF({alias}.DISPLAY_NAME, ''), {alias}.NAME, {fallback_expr}, 'Unknown user')"
+
+
 def _build_cost_splash_daily_trend_sql(company: str, days: int, *, mart: bool = True) -> str:
     table = _warehouse_hourly_table() if mart else "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
     ts_col = "hour_start" if mart else "start_time"
@@ -109,7 +115,14 @@ def _build_cost_splash_cortex_sql(company: str, days: int, ai_credit_price: floa
         return f"""
             WITH user_rollup AS (
                 SELECT
-                    COALESCE(NULLIF(user_id, ''), 'Unknown user') AS user_name,
+                    COALESCE(NULLIF(user_name, ''), NULLIF(user_id, ''), 'Unknown user') AS stable_user_name,
+                    COALESCE(
+                        NULLIF(user_chart_label, ''),
+                        NULLIF(user_display_name, ''),
+                        NULLIF(user_name, ''),
+                        NULLIF(user_id, ''),
+                        'Unknown user'
+                    ) AS user_label,
                     SUM(COALESCE(credits_used, 0)) AS total_credits,
                     SUM(COALESCE(est_cost_usd, COALESCE(credits_used, 0) * {ai_credit_rate})) AS spend_usd,
                     SUM(COALESCE(request_count, 0)) AS requests
@@ -117,7 +130,15 @@ def _build_cost_splash_cortex_sql(company: str, days: int, ai_credit_price: floa
                 WHERE usage_date >= DATEADD('DAY', -{days_int}, CURRENT_DATE())
                   AND usage_date < CURRENT_DATE()
                   {company_filter}
-                GROUP BY COALESCE(NULLIF(user_id, ''), 'Unknown user')
+                GROUP BY
+                    COALESCE(NULLIF(user_name, ''), NULLIF(user_id, ''), 'Unknown user'),
+                    COALESCE(
+                        NULLIF(user_chart_label, ''),
+                        NULLIF(user_display_name, ''),
+                        NULLIF(user_name, ''),
+                        NULLIF(user_id, ''),
+                        'Unknown user'
+                    )
             ),
             totals AS (
                 SELECT
@@ -128,10 +149,10 @@ def _build_cost_splash_cortex_sql(company: str, days: int, ai_credit_price: floa
             ),
             top_user AS (
                 SELECT
-                    user_name AS top_cortex_user,
+                    user_label AS top_cortex_user,
                     spend_usd AS top_cortex_user_spend_usd
                 FROM user_rollup
-                QUALIFY ROW_NUMBER() OVER (ORDER BY spend_usd DESC, user_name) = 1
+                QUALIFY ROW_NUMBER() OVER (ORDER BY spend_usd DESC, user_label) = 1
             )
             SELECT
                 ROUND(COALESCE(t.cortex_spend_usd, 0), 2) AS cortex_spend_usd,
@@ -144,7 +165,8 @@ def _build_cost_splash_cortex_sql(company: str, days: int, ai_credit_price: floa
             LEFT JOIN top_user u ON TRUE
         """
 
-    user_expr = "COALESCE(u.NAME, TO_VARCHAR(c.USER_ID), 'Unknown user')"
+    stable_user_expr = "COALESCE(u.NAME, TO_VARCHAR(c.USER_ID), 'Unknown user')"
+    user_expr = _snowflake_user_chart_expr("u", "TO_VARCHAR(c.USER_ID)")
     user_filter = get_user_company_filter_clause("COALESCE(u.NAME, TO_VARCHAR(c.USER_ID), '')", company)
     return f"""
         WITH combined AS (
@@ -160,14 +182,15 @@ def _build_cost_splash_cortex_sql(company: str, days: int, ai_credit_price: floa
         ),
         user_rollup AS (
             SELECT
-                {user_expr} AS user_name,
+                {stable_user_expr} AS stable_user_name,
+                {user_expr} AS user_label,
                 SUM(COALESCE(c.TOKEN_CREDITS, 0)) AS total_credits,
                 SUM(COALESCE(c.TOKEN_CREDITS, 0)) * {ai_credit_rate} AS spend_usd,
                 COUNT(*) AS requests
             FROM combined c
             LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON c.USER_ID = u.USER_ID
             WHERE 1=1 {user_filter}
-            GROUP BY {user_expr}
+            GROUP BY {stable_user_expr}, {user_expr}
         ),
         totals AS (
             SELECT
@@ -178,10 +201,10 @@ def _build_cost_splash_cortex_sql(company: str, days: int, ai_credit_price: floa
         ),
         top_user AS (
             SELECT
-                user_name AS top_cortex_user,
+                user_label AS top_cortex_user,
                 spend_usd AS top_cortex_user_spend_usd
             FROM user_rollup
-            QUALIFY ROW_NUMBER() OVER (ORDER BY spend_usd DESC, user_name) = 1
+            QUALIFY ROW_NUMBER() OVER (ORDER BY spend_usd DESC, user_label) = 1
         )
         SELECT
             ROUND(COALESCE(t.cortex_spend_usd, 0), 2) AS cortex_spend_usd,

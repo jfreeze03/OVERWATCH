@@ -1,0 +1,102 @@
+"""User display-name helpers for daily UI and exports.
+
+Snowflake usage views often carry a stable ``USER_NAME`` or ``USER_ID`` that is
+useful for joins but hostile in daily charts. These helpers keep the stable
+identifier available for admin/reconciliation paths while giving daily surfaces
+a readable label.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+import pandas as pd
+
+
+USER_ID_COLUMNS = {"USER_ID", "USERID", "RAW_USER_ID"}
+USER_STABLE_COLUMNS = {"USER_NAME", "LOGIN_NAME"}
+USER_DISPLAY_COLUMNS = {"USER_DISPLAY_NAME", "USER_CHART_LABEL", "USER_ADMIN_LABEL"}
+
+
+def _clean(value: Any) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except TypeError:
+        pass
+    return str(value).strip()
+
+
+def _first(row: Mapping[str, Any], *keys: str) -> str:
+    upper = {str(key).upper(): value for key, value in row.items()}
+    for key in keys:
+        value = _clean(upper.get(key.upper()))
+        if value:
+            return value
+    return ""
+
+
+def full_name(row: Mapping[str, Any]) -> str:
+    first = _first(row, "FIRST_NAME")
+    last = _first(row, "LAST_NAME")
+    return " ".join(part for part in (first, last) if part).strip()
+
+
+def user_name(row: Mapping[str, Any]) -> str:
+    return _first(row, "USER_NAME", "NAME", "LOGIN_NAME", "USER_ID")
+
+
+def user_display_name(row: Mapping[str, Any]) -> str:
+    return full_name(row) or _first(row, "DISPLAY_NAME") or user_name(row) or "Unknown user"
+
+
+def user_chart_label(row: Mapping[str, Any]) -> str:
+    return full_name(row) or user_name(row) or "Unknown user"
+
+
+def user_admin_label(row: Mapping[str, Any]) -> str:
+    display = user_display_name(row)
+    stable = user_name(row)
+    if stable and stable != display:
+        return f"{display} ({stable})"
+    return display
+
+
+def apply_user_display_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy with USER_* display columns populated from Snowflake user fields."""
+    if frame is None or frame.empty:
+        return pd.DataFrame() if frame is None else frame.copy()
+    result = frame.copy()
+    rows = result.to_dict(orient="records")
+    if "USER_NAME" not in result.columns:
+        result["USER_NAME"] = [user_name(row) for row in rows]
+    result["USER_DISPLAY_NAME"] = [user_display_name(row) for row in rows]
+    result["USER_CHART_LABEL"] = [user_chart_label(row) for row in rows]
+    result["USER_ADMIN_LABEL"] = [user_admin_label(row) for row in rows]
+    return result
+
+
+def sanitize_user_columns_for_export(frame: pd.DataFrame, *, admin_only: bool = False) -> pd.DataFrame:
+    """Hide raw user IDs in default exports while keeping friendly labels."""
+    if frame is None or frame.empty:
+        return pd.DataFrame() if frame is None else frame.copy()
+    result = apply_user_display_columns(frame)
+    if not admin_only:
+        result = result.drop(columns=[column for column in result.columns if column.upper() in USER_ID_COLUMNS], errors="ignore")
+        admin_columns = [column for column in result.columns if column.upper() == "USER_ADMIN_LABEL"]
+        result = result.drop(columns=admin_columns, errors="ignore")
+    return result
+
+
+__all__ = [
+    "apply_user_display_columns",
+    "full_name",
+    "sanitize_user_columns_for_export",
+    "user_admin_label",
+    "user_chart_label",
+    "user_display_name",
+    "user_name",
+]

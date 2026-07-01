@@ -181,6 +181,32 @@ def _cortex_candidate_columns(source: dict) -> list[str]:
     return list(dict.fromkeys(str(column).upper() for column in columns if column))
 
 
+def _snowflake_user_display_expr(alias: str = "u", fallback: str = "'Unknown user'") -> str:
+    return (
+        "COALESCE("
+        f"NULLIF(TRIM(COALESCE({alias}.FIRST_NAME, '') || ' ' || COALESCE({alias}.LAST_NAME, '')), ''), "
+        f"NULLIF({alias}.DISPLAY_NAME, ''), "
+        f"{alias}.NAME, "
+        f"{fallback}"
+        ")"
+    )
+
+
+def _snowflake_user_chart_expr(alias: str = "u", fallback: str = "'Unknown user'") -> str:
+    return (
+        "COALESCE("
+        f"NULLIF(TRIM(COALESCE({alias}.FIRST_NAME, '') || ' ' || COALESCE({alias}.LAST_NAME, '')), ''), "
+        f"{alias}.NAME, "
+        f"{fallback}"
+        ")"
+    )
+
+
+def _snowflake_user_admin_expr(alias: str = "u", fallback: str = "'Unknown user'") -> str:
+    display = _snowflake_user_display_expr(alias, fallback)
+    return f"IFF({alias}.NAME IS NOT NULL AND {alias}.NAME <> {display}, {display} || ' (' || {alias}.NAME || ')', {display})"
+
+
 def _cortex_service_detail_sql(source: dict, available_columns, days: int, ai_credit_rate: float | None = None) -> tuple[str, str]:
     """Build a guarded service-detail query for whichever columns Snowflake exposes."""
     rate = _ai_credit_rate() if ai_credit_rate is None else safe_float(ai_credit_rate)
@@ -203,22 +229,35 @@ def _cortex_service_detail_sql(source: dict, available_columns, days: int, ai_cr
     credit_expr = f"COALESCE(raw.{credit_col}, 0)" if credit_col else "0"
     request_expr = f"SUM(COALESCE(raw.{request_col}, 0))" if request_col else "COUNT(*)"
     token_expr = " + ".join(f"COALESCE(raw.{column}, 0)" for column in token_cols) if token_cols else "0"
-    user_join = f"LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON raw.{user_id_col} = u.USER_ID" if user_id_col else ""
-    user_expr = (
-        "COALESCE(u.NAME, " + (f"TO_VARCHAR(raw.{user_name_col}), " if user_name_col else "") + "'Unknown user')"
-        if user_id_col
-        else (f"COALESCE(TO_VARCHAR(raw.{user_name_col}), 'Unknown user')" if user_name_col else "'Unknown user'")
-    )
-    user_filter = get_user_company_filter_clause("u.NAME") if user_id_col else (
-        get_user_company_filter_clause(f"raw.{user_name_col}") if user_name_col else ""
-    )
+    raw_name_expr = f"TO_VARCHAR(raw.{user_name_col})" if user_name_col else "NULL"
+    raw_id_expr = f"TO_VARCHAR(raw.{user_id_col})" if user_id_col else "NULL"
+    if user_id_col:
+        user_join = f"LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON raw.{user_id_col} = u.USER_ID"
+    elif user_name_col:
+        user_join = f"LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON UPPER(u.NAME) = UPPER(raw.{user_name_col})"
+    else:
+        user_join = ""
+    if user_join:
+        stable_user_expr = f"COALESCE(u.NAME, {raw_name_expr}, {raw_id_expr}, 'Unknown user')"
+        display_expr = _snowflake_user_display_expr("u", stable_user_expr)
+        chart_expr = _snowflake_user_chart_expr("u", stable_user_expr)
+        admin_expr = _snowflake_user_admin_expr("u", stable_user_expr)
+    else:
+        stable_user_expr = "'Unknown user'"
+        display_expr = "'Unknown user'"
+        chart_expr = "'Unknown user'"
+        admin_expr = "'Unknown user'"
+    user_filter = get_user_company_filter_clause("u.NAME") if (user_id_col or user_name_col) else ""
     label = str(source.get("label", "Cortex Service")).replace("'", "''")
     object_name = source["object"]
     return f"""
         SELECT
             {date_expr} AS usage_date,
             '{label}' AS source,
-            {user_expr} AS user_name,
+            {stable_user_expr} AS user_name,
+            {display_expr} AS user_display_name,
+            {chart_expr} AS user_chart_label,
+            {admin_expr} AS user_admin_label,
             {request_expr} AS total_requests,
             SUM({credit_expr}) AS total_credits,
             SUM({token_expr}) AS total_tokens,
@@ -227,7 +266,7 @@ def _cortex_service_detail_sql(source: dict, available_columns, days: int, ai_cr
         {user_join}
         WHERE {time_expr} >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
           {user_filter}
-        GROUP BY {date_expr}, {user_expr}
+        GROUP BY {date_expr}, {stable_user_expr}, {display_expr}, {chart_expr}, {admin_expr}
         ORDER BY usage_date DESC, total_credits DESC, total_requests DESC
     """, ""
 
@@ -318,8 +357,8 @@ def _build_cortex_control_markdown(
     lines.extend([
         "",
         "## Evidence Limits",
-        "- Cortex Code views are ACCOUNT_USAGE-backed and can lag.",
-        "- User-level chargeback is exact for Cortex Code views when Snowflake exposes USER_ID usage records.",
+        "- Cortex Code usage data can lag.",
+        "- User-level chargeback uses Snowflake user attribution when it is available.",
         "- Spend threshold projections assume recent daily average continues for 30 days.",
     ])
     return "\n".join(lines)
@@ -328,6 +367,9 @@ def _build_cortex_control_markdown(
 def _build_cortex_control_sql(days: int, budget_usd: float) -> tuple[str, str]:
     user_filter = get_user_company_filter_clause("u.NAME")
     budget_credits = safe_float(budget_usd) / max(_ai_credit_rate(), 0.01)
+    display_expr = _snowflake_user_display_expr("u", "TO_VARCHAR(c.USER_ID)")
+    chart_expr = _snowflake_user_chart_expr("u", "TO_VARCHAR(c.USER_ID)")
+    admin_expr = _snowflake_user_admin_expr("u", "TO_VARCHAR(c.USER_ID)")
     base = f"""
         WITH combined AS (
             SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS, TOKENS, 'Snowsight' AS SOURCE
@@ -340,7 +382,10 @@ def _build_cortex_control_sql(days: int, budget_usd: float) -> tuple[str, str]:
         ),
         user_daily AS (
             SELECT
-                u.NAME AS user_name,
+                COALESCE(u.NAME, TO_VARCHAR(c.USER_ID)) AS user_name,
+                {display_expr} AS user_display_name,
+                {chart_expr} AS user_chart_label,
+                {admin_expr} AS user_admin_label,
                 u.EMAIL AS email,
                 c.SOURCE,
                 c.USAGE_TIME::DATE AS usage_date,
@@ -350,11 +395,14 @@ def _build_cortex_control_sql(days: int, budget_usd: float) -> tuple[str, str]:
             FROM combined c
             LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON c.USER_ID = u.USER_ID
             WHERE 1=1 {user_filter}
-            GROUP BY u.NAME, u.EMAIL, c.SOURCE, c.USAGE_TIME::DATE
+            GROUP BY 1, 2, 3, 4, 5, 6, 7
         ),
         user_rollup AS (
             SELECT
                 user_name,
+                user_display_name,
+                user_chart_label,
+                user_admin_label,
                 email,
                 SOURCE,
                 COUNT(DISTINCT usage_date) AS active_days,
@@ -366,7 +414,7 @@ def _build_cortex_control_sql(days: int, budget_usd: float) -> tuple[str, str]:
                 SUM(credits) / NULLIF(COUNT(DISTINCT usage_date), 0) * 30 AS projected_30d_credits,
                 SUM(credits) / NULLIF(COUNT(DISTINCT usage_date), 0) * 30 * {_ai_credit_rate()} AS projected_30d_cost
             FROM user_daily
-            GROUP BY user_name, email, SOURCE
+            GROUP BY 1, 2, 3, 4, 5, 6
         )
     """
     summary_sql = f"""
@@ -486,7 +534,7 @@ def _queue_cortex_findings(session, exceptions: pd.DataFrame, budget_usd: float)
     actions = []
     for _, row in exceptions.head(50).iterrows():
         signal = str(row.get("SIGNAL", "Cortex Usage"))
-        user = str(row.get("USER_NAME") or "Unknown user")
+        user = str(row.get("USER_DISPLAY_NAME") or row.get("USER_NAME") or "Unknown user")
         action_text, generated_sql = _cortex_action_for(signal)
         finding = (
             f"{signal}: {user} projected Cortex Code cost is "
@@ -505,7 +553,7 @@ def _queue_cortex_findings(session, exceptions: pd.DataFrame, budget_usd: float)
             "Action": action_text,
             "Estimated Monthly Savings": max(safe_float(row.get("PROJECTED_30D_COST")) - safe_float(budget_usd), 0),
             "Generated SQL Fix": generated_sql,
-            "Proof Query": "Review CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY and CORTEX_CODE_CLI_USAGE_HISTORY by USER_ID.",
+            "Proof Query": "Review the Cortex usage source by user label and stable user key.",
             "Company": company,
         })
     return upsert_actions(session, actions)
@@ -636,7 +684,7 @@ def _render_cortex_control_brief(session, company: str) -> None:
                 exceptions,
                 title="Cortex cost exceptions to work first",
                 priority_columns=[
-                    "SEVERITY", "SIGNAL", "USER_NAME", "SOURCE",
+                    "SEVERITY", "SIGNAL", "USER_DISPLAY_NAME", "SOURCE",
                     "PROJECTED_30D_COST", "TOTAL_CREDITS", "TOTAL_REQUESTS",
                     "NEXT_ACTION", "PROOF_QUERY",
                 ],
@@ -886,7 +934,7 @@ def render():
                 priority_columns=[
                     "USAGE_DATE",
                     "SOURCE",
-                    "USER_NAME",
+                    "USER_DISPLAY_NAME",
                     "COST_USD",
                     "TOTAL_CREDITS",
                     "TOTAL_REQUESTS",
@@ -927,7 +975,11 @@ def render():
                             FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY
                             WHERE USAGE_TIME >= DATEADD('day', -{cc_days}, CURRENT_TIMESTAMP())
                         )
-                        SELECT u.NAME AS USER_NAME, u.EMAIL, c.SOURCE,
+                        SELECT COALESCE(u.NAME, TO_VARCHAR(c.USER_ID)) AS USER_NAME,
+                               {_snowflake_user_display_expr("u", "TO_VARCHAR(c.USER_ID)")} AS USER_DISPLAY_NAME,
+                               {_snowflake_user_chart_expr("u", "TO_VARCHAR(c.USER_ID)")} AS USER_CHART_LABEL,
+                               {_snowflake_user_admin_expr("u", "TO_VARCHAR(c.USER_ID)")} AS USER_ADMIN_LABEL,
+                               u.EMAIL, c.SOURCE,
                                COUNT(*)                                   AS TOTAL_REQUESTS,
                                SUM(c.TOKEN_CREDITS)                       AS TOTAL_CREDITS,
                                SUM(c.TOKENS)                              AS TOTAL_TOKENS,
@@ -937,7 +989,7 @@ def render():
                         FROM combined c
                         LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON c.USER_ID = u.USER_ID
                         WHERE 1=1 {get_user_company_filter_clause("u.NAME")}
-                        GROUP BY u.NAME, u.EMAIL, c.SOURCE
+                        GROUP BY 1, 2, 3, 4, 5, 6
                         ORDER BY TOTAL_CREDITS DESC
                     """, ttl_key=f"cortex_users_{company}_{cc_days}", tier="standard")
                     st.session_state["cm_cc_users_data"] = df_cc
@@ -976,7 +1028,7 @@ def render():
                 "because query history does not expose Cortex Code cost by query."
             )
             user_agg = (
-                df_cc.groupby("USER_NAME", as_index=False)
+                df_cc.groupby(["USER_NAME", "USER_DISPLAY_NAME", "USER_CHART_LABEL"], as_index=False)
                 .agg(
                     COST_USD=("COST_USD", "sum"),
                     TOTAL_CREDITS=("TOTAL_CREDITS", "sum"),
@@ -988,12 +1040,12 @@ def render():
                 .head(20)
             )
             if not user_agg.empty:
-                render_ranked_bar_chart(user_agg, "USER_NAME", "COST_USD", top_n=20)
+                render_ranked_bar_chart(user_agg, "USER_CHART_LABEL", "COST_USD", top_n=20)
                 render_priority_dataframe(
                     user_agg,
                     title="Cortex user cost and recency",
                     priority_columns=[
-                        "USER_NAME", "COST_USD", "TOTAL_CREDITS", "TOTAL_REQUESTS",
+                        "USER_DISPLAY_NAME", "COST_USD", "TOTAL_CREDITS", "TOTAL_REQUESTS",
                         "FIRST_USAGE", "LAST_USAGE",
                     ],
                     sort_by=["COST_USD", "LAST_USAGE"],
@@ -1014,7 +1066,7 @@ def render():
                 df_cc,
                 title="Cortex users to review first",
                 priority_columns=[
-                    "USER_NAME",
+                    "USER_DISPLAY_NAME",
                     "SOURCE",
                     "TOTAL_CREDITS",
                     "COST_USD",
@@ -1065,7 +1117,9 @@ def render():
                             FROM combined WHERE USAGE_TIME < DATEADD('day',-7,CURRENT_TIMESTAMP())
                             GROUP BY USER_ID HAVING COUNT(*) >= 3
                         )
-                        SELECT u.NAME AS USER_NAME,
+                        SELECT COALESCE(u.NAME, TO_VARCHAR(r.USER_ID)) AS USER_NAME,
+                               {_snowflake_user_display_expr("u", "TO_VARCHAR(r.USER_ID)")} AS USER_DISPLAY_NAME,
+                               {_snowflake_user_chart_expr("u", "TO_VARCHAR(r.USER_ID)")} AS USER_CHART_LABEL,
                                p.requests    AS PRIOR_REQUESTS,
                                ROUND(p.credits/NULLIF(p.requests,0),6) AS PRIOR_CPR,
                                r.requests    AS RECENT_REQUESTS,
@@ -1085,7 +1139,7 @@ def render():
                                 df_spike,
                                 title="Cost-per-request spikes",
                                 priority_columns=[
-                                    "USER_NAME",
+                                    "USER_DISPLAY_NAME",
                                     "PCT_CHANGE",
                                     "RECENT_CPR",
                                     "PRIOR_CPR",
@@ -1276,7 +1330,9 @@ def render():
                                 ) AS STD_7D
                             FROM daily d
                         )
-                        SELECT u.NAME AS USER_NAME,
+                        SELECT COALESCE(u.NAME, TO_VARCHAR(s.USER_ID)) AS USER_NAME,
+                               {_snowflake_user_display_expr("u", "TO_VARCHAR(s.USER_ID)")} AS USER_DISPLAY_NAME,
+                               {_snowflake_user_chart_expr("u", "TO_VARCHAR(s.USER_ID)")} AS USER_CHART_LABEL,
                                s.USAGE_DATE, s.REQUESTS, s.CREDITS, s.CREDITS_PER_REQ,
                                ROUND(s.AVG_7D, 6) AS ROLLING_AVG,
                                ROUND(CASE WHEN s.STD_7D > 0
@@ -1315,7 +1371,7 @@ def render():
                     flagged,
                     title="Cortex anomalies to investigate first",
                     priority_columns=[
-                        "USER_NAME",
+                        "USER_DISPLAY_NAME",
                         "ANOMALY_FLAG",
                         "USAGE_DATE",
                         "CREDITS",
@@ -1335,7 +1391,7 @@ def render():
                     df_an,
                     title="Cortex anomaly telemetry",
                     priority_columns=[
-                        "USER_NAME",
+                        "USER_DISPLAY_NAME",
                         "USAGE_DATE",
                         "CREDITS",
                         "ROLLING_AVG",

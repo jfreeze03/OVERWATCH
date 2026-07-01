@@ -34,6 +34,7 @@ _TIME_PRUNING_COLUMNS = (
     "LOAD_TS",
     "LAST_ALTERED",
     "CREATED_ON",
+    "EXPIRATION_DATE",
 )
 
 

@@ -86,9 +86,125 @@ def _classify_sql_path(path: Path, root: Path) -> dict[str, Any]:
     }
 
 
+def _supplemental_overwatch_rows(root: Path) -> list[dict[str, Any]]:
+    setup = root / "snowflake" / "mart_setup" / "05_load_procedures.sql"
+    validation = root / "snowflake" / "OVERWATCH_MART_VALIDATION.sql"
+    if not setup.exists():
+        return []
+    setup_text = setup.read_text(encoding="utf-8", errors="ignore").upper()
+    validation_text = validation.read_text(encoding="utf-8", errors="ignore").upper() if validation.exists() else ""
+    rows: list[dict[str, Any]] = []
+
+    def add(
+        path_id: str,
+        *,
+        purpose: str,
+        user_visible_feature: str,
+        source_family: str,
+        account_usage_use: str,
+        admin_only: bool,
+        daily_safe: bool,
+        value_to_app: str,
+        row_limit: str = "bounded_by_refresh_window",
+        pruning_predicate: str = "company/window/expiration_date predicates",
+    ) -> None:
+        rows.append(
+            {
+                "path_id": path_id,
+                "path": "snowflake/mart_setup/05_load_procedures.sql",
+                "source_file": "snowflake/mart_setup/05_load_procedures.sql",
+                "function_or_procedure": path_id,
+                "owner": "Security Monitoring",
+                "purpose": purpose,
+                "value_to_app": value_to_app,
+                "user_visible_feature": user_visible_feature,
+                "source_family": source_family,
+                "classification": source_family,
+                "table_family": "security_credential_expiration",
+                "account_usage_use": account_usage_use,
+                "row_limit": row_limit,
+                "pruning_predicate": pruning_predicate,
+                "deterministic_order_by": True,
+                "frequency": "explicit_refresh_or_live_validation",
+                "execution_frequency": "explicit_refresh_or_live_validation",
+                "cost_risk": "medium" if account_usage_use != "none" else "low",
+                "keep_delete_decision": "keep",
+                "replacement_path": "",
+                "daily_safe": daily_safe,
+                "admin_only": admin_only,
+                "launch_status": "retained_owned",
+                "raw_sql_included": False,
+            }
+        )
+
+    if "SNOWFLAKE.ACCOUNT_USAGE.CREDENTIALS" in setup_text:
+        add(
+            "credential_expiration_refresh_source",
+            purpose="Refresh compact credential-expiration rows from Snowflake credential metadata.",
+            user_visible_feature="Credential expirations",
+            source_family="refresh_fast",
+            account_usage_use="refresh/setup/live only",
+            admin_only=True,
+            daily_safe=True,
+            value_to_app="Feeds packet-backed Security Monitoring credential expiration metrics and actions.",
+        )
+    if "SNOWFLAKE.ACCOUNT_USAGE.USERS" in setup_text and "MART_USER_DIM_CURRENT" in setup_text:
+        add(
+            "user_display_dimension_refresh_source",
+            purpose="Refresh compact user display-name dimension.",
+            user_visible_feature="User display names",
+            source_family="refresh_fast",
+            account_usage_use="refresh/setup/live only",
+            admin_only=True,
+            daily_safe=True,
+            value_to_app="Allows daily charts and tables to show friendly user names without page-entry Account Usage queries.",
+        )
+    if "FROM MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT C" in setup_text:
+        add(
+            "credential_expiration_compact_evidence",
+            purpose="Publish credential-expiration evidence from compact mart rows.",
+            user_visible_feature="Credential expirations",
+            source_family="compact_evidence",
+            account_usage_use="none",
+            admin_only=False,
+            daily_safe=True,
+            value_to_app="Explicit evidence loads can show credential owner, type, status, and expiration without broad source scans.",
+            row_limit="5000 max evidence publish rows",
+            pruning_predicate="expiration due/expired flags",
+        )
+    if "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT" in setup_text:
+        add(
+            "credential_expiration_security_packet",
+            purpose="Add credential-expiration fields to Security Monitoring decision packets.",
+            user_visible_feature="Credential expirations",
+            source_family="daily_first_paint_packet",
+            account_usage_use="none",
+            admin_only=False,
+            daily_safe=True,
+            value_to_app="Security overview first paint can render the credential-expiration metric from the current packet.",
+            row_limit="one active packet row per scope",
+            pruning_predicate="active packet logical key",
+        )
+    if "MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT" in validation_text:
+        add(
+            "credential_expiration_live_validation",
+            purpose="Validate credential-expiration mart, packet fields, and user-display columns.",
+            user_visible_feature="Credential expirations",
+            source_family="deployment_validation",
+            account_usage_use="setup/live validation only",
+            admin_only=True,
+            daily_safe=True,
+            value_to_app="Blocks launch when credential/user-display schema proof is incomplete.",
+            row_limit="validation metadata only",
+            pruning_predicate="information_schema/object contract checks",
+        )
+    return rows
+
+
 def build_sql_value_inventory(root: Path) -> dict[str, Any]:
     sql_files = sorted((root / "snowflake").rglob("*.sql"))
     rows = [_classify_sql_path(path, root) for path in sql_files]
+    rows.extend(_supplemental_overwatch_rows(root))
     failures: list[dict[str, Any]] = []
     for row in rows:
         if not row["owner"] or not row["purpose"]:

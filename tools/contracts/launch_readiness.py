@@ -147,6 +147,11 @@ from tools.contracts.performance_budget_gate import (
     evaluate_performance_budget_gate,
     write_performance_budget_gate_artifacts,
 )
+from tools.contracts.security_credential_validation import (
+    SECURITY_CREDENTIAL_GATE_REL,
+    USER_DISPLAY_NAME_GATE_REL,
+    write_security_credential_validation_artifacts,
+)
 from tools.contracts.user_stress_test import (
     USER_STRESS_GATE_REL,
     USER_STRESS_RESULTS_REL,
@@ -211,6 +216,8 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     SQL_CLEANUP_GATE_REL,
     DELETE_FIRST_GATE_REL,
     PERFORMANCE_BUDGET_GATE_REL,
+    SECURITY_CREDENTIAL_GATE_REL,
+    USER_DISPLAY_NAME_GATE_REL,
     USER_STRESS_GATE_REL,
     SOURCE_INTERNAL_LEAK_GATE_REL,
     f"{LAUNCH_READINESS_DIR}/cortex_cost_consistency_gate_results.json",
@@ -4571,6 +4578,8 @@ def _release_gate_matrix(
     sql_cleanup_gate = _as_mapping(launch_artifacts.get("sql_cleanup_gate_results"))
     delete_first_cleanup_gate = _as_mapping(launch_artifacts.get("delete_first_cleanup_gate_results"))
     performance_budget_gate = _as_mapping(launch_artifacts.get("performance_budget_gate_results"))
+    security_credential_gate = _as_mapping(launch_artifacts.get("security_credential_expiration_gate_results"))
+    user_display_gate = _as_mapping(launch_artifacts.get("user_display_name_gate_results"))
     user_stress_gate = _as_mapping(launch_artifacts.get("user_stress_gate_results"))
     source_leak_gate = _as_mapping(launch_artifacts.get("source_internal_leak_scan_gate_results"))
     cortex_gate = _as_mapping(launch_artifacts.get("cortex_cost_consistency_gate_results"))
@@ -4716,6 +4725,22 @@ def _release_gate_matrix(
             "artifact": PERFORMANCE_BUDGET_GATE_REL,
             "passed": bool(performance_budget_gate.get("passed")),
             "failure_reason": "" if performance_budget_gate.get("passed") else "Performance budget rows show first-paint, route-action, Query Search, or workbench query violations.",
+        },
+        {
+            "gate": "security_credential_expiration",
+            "artifact": SECURITY_CREDENTIAL_GATE_REL,
+            "passed": bool(security_credential_gate.get("passed")),
+            "failure_reason": ""
+            if security_credential_gate.get("passed")
+            else "Security credential-expiration source, packet fields, action rows, or compact evidence proof failed.",
+        },
+        {
+            "gate": "user_display_name",
+            "artifact": USER_DISPLAY_NAME_GATE_REL,
+            "passed": bool(user_display_gate.get("passed")),
+            "failure_reason": ""
+            if user_display_gate.get("passed")
+            else "User display-name dimension, Cortex chart labels, or default export hiding failed.",
         },
         {
             "gate": "user_stress_gate",
@@ -5600,6 +5625,8 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     payloads.update(performance_budget_artifacts)
     delete_first_cleanup_artifacts = write_delete_first_cleanup_artifacts(root_path)
     payloads.update(delete_first_cleanup_artifacts)
+    security_credential_artifacts = write_security_credential_validation_artifacts(root_path)
+    payloads.update(security_credential_artifacts)
 
     launch_artifacts: dict[str, Any] = {}
     launch_artifacts["launch_waivers"] = {
@@ -5639,6 +5666,10 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["delete_first_release_results"] = _delete_first_release_results(payloads)
     launch_artifacts["delete_first_cleanup_gate_results"] = delete_first_cleanup_artifacts[DELETE_FIRST_GATE_REL]
     launch_artifacts["performance_budget_gate_results"] = performance_budget_artifacts[PERFORMANCE_BUDGET_GATE_REL]
+    launch_artifacts["security_credential_expiration_gate_results"] = security_credential_artifacts[
+        SECURITY_CREDENTIAL_GATE_REL
+    ]
+    launch_artifacts["user_display_name_gate_results"] = security_credential_artifacts[USER_DISPLAY_NAME_GATE_REL]
     launch_artifacts["docs_readiness_results"] = _docs_readiness_results(root_path)
     launch_artifacts["secrets_scan_results"] = _secrets_scan_results(root_path)
     launch_artifacts["artifact_review_results"] = _artifact_review_results(root_path, payloads, missing_payloads)

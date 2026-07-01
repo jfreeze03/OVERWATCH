@@ -221,6 +221,18 @@ class TargetPredicatePlan:
         )
 
 
+@dataclass(frozen=True)
+class TargetSqlFilter:
+    sql_fragment: str = ""
+    safe_literals: tuple[str, ...] = ()
+    bind_values: tuple[str, ...] = ()
+    matched_columns: tuple[str, ...] = ()
+    match_mode: str = "none"
+    reason: str = ""
+    plan_id: str = ""
+    raw_sql_included: bool = False
+
+
 def get_decision_evidence_target(section: str) -> dict[str, str]:
     target = st.session_state.get(SECTION_TARGET_KEYS.get(str(section), ""))
     if not isinstance(target, dict):
@@ -384,6 +396,36 @@ def build_target_sql_filter(
     return build_target_predicate_plan(section, target, available_columns, alias=alias).sql_filter
 
 
+def build_target_sql_filter_contract(
+    section: str,
+    target: dict[str, str] | None,
+    alias: str = "",
+    available_columns: tuple[str, ...] | list[str] | set[str] = (),
+) -> TargetSqlFilter:
+    """Return a structured proof that target filtering is pushed into SQL safely."""
+    plan = build_target_predicate_plan(section, target, available_columns, alias=alias).with_fingerprint()
+    values = target_values(target or {})
+    if plan.predicate_kind == "exact":
+        match_mode = "exact"
+        reason = "Target filter uses allowlisted exact-match columns before evidence load."
+    elif plan.predicate_kind == "display":
+        match_mode = "allowed_ilike"
+        reason = "Target filter uses approved display columns with bounded SQL ILIKE fallback."
+    else:
+        match_mode = "none"
+        reason = "No allowlisted target values or columns were available."
+    return TargetSqlFilter(
+        sql_fragment=plan.sql_filter,
+        safe_literals=values,
+        bind_values=(),
+        matched_columns=plan.columns_used,
+        match_mode=match_mode,
+        reason=reason,
+        plan_id=plan.plan_id,
+        raw_sql_included=False,
+    )
+
+
 def _series_mask(rows: Any, column: str, value: str, *, display: bool = False):
     series = rows[column].fillna("").astype(str)
     if display:
@@ -456,9 +498,11 @@ __all__ = [
     "TARGETED_EVIDENCE_MAX_LIMIT",
     "TARGET_PREDICATE_MARKER",
     "TargetPredicatePlan",
+    "TargetSqlFilter",
     "apply_target_dataframe_filter",
     "build_target_predicate_plan",
     "build_target_sql_filter",
+    "build_target_sql_filter_contract",
     "clear_decision_evidence_target",
     "evidence_row_limit",
     "evidence_target_label",

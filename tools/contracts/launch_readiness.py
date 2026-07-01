@@ -134,6 +134,19 @@ from tools.contracts.sql_value_inventory import (
     evaluate_sql_cleanup_gate,
 )
 from tools.contracts.sql_dead_code_scan import SQL_DEAD_CODE_SCAN_REL
+from tools.contracts.delete_first_cleanup import (
+    DELETE_FIRST_GATE_REL,
+    DELETE_FIRST_INVENTORY_REL,
+    DELETE_FIRST_RESULTS_REL,
+    evaluate_delete_first_cleanup_gate,
+    write_delete_first_cleanup_artifacts,
+)
+from tools.contracts.performance_budget_gate import (
+    PERFORMANCE_BUDGET_GATE_REL,
+    PERFORMANCE_BUDGET_RESULTS_REL,
+    evaluate_performance_budget_gate,
+    write_performance_budget_gate_artifacts,
+)
 from tools.contracts.user_stress_test import (
     USER_STRESS_GATE_REL,
     USER_STRESS_RESULTS_REL,
@@ -196,6 +209,8 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     EXPORT_DOWNLOAD_GATE_REL,
     LIVE_FEATURE_GATE_REL,
     SQL_CLEANUP_GATE_REL,
+    DELETE_FIRST_GATE_REL,
+    PERFORMANCE_BUDGET_GATE_REL,
     USER_STRESS_GATE_REL,
     SOURCE_INTERNAL_LEAK_GATE_REL,
     f"{LAUNCH_READINESS_DIR}/cortex_cost_consistency_gate_results.json",
@@ -212,6 +227,7 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/formula_live_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/metric_semantic_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/query_budget_gate_results.json",
+    PERFORMANCE_BUDGET_RESULTS_REL,
     f"{LAUNCH_READINESS_DIR}/workload_formula_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/cost_advisor_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/date_widget_regression_results.json",
@@ -4553,6 +4569,8 @@ def _release_gate_matrix(
     export_download_gate = _as_mapping(launch_artifacts.get("export_download_gate_results"))
     live_feature_gate = _as_mapping(launch_artifacts.get("live_feature_gate_results"))
     sql_cleanup_gate = _as_mapping(launch_artifacts.get("sql_cleanup_gate_results"))
+    delete_first_cleanup_gate = _as_mapping(launch_artifacts.get("delete_first_cleanup_gate_results"))
+    performance_budget_gate = _as_mapping(launch_artifacts.get("performance_budget_gate_results"))
     user_stress_gate = _as_mapping(launch_artifacts.get("user_stress_gate_results"))
     source_leak_gate = _as_mapping(launch_artifacts.get("source_internal_leak_scan_gate_results"))
     cortex_gate = _as_mapping(launch_artifacts.get("cortex_cost_consistency_gate_results"))
@@ -4686,6 +4704,18 @@ def _release_gate_matrix(
             "artifact": SQL_CLEANUP_GATE_REL,
             "passed": bool(sql_cleanup_gate.get("passed")),
             "failure_reason": "" if sql_cleanup_gate.get("passed") else "SQL inventory/dead-code cleanup found unowned, daily-unsafe, or obsolete SQL paths.",
+        },
+        {
+            "gate": "delete_first_cleanup_gate",
+            "artifact": DELETE_FIRST_GATE_REL,
+            "passed": bool(delete_first_cleanup_gate.get("passed")),
+            "failure_reason": "" if delete_first_cleanup_gate.get("passed") else "Delete-first inventory found retained unknowns, obsolete items without a delete plan, or daily-unsafe leftovers.",
+        },
+        {
+            "gate": "performance_budget_gate",
+            "artifact": PERFORMANCE_BUDGET_GATE_REL,
+            "passed": bool(performance_budget_gate.get("passed")),
+            "failure_reason": "" if performance_budget_gate.get("passed") else "Performance budget rows show first-paint, route-action, Query Search, or workbench query violations.",
         },
         {
             "gate": "user_stress_gate",
@@ -5194,6 +5224,13 @@ def evaluate_launch_readiness(
             _as_mapping(payloads.get(SQL_VALUE_INVENTORY_REL)),
             _as_mapping(payloads.get(SQL_DEAD_CODE_SCAN_REL)),
         ),
+        "delete_first_cleanup_gate_results": _as_mapping(launch_artifacts.get("delete_first_cleanup_gate_results"))
+        or evaluate_delete_first_cleanup_gate(_as_mapping(payloads.get(DELETE_FIRST_INVENTORY_REL))),
+        "performance_budget_gate_results": _as_mapping(launch_artifacts.get("performance_budget_gate_results"))
+        or evaluate_performance_budget_gate(
+            _as_mapping(payloads.get(FIRST_PAINT_PERFORMANCE_REL)),
+            _as_mapping(payloads.get("artifacts/full_app_validation/query_budget_results.json")),
+        ),
         "user_stress_gate_results": _as_mapping(launch_artifacts.get("user_stress_gate_results"))
         or evaluate_user_stress_gate(payloads.get(USER_STRESS_RESULTS_REL)),
         "source_internal_leak_scan_gate_results": _as_mapping(launch_artifacts.get("source_internal_leak_scan_gate_results"))
@@ -5559,6 +5596,10 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     payloads.update(formula_artifacts)
     formula_end_to_end_artifacts = write_formula_end_to_end_artifacts(root_path)
     payloads.update(formula_end_to_end_artifacts)
+    performance_budget_artifacts = write_performance_budget_gate_artifacts(root_path)
+    payloads.update(performance_budget_artifacts)
+    delete_first_cleanup_artifacts = write_delete_first_cleanup_artifacts(root_path)
+    payloads.update(delete_first_cleanup_artifacts)
 
     launch_artifacts: dict[str, Any] = {}
     launch_artifacts["launch_waivers"] = {
@@ -5596,6 +5637,8 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["export_case_closure_results"] = _export_case_closure_results(root_path, payloads)
     launch_artifacts["cleanup_launch_closure_results"] = _cleanup_launch_closure_results(payloads)
     launch_artifacts["delete_first_release_results"] = _delete_first_release_results(payloads)
+    launch_artifacts["delete_first_cleanup_gate_results"] = delete_first_cleanup_artifacts[DELETE_FIRST_GATE_REL]
+    launch_artifacts["performance_budget_gate_results"] = performance_budget_artifacts[PERFORMANCE_BUDGET_GATE_REL]
     launch_artifacts["docs_readiness_results"] = _docs_readiness_results(root_path)
     launch_artifacts["secrets_scan_results"] = _secrets_scan_results(root_path)
     launch_artifacts["artifact_review_results"] = _artifact_review_results(root_path, payloads, missing_payloads)

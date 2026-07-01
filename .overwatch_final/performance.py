@@ -25,6 +25,8 @@ ACCOUNT_USAGE_FALLBACK_QUERY_BUDGET = 1
 TARGETED_EVIDENCE_DEFAULT_LIMIT = 200
 TARGETED_EVIDENCE_MAX_LIMIT = 500
 ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED = False
+COST_WORKBENCH_FIRST_PAINT_ALLOWED = False
+QUERY_SEARCH_NO_CLICK_QUERY_BUDGET = 0
 
 _UI_QUERY_EVENTS_KEY = "_overwatch_ui_query_events"
 _FIRST_PAINT_STACK_KEY = "_overwatch_first_paint_stack"
@@ -49,6 +51,20 @@ _VALID_QUERY_BOUNDARIES = {
     "admin",
     "other",
 }
+_QUERY_BOUNDARY_ALIASES = {
+    "first_paint_packet": "decision_packet",
+    "warm_first_paint": "decision_packet",
+    "route_action": "other",
+    "evidence_action": "evidence",
+    "compact_evidence": "evidence",
+    "detail_mart": "evidence",
+    "query_search_no_click": "query_search",
+    "query_search_explicit": "query_search",
+    "cost_workbench": "evidence",
+    "deep_history_fallback": "account_usage",
+    "setup_health": "setup_health",
+    "live_validation": "admin",
+}
 _FIRST_PAINT_BOUNDARIES = {
     "decision_packet",
     "evidence",
@@ -70,9 +86,19 @@ _QUERY_BUDGET_LIMITS = {
     "query_search_text": 1,
     "query_preview": 1,
     "account_usage_fallback": ACCOUNT_USAGE_FALLBACK_QUERY_BUDGET,
+    "deep_history_fallback": ACCOUNT_USAGE_FALLBACK_QUERY_BUDGET,
+    "query_search_no_click": QUERY_SEARCH_NO_CLICK_QUERY_BUDGET,
+    "cost_workbench_first_paint": 0,
     "admin_setup": ADMIN_CLICK_QUERY_BUDGET,
     "advanced_diagnostics": ADMIN_CLICK_QUERY_BUDGET,
 }
+
+
+def normalize_query_boundary(query_boundary: str) -> str:
+    """Map product workflow boundaries to the execution boundary vocabulary."""
+    raw = str(query_boundary or "other").strip().lower()
+    normalized = _QUERY_BOUNDARY_ALIASES.get(raw, raw)
+    return normalized if normalized in _VALID_QUERY_BOUNDARIES else "other"
 
 
 def _session_list(key: str) -> list[Any]:
@@ -388,14 +414,13 @@ def record_first_paint_budget_violation(
 ) -> dict[str, Any]:
     """Record a SQL-free first-paint SLO violation for admin diagnostics."""
     context = _current_first_paint_context()
-    boundary = str(query_boundary or "other")
-    if boundary not in _VALID_QUERY_BOUNDARIES:
-        boundary = "other"
+    boundary = normalize_query_boundary(query_boundary)
     event = {
         "event_id": uuid4().hex[:16],
         "render_id": str(render_id or context.get("render_id") or ""),
         "section": str(section or context.get("section") or ""),
         "workflow": str(context.get("workflow") or ""),
+        "boundary": boundary,
         "query_boundary": boundary,
         "ttl_key": str(ttl_key or "")[:160],
         "tier": str(tier or ""),
@@ -436,9 +461,7 @@ def assert_first_paint_query_allowed(
     """Enforce the first-paint SLO before any Snowflake execution can start."""
     if not is_first_paint_active():
         return
-    boundary = str(query_boundary or "other")
-    if boundary not in _VALID_QUERY_BOUNDARIES:
-        boundary = "other"
+    boundary = normalize_query_boundary(query_boundary)
     violation_reason = ""
     if boundary != "decision_packet":
         violation_reason = f"First paint allows only decision_packet queries, not {boundary}."
@@ -472,9 +495,7 @@ def record_snowflake_session_open_event(
 ) -> dict[str, Any]:
     """Record SQL-free Snowflake session creation telemetry."""
     context = _current_first_paint_context()
-    boundary = str(query_boundary or "other")
-    if boundary not in _VALID_QUERY_BOUNDARIES:
-        boundary = "other"
+    boundary = normalize_query_boundary(query_boundary)
     if not (marker_boundary or marker_budget or marker_owner):
         marker_metadata = _runtime_marker_metadata(_SESSION_OPEN_MARKER)
         marker_boundary = marker_metadata.get("marker_boundary", "")
@@ -486,6 +507,7 @@ def record_snowflake_session_open_event(
         "section": str(section or context.get("section") or ""),
         "workflow": str(workflow or context.get("workflow") or ""),
         "reason": str(reason or "session_open")[:200],
+        "boundary": boundary,
         "query_boundary": boundary,
         "allowed": bool(allowed),
         "role_capture_deferred": bool(role_capture_deferred),
@@ -534,7 +556,7 @@ def assert_first_paint_session_open_allowed(
     """Prevent direct session creation during first paint outside packet lookup."""
     if not is_first_paint_active():
         return
-    boundary = str(query_boundary or "other")
+    boundary = normalize_query_boundary(query_boundary)
     allowed = boundary == "decision_packet" and max_rows == 1
     if allowed:
         return
@@ -664,7 +686,7 @@ def begin_direct_sql_allowance(
     _session_list(_DIRECT_SQL_ALLOWANCE_STACK_KEY).append({
         "token": token,
         "render_id": str(context.get("render_id") or ""),
-        "query_boundary": str(query_boundary or "other"),
+        "query_boundary": normalize_query_boundary(query_boundary),
         "section": str(section or context.get("section") or ""),
         "ttl_key": str(ttl_key or "")[:160],
         "max_rows": None if max_rows is None else int(max_rows),
@@ -706,9 +728,7 @@ def record_direct_sql_event(
 ) -> dict[str, Any]:
     """Record a SQL-free direct session.sql call event."""
     context = _current_first_paint_context()
-    boundary = str(query_boundary or "other")
-    if boundary not in _VALID_QUERY_BOUNDARIES:
-        boundary = "other"
+    boundary = normalize_query_boundary(query_boundary)
     if not (marker_boundary or marker_budget or marker_owner):
         marker_metadata = _runtime_marker_metadata(_DIRECT_SQL_MARKER)
         marker_boundary = marker_metadata.get("marker_boundary", "")
@@ -737,6 +757,7 @@ def record_direct_sql_event(
         "render_id": str(context.get("render_id") or ""),
         "section": str(section or context.get("section") or ""),
         "workflow": str(workflow or context.get("workflow") or ""),
+        "boundary": boundary,
         "query_boundary": boundary,
         "allowed": bool(allowed),
         "reason": _safe_message(reason) or str(reason or "")[:240],
@@ -790,7 +811,7 @@ def assert_direct_sql_allowed(
 ) -> None:
     """Block direct session.sql during first paint unless the query runner allowed it."""
     allowance = _current_direct_sql_allowance()
-    boundary = str(allowance.get("query_boundary") or "other")
+    boundary = normalize_query_boundary(str(allowance.get("query_boundary") or "other"))
     max_rows = allowance.get("max_rows")
     allowed = True
     violation_reason = ""
@@ -834,14 +855,13 @@ def record_role_capture_event(
 ) -> dict[str, Any]:
     """Record role-capture behavior without storing SQL."""
     context = _current_first_paint_context()
-    boundary = str(query_boundary or "other")
-    if boundary not in _VALID_QUERY_BOUNDARIES:
-        boundary = "other"
+    boundary = normalize_query_boundary(query_boundary)
     event = {
         "event_id": uuid4().hex[:16],
         "render_id": str(context.get("render_id") or ""),
         "section": str(section or context.get("section") or ""),
         "workflow": str(context.get("workflow") or ""),
+        "boundary": boundary,
         "query_boundary": boundary,
         "deferred": bool(deferred),
         "executed": bool(executed),
@@ -963,9 +983,8 @@ def record_ui_query_event(
     cache_layer = str(cache_layer or "unknown")
     if cache_layer not in _VALID_CACHE_LAYERS:
         cache_layer = "unknown"
-    query_boundary = str(query_boundary or "other")
-    if query_boundary not in _VALID_QUERY_BOUNDARIES:
-        query_boundary = "other"
+    original_boundary = str(query_boundary or "other")
+    query_boundary = normalize_query_boundary(original_boundary)
     active_context = _current_first_paint_context()
     event_render_id = str(render_id or active_context.get("render_id") or "")
     if event_render_id:
@@ -988,6 +1007,9 @@ def record_ui_query_event(
         "finished_at": finished_at or datetime.now().isoformat(timespec="milliseconds"),
         "actual_query_executed": actual_query_executed,
         "cache_layer": cache_layer,
+        "cache_hit": cache_layer in {"session", "streamlit_cache", "paused"} or actual_query_executed is False,
+        "boundary": query_boundary,
+        "product_boundary": original_boundary,
         "query_boundary": query_boundary,
         "query_contract_id": str(query_contract_id or "")[:120],
         "target_label": str(target_label or "")[:250],
@@ -997,6 +1019,7 @@ def record_ui_query_event(
         "target_fallback_used": target_fallback_used,
         "target_predicate_plan_id": str(target_predicate_plan_id or "")[:80],
         "first_paint_sensitive": bool(first_paint_sensitive),
+        "raw_sql_included": False,
     }
     try:
         events = st.session_state.setdefault(_UI_QUERY_EVENTS_KEY, [])
@@ -1079,18 +1102,18 @@ def increment_snowflake_execution_counter(
     tier: str = "",
 ) -> dict[str, Any]:
     """Record that a real Snowflake execution crossed the app boundary."""
-    boundary = str(query_boundary or "other")
-    if boundary not in _VALID_QUERY_BOUNDARIES:
-        boundary = "other"
+    boundary = normalize_query_boundary(query_boundary)
     context = _current_first_paint_context()
     event = {
         "event_id": uuid4().hex[:16],
         "render_id": str(context.get("render_id") or ""),
         "section": str(section or context.get("section") or ""),
+        "boundary": boundary,
         "query_boundary": boundary,
         "ttl_key": str(ttl_key or ""),
         "tier": str(tier or ""),
         "timestamp": datetime.now().isoformat(timespec="milliseconds"),
+        "raw_sql_included": False,
     }
     try:
         events = _session_list(_SNOWFLAKE_EXECUTION_EVENTS_KEY)

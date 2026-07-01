@@ -67,6 +67,37 @@ class EncodingHygieneTests(unittest.TestCase):
             self.assertFalse(payload["passed"], payload)
             self.assertTrue(any(row["file"] == "artifacts/full_app_validation/bad.json" for row in payload["findings"]))
 
+    def test_manual_snowflake_run_transcripts_are_not_release_encoding_targets(self):
+        from tools.contracts.encoding_hygiene import evaluate_encoding_hygiene
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manual_dir = root / "artifacts" / "snowflake_validation" / "manual_runs"
+            manual_dir.mkdir(parents=True)
+            (manual_dir / "local_cli.out.txt").write_bytes(b"\xff\xfeS\x00K\x00I\x00P\x00P\x00E\x00D\x00")
+
+            payload = evaluate_encoding_hygiene(root)
+
+        self.assertTrue(payload["passed"], payload)
+        self.assertFalse(payload["findings"])
+
+    def test_encoding_hygiene_outputs_do_not_scan_themselves(self):
+        from tools.contracts.encoding_hygiene import LAUNCH_ARTIFACT, ROOT_ARTIFACT, evaluate_encoding_hygiene
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            root_artifact = root / ROOT_ARTIFACT
+            launch_artifact = root / LAUNCH_ARTIFACT
+            root_artifact.parent.mkdir(parents=True, exist_ok=True)
+            launch_artifact.parent.mkdir(parents=True, exist_ok=True)
+            root_artifact.write_text('{"label":"' + "\u00e2\u20ac\u2122" + '"}\n', encoding="utf-8")
+            launch_artifact.write_text('{"label":"' + "\u00e2\u20ac\u2122" + '"}\n', encoding="utf-8")
+
+            payload = evaluate_encoding_hygiene(root)
+
+        self.assertTrue(payload["passed"], payload)
+        self.assertFalse(payload["findings"])
+
 
 if __name__ == "__main__":
     unittest.main()

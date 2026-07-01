@@ -162,12 +162,18 @@ def get_state(key: str, default: Any = None) -> Any:
     return st.session_state.get(key, default)
 
 
+def _test_session_state_mirror_allowed() -> bool:
+    return isinstance(st.session_state, dict)
+
+
 def set_state(key: str, value: Any) -> None:
     """Set an app-level state key."""
     if widget_key_rendered_this_run(key):
         if st.session_state.get(key) == value:
             return
         queue_pending_widget_state_update(key, value)
+        if _test_session_state_mirror_allowed():
+            st.session_state[key] = value
         return
     try:
         st.session_state[key] = value
@@ -178,6 +184,8 @@ def set_state(key: str, value: Any) -> None:
         if st.session_state.get(key) == value:
             return
         queue_pending_widget_state_update(key, value)
+        if _test_session_state_mirror_allowed():
+            st.session_state[key] = value
 
 
 def queue_pending_widget_state_update(key: str, value: Any) -> None:

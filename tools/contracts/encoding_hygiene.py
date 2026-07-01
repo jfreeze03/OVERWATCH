@@ -69,7 +69,11 @@ def _is_scan_target(path: Path, root: Path) -> bool:
     rel_parts = path.relative_to(root).parts
     rel = str(path.relative_to(root)).replace("\\", "/")
     suffix = path.suffix.lower()
+    if rel in {ROOT_ARTIFACT, LAUNCH_ARTIFACT}:
+        return False
     if suffix not in TEXT_SUFFIXES:
+        return False
+    if rel.startswith("artifacts/snowflake_validation/manual_runs/"):
         return False
     if rel.startswith("artifacts/"):
         return suffix in {".csv", ".json", ".md", ".txt"}

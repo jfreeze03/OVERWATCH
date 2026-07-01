@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from hashlib import sha1
 import json
 from pathlib import Path
 from typing import Any, Mapping
@@ -27,6 +28,8 @@ def _write_json(path: Path, payload: Any) -> None:
 def _classify_sql_path(path: Path, root: Path) -> dict[str, Any]:
     rel = str(path.relative_to(root)).replace("\\", "/")
     upper = rel.upper()
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    text_upper = text.upper()
     if "VALIDATION" in upper:
         family = "deployment_validation"
         admin_only = True
@@ -35,27 +38,47 @@ def _classify_sql_path(path: Path, root: Path) -> dict[str, Any]:
         family = "drop_rollback"
         admin_only = True
         frequency = "operator_rollback"
-    elif "SETUP" in upper or "MART_TABLES" in upper or "LOAD_PROCEDURES" in upper or "AUDIT" in upper:
+    elif (
+        "SETUP" in upper
+        or "MART_TABLES" in upper
+        or "LOAD_PROCEDURES" in upper
+        or "AUDIT" in upper
+        or "/GENERATED/" in upper
+        or path.name.upper().startswith("OVERWATCH_")
+    ):
         family = "admin_setup"
         admin_only = True
         frequency = "deploy_or_admin_click"
     else:
-        family = "normal_evidence"
+        family = "compact_evidence"
         admin_only = False
         frequency = "explicit_action"
+    account_usage_use = "admin_or_explicit_only" if "ACCOUNT_USAGE" in text_upper else "none"
+    limit_present = " LIMIT " in f" {text_upper} "
+    deterministic_order_by = not limit_present or " ORDER BY " in f" {text_upper} "
+    path_id = sha1(rel.encode("utf-8", errors="ignore")).hexdigest()[:12]
+    keep_delete_decision = "keep" if family != "obsolete_delete" else "obsolete_delete"
     return {
+        "path_id": path_id,
         "path": rel,
+        "source_file": rel,
+        "function_or_procedure": path.stem,
         "owner": "OVERWATCH launch SQL owner",
         "purpose": family.replace("_", " "),
         "value_to_app": "Supports the current Decision Workspace launch surface or release validation.",
         "user_visible_feature": "Settings/Admin Setup Health" if admin_only else "Decision Workspace evidence",
         "source_family": family,
+        "classification": family,
         "table_family": "snowflake_artifact",
-        "account_usage_use": "admin_or_explicit_only" if "ACCOUNT_USAGE" in path.read_text(encoding="utf-8", errors="ignore").upper() else "none",
-        "row_limit": "bounded_or_validation",
+        "account_usage_use": account_usage_use,
+        "row_limit": "bounded_or_validation" if limit_present or admin_only else "missing_limit_review",
         "pruning_predicate": "validated_by_sql_linter",
+        "deterministic_order_by": deterministic_order_by,
         "frequency": frequency,
-        "keep_delete_decision": "keep",
+        "execution_frequency": frequency,
+        "cost_risk": "high" if account_usage_use != "none" else "medium" if not deterministic_order_by else "low",
+        "keep_delete_decision": keep_delete_decision,
+        "replacement_path": "",
         "daily_safe": family not in {"admin_setup", "deployment_validation", "drop_rollback"} or admin_only,
         "admin_only": admin_only,
         "launch_status": "retained_owned",
@@ -66,10 +89,16 @@ def _classify_sql_path(path: Path, root: Path) -> dict[str, Any]:
 def build_sql_value_inventory(root: Path) -> dict[str, Any]:
     sql_files = sorted((root / "snowflake").rglob("*.sql"))
     rows = [_classify_sql_path(path, root) for path in sql_files]
-    failures = [
-        row for row in rows
-        if not row["owner"] or not row["purpose"] or (not row["admin_only"] and row["account_usage_use"] != "none")
-    ]
+    failures: list[dict[str, Any]] = []
+    for row in rows:
+        if not row["owner"] or not row["purpose"]:
+            failures.append({**row, "failure_reason": "SQL path missing owner or purpose."})
+        if not row["admin_only"] and row["account_usage_use"] != "none":
+            failures.append({**row, "failure_reason": "Daily/normal SQL path uses Account Usage."})
+        if row["row_limit"] == "missing_limit_review" and row["source_family"] in {"compact_evidence", "targeted_evidence"}:
+            failures.append({**row, "failure_reason": "Evidence SQL path lacks a declared row limit."})
+        if not row["deterministic_order_by"] and row["source_family"] in {"compact_evidence", "targeted_evidence"}:
+            failures.append({**row, "failure_reason": "LIMIT-only evidence SQL lacks deterministic ORDER BY."})
     return {
         "source": "sql_value_inventory",
         "generated_at": _now(),

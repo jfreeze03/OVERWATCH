@@ -1,0 +1,82 @@
+from pathlib import Path
+import sys
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
+class PerformanceBudgetGateTests(unittest.TestCase):
+    def test_primary_first_paint_packet_only_passes(self):
+        from tools.contracts.performance_budget_gate import PRIMARY_SECTIONS, evaluate_performance_budget_gate
+
+        payload = {
+            "rows": [
+                {
+                    "section": section,
+                    "workflow": "Overview",
+                    "cold_first_paint_packet_query_count": 1,
+                    "warm_first_paint_query_count": 0,
+                    "non_packet_first_paint_event_count": 0,
+                    "evidence_query_count": 0,
+                    "account_usage_count": 0,
+                    "detail_query_count": 0,
+                    "cost_workbench_query_count": 0,
+                    "query_search_query_count": 0,
+                    "direct_sql_count": 0,
+                    "session_open_count": 0,
+                }
+                for section in PRIMARY_SECTIONS
+            ]
+        }
+
+        gate = evaluate_performance_budget_gate(payload, {"rows": []})
+
+        self.assertTrue(gate["passed"], gate.get("failures"))
+
+    def test_first_paint_evidence_and_account_usage_fail(self):
+        from tools.contracts.performance_budget_gate import evaluate_performance_budget_gate
+
+        gate = evaluate_performance_budget_gate(
+            {
+                "rows": [
+                    {
+                        "section": "Executive Landing",
+                        "workflow": "Overview",
+                        "cold_first_paint_packet_query_count": 1,
+                        "evidence_query_count": 1,
+                        "account_usage_count": 1,
+                    }
+                ]
+            },
+            {"rows": []},
+        )
+
+        self.assertFalse(gate["passed"])
+        reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
+        self.assertIn("evidence", reasons)
+        self.assertIn("Account Usage", reasons)
+
+    def test_route_and_no_click_query_budget_failures(self):
+        from tools.contracts.performance_budget_gate import evaluate_performance_budget_gate
+
+        gate = evaluate_performance_budget_gate(
+            {"rows": []},
+            {
+                "rows": [
+                    {"section": "Cost & Contract", "boundary": "route_action", "query_count": 1},
+                    {"section": "Workload Operations", "boundary": "query_search_no_click", "query_count": 1},
+                ]
+            },
+        )
+
+        self.assertFalse(gate["passed"])
+        reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
+        self.assertIn("route action", reasons)
+        self.assertIn("no-click", reasons)
+
+
+if __name__ == "__main__":
+    unittest.main()

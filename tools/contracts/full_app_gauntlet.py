@@ -44,6 +44,10 @@ from tools.contracts.rendered_ui_leak_scan import (
     RENDERED_UI_LEAK_ARTIFACTS,
     write_rendered_ui_leak_scan_artifacts,
 )
+from tools.contracts.metric_source_governance import (
+    METRIC_SOURCE_GOVERNANCE_REL,
+    write_metric_source_governance_artifacts,
+)
 from tools.contracts.render_provenance_reconciliation import (
     RENDER_PROVENANCE_RECONCILIATION_GATE_REL,
     RENDER_PROVENANCE_RECONCILIATION_REL,
@@ -96,6 +100,7 @@ REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
     "artifacts/full_app_validation/summary_board_error_inventory.json",
     "artifacts/full_app_validation/summary_board_failure_diagnostics.json",
     "artifacts/full_app_validation/metric_semantic_results.json",
+    METRIC_SOURCE_GOVERNANCE_REL,
     "artifacts/full_app_validation/cortex_cost_consistency_results.json",
     "artifacts/full_app_validation/cost_chart_workbench_results.json",
     "artifacts/full_app_validation/cost_workbench_chart_results.json",
@@ -1229,6 +1234,11 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
     browser_render_artifacts = write_browser_render_gauntlet_artifacts(root_path)
     summary_board_artifacts = _write_summary_board_contract_artifacts(root_path)
     metric_semantic_artifact = _write_metric_semantic_artifact(root_path)
+    metric_source_governance_artifacts = {
+        rel: payload
+        for rel, payload in write_metric_source_governance_artifacts(root_path).items()
+        if rel == METRIC_SOURCE_GOVERNANCE_REL
+    }
     formula_consistency_artifacts = _write_formula_consistency_artifacts(root_path)
     static_artifacts = write_static_contract_artifacts(root_path)
     launch_gauntlet_artifacts = write_full_app_launch_gauntlet_artifacts(root_path)
@@ -1250,6 +1260,7 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
         **browser_render_artifacts,
         **summary_board_artifacts,
         **metric_semantic_artifact,
+        **metric_source_governance_artifacts,
         **formula_consistency_artifacts,
         **static_artifacts,
         **launch_gauntlet_artifacts,
@@ -1268,6 +1279,7 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
         "artifacts/full_app_validation/artifact_manifest.json",
         {
             "artifacts/full_app_validation/metric_semantic_results.json",
+            METRIC_SOURCE_GOVERNANCE_REL,
             "artifacts/full_app_validation/cortex_cost_consistency_results.json",
             "artifacts/full_app_validation/cost_chart_workbench_results.json",
             "artifacts/full_app_validation/cost_workbench_chart_results.json",

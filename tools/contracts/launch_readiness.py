@@ -147,6 +147,16 @@ from tools.contracts.performance_budget_gate import (
     evaluate_performance_budget_gate,
     write_performance_budget_gate_artifacts,
 )
+from tools.contracts.cortex_token_efficiency_validation import (
+    CORTEX_TOKEN_EFFICIENCY_GATE_REL,
+    CORTEX_TOKEN_EFFICIENCY_LIVE_GATE_REL,
+    write_cortex_token_efficiency_artifacts,
+)
+from tools.contracts.metric_source_governance import (
+    METRIC_FAMILY_GATE_RELS,
+    METRIC_SOURCE_GOVERNANCE_GATE_REL,
+    write_metric_source_governance_artifacts,
+)
 from tools.contracts.security_credential_validation import (
     CORTEX_USER_LABEL_GATE_REL,
     SECURITY_CREDENTIAL_EVIDENCE_GATE_REL,
@@ -226,6 +236,10 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     SQL_CLEANUP_GATE_REL,
     DELETE_FIRST_GATE_REL,
     PERFORMANCE_BUDGET_GATE_REL,
+    METRIC_SOURCE_GOVERNANCE_GATE_REL,
+    *METRIC_FAMILY_GATE_RELS.values(),
+    CORTEX_TOKEN_EFFICIENCY_GATE_REL,
+    CORTEX_TOKEN_EFFICIENCY_LIVE_GATE_REL,
     SECURITY_CREDENTIAL_GATE_REL,
     SECURITY_CREDENTIAL_LIVE_GATE_REL,
     USER_DISPLAY_NAME_GATE_REL,
@@ -2677,6 +2691,23 @@ def _release_candidate_summary_bundle(
         "slow_runtime_count": _as_int(launch_summary.get("slow_runtime_count")),
         "sql_cleanup_failure_count": _as_int(launch_summary.get("sql_cleanup_failure_count")),
         "first_paint_failure_count": _as_int(launch_summary.get("first_paint_failure_count")),
+        "metric_source_governance_passed": bool(launch_summary.get("metric_source_governance_passed")),
+        "new_metric_family_count": _as_int(launch_summary.get("new_metric_family_count")),
+        "new_metric_packet_field_count": _as_int(launch_summary.get("new_metric_packet_field_count")),
+        "new_metric_rendered_count": _as_int(launch_summary.get("new_metric_rendered_count")),
+        "new_metric_evidence_action_count": _as_int(launch_summary.get("new_metric_evidence_action_count")),
+        "new_metric_export_count": _as_int(launch_summary.get("new_metric_export_count")),
+        "new_metric_unavailable_source_count": _as_int(
+            launch_summary.get("new_metric_unavailable_source_count")
+        ),
+        "new_metric_first_paint_violation_count": _as_int(
+            launch_summary.get("new_metric_first_paint_violation_count")
+        ),
+        "new_metric_raw_leak_count": _as_int(launch_summary.get("new_metric_raw_leak_count")),
+        "new_metric_sql_inventory_failure_count": _as_int(
+            launch_summary.get("new_metric_sql_inventory_failure_count")
+        ),
+        "app_health_gate_passed": bool(launch_summary.get("app_health_gate_passed")),
         "source_internal_leak_scan_passed": bool(launch_summary.get("source_internal_leak_scan_passed")),
         "credential_expiration_gate_passed": bool(launch_summary.get("credential_expiration_gate_passed")),
         "credential_expiration_live_gate_passed": bool(
@@ -2701,6 +2732,12 @@ def _release_candidate_summary_bundle(
         "credential_first_paint_gate_passed": bool(launch_summary.get("credential_first_paint_gate_passed")),
         "credential_sql_inventory_gate_passed": bool(launch_summary.get("credential_sql_inventory_gate_passed")),
         "credential_rendered_leak_gate_passed": bool(launch_summary.get("credential_rendered_leak_gate_passed")),
+        "cortex_token_efficiency_gate_passed": bool(launch_summary.get("cortex_token_efficiency_gate_passed")),
+        "cortex_token_efficiency_live_gate_passed": bool(
+            launch_summary.get("cortex_token_efficiency_live_gate_passed")
+        ),
+        "cortex_token_metric_count": _as_int(launch_summary.get("cortex_token_metric_count")),
+        "cortex_token_ratio_failure_count": _as_int(launch_summary.get("cortex_token_ratio_failure_count")),
         "launch_readiness_passed": bool(launch_summary.get("all_passed")),
         "snowflake_validation_passed": bool(launch_summary.get("snowflake_validation_passed")),
         "live_execution_manifest_passed": bool(launch_summary.get("live_execution_manifest_gate_passed")),
@@ -4640,6 +4677,15 @@ def _release_gate_matrix(
     sql_cleanup_gate = _as_mapping(launch_artifacts.get("sql_cleanup_gate_results"))
     delete_first_cleanup_gate = _as_mapping(launch_artifacts.get("delete_first_cleanup_gate_results"))
     performance_budget_gate = _as_mapping(launch_artifacts.get("performance_budget_gate_results"))
+    metric_source_governance_gate = _as_mapping(launch_artifacts.get("metric_source_governance_gate_results"))
+    metric_family_gates = {
+        family_id: _as_mapping(launch_artifacts.get(Path(rel).stem))
+        for family_id, rel in METRIC_FAMILY_GATE_RELS.items()
+    }
+    cortex_token_efficiency_gate = _as_mapping(launch_artifacts.get("cortex_token_efficiency_gate_results"))
+    cortex_token_efficiency_live_gate = _as_mapping(
+        launch_artifacts.get("cortex_token_efficiency_live_gate_results")
+    )
     security_credential_gate = _as_mapping(launch_artifacts.get("security_credential_expiration_gate_results"))
     security_credential_live_gate = _as_mapping(
         launch_artifacts.get("security_credential_expiration_live_gate_results")
@@ -4801,6 +4847,41 @@ def _release_gate_matrix(
             "artifact": PERFORMANCE_BUDGET_GATE_REL,
             "passed": bool(performance_budget_gate.get("passed")),
             "failure_reason": "" if performance_budget_gate.get("passed") else "Performance budget rows show first-paint, route-action, Query Search, or workbench query violations.",
+        },
+        {
+            "gate": "metric_source_governance",
+            "artifact": METRIC_SOURCE_GOVERNANCE_GATE_REL,
+            "passed": bool(metric_source_governance_gate.get("passed")),
+            "failure_reason": ""
+            if metric_source_governance_gate.get("passed")
+            else "New metric families are missing packet, source, zero/unavailable, evidence/export/case, or first-paint safety metadata.",
+        },
+        *[
+            {
+                "gate": str(metric_family_gate.get("metric_family") or family_id),
+                "artifact": METRIC_FAMILY_GATE_RELS[family_id],
+                "passed": bool(metric_family_gate.get("passed")),
+                "failure_reason": ""
+                if metric_family_gate.get("passed")
+                else "Metric family governance failed for packet/source/evidence/export/performance metadata.",
+            }
+            for family_id, metric_family_gate in metric_family_gates.items()
+        ],
+        {
+            "gate": "cortex_token_efficiency",
+            "artifact": CORTEX_TOKEN_EFFICIENCY_GATE_REL,
+            "passed": bool(cortex_token_efficiency_gate.get("passed")),
+            "failure_reason": ""
+            if cortex_token_efficiency_gate.get("passed")
+            else "Cortex token-efficiency ratios, user-label safety, explicit workbench, or export proof failed.",
+        },
+        {
+            "gate": "cortex_token_efficiency_live",
+            "artifact": CORTEX_TOKEN_EFFICIENCY_LIVE_GATE_REL,
+            "passed": bool(cortex_token_efficiency_live_gate.get("passed")),
+            "failure_reason": ""
+            if cortex_token_efficiency_live_gate.get("passed")
+            else "Live Cortex token-efficiency validation is required for this launch profile or needs a signed waiver.",
         },
         {
             "gate": "security_credential_expiration",
@@ -5494,6 +5575,11 @@ def evaluate_launch_readiness(
     export_download_gate = _as_mapping(launch_artifacts.get("export_download_gate_results"))
     live_feature_gate = _as_mapping(launch_artifacts.get("live_feature_gate_results"))
     sql_cleanup_gate = _as_mapping(launch_artifacts.get("sql_cleanup_gate_results"))
+    metric_source_governance_gate = _as_mapping(launch_artifacts.get("metric_source_governance_gate_results"))
+    cortex_token_efficiency_gate = _as_mapping(launch_artifacts.get("cortex_token_efficiency_gate_results"))
+    cortex_token_efficiency_live_gate = _as_mapping(
+        launch_artifacts.get("cortex_token_efficiency_live_gate_results")
+    )
     security_credential_gate = _as_mapping(launch_artifacts.get("security_credential_expiration_gate_results"))
     security_credential_live_gate = _as_mapping(
         launch_artifacts.get("security_credential_expiration_live_gate_results")
@@ -5618,6 +5704,27 @@ def evaluate_launch_readiness(
         "live_feature_failure_count": _as_int(live_feature_gate.get("failure_count")),
         "sql_cleanup_gate_passed": bool(sql_cleanup_gate.get("passed")),
         "sql_cleanup_failure_count": _as_int(sql_cleanup_gate.get("failure_count")),
+        "metric_source_governance_passed": bool(metric_source_governance_gate.get("passed")),
+        "new_metric_family_count": _as_int(metric_source_governance_gate.get("new_metric_family_count")),
+        "new_metric_packet_field_count": _as_int(
+            metric_source_governance_gate.get("new_metric_packet_field_count")
+        ),
+        "new_metric_rendered_count": _as_int(metric_source_governance_gate.get("new_metric_rendered_count")),
+        "new_metric_evidence_action_count": _as_int(
+            metric_source_governance_gate.get("new_metric_evidence_action_count")
+        ),
+        "new_metric_export_count": _as_int(metric_source_governance_gate.get("new_metric_export_count")),
+        "new_metric_unavailable_source_count": _as_int(
+            metric_source_governance_gate.get("new_metric_unavailable_source_count")
+        ),
+        "new_metric_first_paint_violation_count": _as_int(
+            metric_source_governance_gate.get("new_metric_first_paint_violation_count")
+        ),
+        "new_metric_raw_leak_count": _as_int(metric_source_governance_gate.get("new_metric_raw_leak_count")),
+        "new_metric_sql_inventory_failure_count": _as_int(
+            metric_source_governance_gate.get("new_metric_sql_inventory_failure_count")
+        ),
+        "app_health_gate_passed": bool(metric_source_governance_gate.get("app_health_gate_passed")),
         "credential_expiration_gate_passed": bool(security_credential_gate.get("passed")),
         "credential_expiration_live_gate_passed": bool(security_credential_live_gate.get("passed")),
         "credential_expiring_30d_count": _as_int(security_credential_gate.get("credential_expiring_30d_count")),
@@ -5640,6 +5747,16 @@ def evaluate_launch_readiness(
         "credential_first_paint_gate_passed": bool(security_credential_first_paint_gate.get("passed")),
         "credential_sql_inventory_gate_passed": bool(credential_sql_inventory_gate.get("passed")),
         "credential_rendered_leak_gate_passed": bool(credential_rendered_leak_gate.get("passed")),
+        "cortex_token_efficiency_gate_passed": bool(cortex_token_efficiency_gate.get("passed")),
+        "cortex_token_efficiency_live_gate_passed": bool(cortex_token_efficiency_live_gate.get("passed")),
+        "cortex_token_metric_count": _as_int(cortex_token_efficiency_gate.get("cortex_token_metric_count")),
+        "cortex_token_ratio_failure_count": _as_int(
+            cortex_token_efficiency_gate.get("cortex_token_ratio_failure_count")
+        ),
+        "cortex_token_efficiency_live_required": bool(cortex_token_efficiency_live_gate.get("live_required")),
+        "cortex_token_efficiency_live_executed": bool(cortex_token_efficiency_live_gate.get("live_executed")),
+        "cortex_token_efficiency_live_passed": bool(cortex_token_efficiency_live_gate.get("live_passed")),
+        "cortex_token_efficiency_live_skipped": bool(cortex_token_efficiency_live_gate.get("live_skipped")),
         "user_stress_gate_passed": bool(user_stress_gate.get("passed")),
         "stress_failure_count": _as_int(user_stress_gate.get("failure_count")),
         "slow_runtime_count": _as_int(user_stress_gate.get("slow_runtime_count")),
@@ -5826,6 +5943,14 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         waivers=waivers,
     )
     payloads.update(security_credential_artifacts)
+    cortex_token_efficiency_artifacts = write_cortex_token_efficiency_artifacts(
+        root_path,
+        profile=profile,
+        waivers=waivers,
+    )
+    payloads.update(cortex_token_efficiency_artifacts)
+    metric_source_governance_artifacts = write_metric_source_governance_artifacts(root_path)
+    payloads.update(metric_source_governance_artifacts)
 
     launch_artifacts: dict[str, Any] = {}
     launch_artifacts["launch_waivers"] = {
@@ -5865,6 +5990,18 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["delete_first_release_results"] = _delete_first_release_results(payloads)
     launch_artifacts["delete_first_cleanup_gate_results"] = delete_first_cleanup_artifacts[DELETE_FIRST_GATE_REL]
     launch_artifacts["performance_budget_gate_results"] = performance_budget_artifacts[PERFORMANCE_BUDGET_GATE_REL]
+    launch_artifacts["cortex_token_efficiency_gate_results"] = cortex_token_efficiency_artifacts[
+        CORTEX_TOKEN_EFFICIENCY_GATE_REL
+    ]
+    launch_artifacts["cortex_token_efficiency_live_gate_results"] = cortex_token_efficiency_artifacts[
+        CORTEX_TOKEN_EFFICIENCY_LIVE_GATE_REL
+    ]
+    launch_artifacts["metric_source_governance_gate_results"] = metric_source_governance_artifacts[
+        METRIC_SOURCE_GOVERNANCE_GATE_REL
+    ]
+    for rel, metric_gate_payload in metric_source_governance_artifacts.items():
+        if rel in METRIC_FAMILY_GATE_RELS.values():
+            launch_artifacts[Path(rel).stem] = metric_gate_payload
     launch_artifacts["security_credential_expiration_gate_results"] = security_credential_artifacts[
         SECURITY_CREDENTIAL_GATE_REL
     ]

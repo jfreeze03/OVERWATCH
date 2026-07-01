@@ -38,6 +38,104 @@ def _ai_credit_rate() -> float:
     return safe_float(get_ai_credit_price(), DEFAULT_AI_CREDIT_RATE)
 
 
+def _add_cortex_token_efficiency_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    """Add Cortex token-efficiency metrics from additive source columns."""
+    result = frame.copy() if frame is not None else pd.DataFrame()
+    for column in ("TOTAL_TOKENS", "TOTAL_REQUESTS", "TOTAL_CREDITS", "COST_USD"):
+        source = result[column] if column in result.columns else pd.Series(0, index=result.index)
+        result[column] = pd.to_numeric(source, errors="coerce").fillna(0)
+    result["TOKENS_PER_REQUEST"] = result.apply(
+        lambda row: (
+            round(safe_float(row.get("TOTAL_TOKENS")) / safe_float(row.get("TOTAL_REQUESTS")), 2)
+            if safe_float(row.get("TOTAL_REQUESTS")) > 0
+            else 0.0
+        ),
+        axis=1,
+    )
+    result["TOKENS_PER_DOLLAR"] = result.apply(
+        lambda row: (
+            round(safe_float(row.get("TOTAL_TOKENS")) / safe_float(row.get("COST_USD")), 2)
+            if safe_float(row.get("COST_USD")) > 0
+            else 0.0
+        ),
+        axis=1,
+    )
+    result["COST_PER_1K_TOKENS_USD"] = result.apply(
+        lambda row: (
+            round((safe_float(row.get("COST_USD")) / safe_float(row.get("TOTAL_TOKENS"))) * 1000, 6)
+            if safe_float(row.get("TOTAL_TOKENS")) > 0
+            else 0.0
+        ),
+        axis=1,
+    )
+    result["AI_CREDITS_PER_1K_TOKENS"] = result.apply(
+        lambda row: (
+            round((safe_float(row.get("TOTAL_CREDITS")) / safe_float(row.get("TOTAL_TOKENS"))) * 1000, 6)
+            if safe_float(row.get("TOTAL_TOKENS")) > 0
+            else 0.0
+        ),
+        axis=1,
+    )
+    result["COST_PER_REQUEST_USD"] = result.apply(
+        lambda row: (
+            round(safe_float(row.get("COST_USD")) / safe_float(row.get("TOTAL_REQUESTS")), 6)
+            if safe_float(row.get("TOTAL_REQUESTS")) > 0
+            else 0.0
+        ),
+        axis=1,
+    )
+    return result
+
+
+def _cortex_efficiency_recommended_action(reason: str) -> str:
+    if "high cost per 1K tokens" in reason:
+        return "Review model/tool selection and prompt context size before expanding usage."
+    if "low tokens per dollar" in reason:
+        return "Check whether high-cost calls are returning low useful token volume."
+    if "high tokens per request" in reason:
+        return "Review prompt payloads, retrieved context, and generated output length."
+    if "low token yield" in reason:
+        return "Inspect request patterns for retries, failed interactions, or short responses."
+    if "high projected monthly cost" in reason:
+        return "Confirm business owner, budget threshold, and user access controls."
+    return "Review Cortex usage pattern and confirm the workload is expected."
+
+
+def _build_cortex_efficiency_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    rows = _add_cortex_token_efficiency_columns(frame)
+    if rows.empty:
+        return rows
+    cost_per_1k_threshold = safe_float(rows["COST_PER_1K_TOKENS_USD"].quantile(0.75))
+    tokens_per_dollar_threshold = safe_float(rows["TOKENS_PER_DOLLAR"].quantile(0.25))
+    tokens_per_request_threshold = safe_float(rows["TOKENS_PER_REQUEST"].quantile(0.75))
+    requests_threshold = safe_float(rows["TOTAL_REQUESTS"].quantile(0.75))
+
+    def _reason(row: pd.Series) -> str:
+        reasons: list[str] = []
+        if safe_float(row.get("COST_PER_1K_TOKENS_USD")) > max(cost_per_1k_threshold, 0):
+            reasons.append("high cost per 1K tokens")
+        if safe_float(row.get("TOKENS_PER_DOLLAR")) < tokens_per_dollar_threshold and safe_float(row.get("COST_USD")) > 0:
+            reasons.append("low tokens per dollar")
+        if safe_float(row.get("TOKENS_PER_REQUEST")) > max(tokens_per_request_threshold, 0):
+            reasons.append("high tokens per request")
+        if (
+            safe_float(row.get("TOTAL_REQUESTS")) > max(requests_threshold, 0)
+            and safe_float(row.get("TOKENS_PER_REQUEST")) <= max(tokens_per_request_threshold, 1) * 0.25
+        ):
+            reasons.append("high requests with low token yield")
+        if safe_float(row.get("COST_USD")) * 30 > 500:
+            reasons.append("high projected monthly cost")
+        return "; ".join(reasons) or "within peer range"
+
+    rows["OUTLIER_REASON"] = rows.apply(_reason, axis=1)
+    rows["RECOMMENDED_ACTION"] = rows["OUTLIER_REASON"].apply(_cortex_efficiency_recommended_action)
+    return rows.sort_values(
+        ["COST_PER_1K_TOKENS_USD", "COST_USD", "TOTAL_TOKENS"],
+        ascending=[False, False, False],
+        kind="mergesort",
+    )
+
+
 CORTEX_VIEWS = (
     "Spend Control",
     "Service Details",
@@ -1025,32 +1123,8 @@ def render():
                 df_cc["FIRST_USAGE"] = safe_strip_tz(df_cc["FIRST_USAGE"])
             if "LAST_USAGE" in df_cc.columns:
                 df_cc["LAST_USAGE"] = safe_strip_tz(df_cc["LAST_USAGE"])
-            df_cc["TOTAL_TOKENS"] = pd.to_numeric(df_cc.get("TOTAL_TOKENS", 0), errors="coerce").fillna(0)
             df_cc["COST_USD"] = df_cc["TOTAL_CREDITS"].apply(lambda x: round(x * _ai_credit_rate(), 4))
-            df_cc["COST_PER_REQUEST_USD"] = df_cc.apply(
-                lambda row: round(safe_float(row.get("COST_USD")) / max(safe_int(row.get("TOTAL_REQUESTS")), 1), 6),
-                axis=1,
-            )
-            df_cc["TOKENS_PER_REQUEST"] = df_cc.apply(
-                lambda row: round(safe_float(row.get("TOTAL_TOKENS")) / max(safe_int(row.get("TOTAL_REQUESTS")), 1), 2),
-                axis=1,
-            )
-            df_cc["COST_PER_1K_TOKENS_USD"] = df_cc.apply(
-                lambda row: (
-                    round((safe_float(row.get("COST_USD")) / safe_float(row.get("TOTAL_TOKENS"))) * 1000, 6)
-                    if safe_float(row.get("TOTAL_TOKENS")) > 0
-                    else 0.0
-                ),
-                axis=1,
-            )
-            df_cc["TOKENS_PER_DOLLAR"] = df_cc.apply(
-                lambda row: (
-                    round(safe_float(row.get("TOTAL_TOKENS")) / safe_float(row.get("COST_USD")), 2)
-                    if safe_float(row.get("COST_USD")) > 0
-                    else 0.0
-                ),
-                axis=1,
-            )
+            df_cc = _add_cortex_token_efficiency_columns(df_cc)
 
             # Cost by user chart
             st.subheader("Cost by User / Role")
@@ -1070,39 +1144,21 @@ def render():
                 )
             )
             if not user_agg.empty:
-                user_agg["TOKENS_PER_REQUEST"] = user_agg.apply(
-                    lambda row: round(
-                        safe_float(row.get("TOTAL_TOKENS")) / max(safe_int(row.get("TOTAL_REQUESTS")), 1),
-                        2,
-                    ),
-                    axis=1,
-                )
-                user_agg["COST_PER_1K_TOKENS_USD"] = user_agg.apply(
-                    lambda row: (
-                        round((safe_float(row.get("COST_USD")) / safe_float(row.get("TOTAL_TOKENS"))) * 1000, 6)
-                        if safe_float(row.get("TOTAL_TOKENS")) > 0
-                        else 0.0
-                    ),
-                    axis=1,
-                )
-                user_agg["TOKENS_PER_DOLLAR"] = user_agg.apply(
-                    lambda row: (
-                        round(safe_float(row.get("TOTAL_TOKENS")) / safe_float(row.get("COST_USD")), 2)
-                        if safe_float(row.get("COST_USD")) > 0
-                        else 0.0
-                    ),
-                    axis=1,
-                )
+                user_agg = _add_cortex_token_efficiency_columns(user_agg)
                 user_agg = user_agg.sort_values("COST_USD", ascending=False).head(20)
                 render_ranked_bar_chart(
                     user_agg,
                     "USER_CHART_LABEL",
                     "COST_USD",
                     top_n=20,
+                    stable_key="USER_NAME",
                     tooltip_columns=(
+                        "TOTAL_CREDITS",
                         "TOTAL_TOKENS",
                         "TOKENS_PER_DOLLAR",
                         "COST_PER_1K_TOKENS_USD",
+                        "AI_CREDITS_PER_1K_TOKENS",
+                        "TOKENS_PER_REQUEST",
                         "TOTAL_REQUESTS",
                     ),
                 )
@@ -1111,7 +1167,8 @@ def render():
                     title="Cortex user cost, tokens, and recency",
                     priority_columns=[
                         "USER_DISPLAY_NAME", "COST_USD", "TOTAL_CREDITS", "TOTAL_TOKENS",
-                        "TOKENS_PER_DOLLAR", "COST_PER_1K_TOKENS_USD", "TOTAL_REQUESTS",
+                        "TOKENS_PER_DOLLAR", "COST_PER_1K_TOKENS_USD",
+                        "AI_CREDITS_PER_1K_TOKENS", "TOKENS_PER_REQUEST", "TOTAL_REQUESTS",
                         "FIRST_USAGE", "LAST_USAGE",
                     ],
                     sort_by=["COST_USD", "LAST_USAGE"],
@@ -1126,6 +1183,8 @@ def render():
                         "TOTAL_TOKENS": st.column_config.NumberColumn("Tokens", format="%d"),
                         "TOKENS_PER_DOLLAR": st.column_config.NumberColumn("Tokens / $", format="%.2f"),
                         "COST_PER_1K_TOKENS_USD": st.column_config.NumberColumn("Cost / 1K tokens", format="$%.4f"),
+                        "AI_CREDITS_PER_1K_TOKENS": st.column_config.NumberColumn("AI credits / 1K tokens", format="%.6f"),
+                        "TOKENS_PER_REQUEST": st.column_config.NumberColumn("Tokens/request", format="%.2f"),
                         "TOTAL_REQUESTS": st.column_config.NumberColumn("Requests", format="%d"),
                     },
                 )
@@ -1143,6 +1202,7 @@ def render():
                     "TOTAL_TOKENS",
                     "TOKENS_PER_DOLLAR",
                     "COST_PER_1K_TOKENS_USD",
+                    "AI_CREDITS_PER_1K_TOKENS",
                     "TOKENS_PER_REQUEST",
                     "FIRST_USAGE",
                     "LAST_USAGE",
@@ -1161,10 +1221,49 @@ def render():
                     "TOTAL_TOKENS": st.column_config.NumberColumn("Tokens", format="%d"),
                     "TOKENS_PER_DOLLAR": st.column_config.NumberColumn("Tokens / $", format="%.2f"),
                     "COST_PER_1K_TOKENS_USD": st.column_config.NumberColumn("Cost / 1K tokens", format="$%.4f"),
+                    "AI_CREDITS_PER_1K_TOKENS": st.column_config.NumberColumn("AI credits / 1K tokens", format="%.6f"),
                     "TOKENS_PER_REQUEST": st.column_config.NumberColumn("Tokens/request", format="%.2f"),
                 },
             )
             download_csv(sanitize_user_columns_for_export(df_cc), "cortex_code_users.csv")
+
+            if st.button("Load Cortex Efficiency", key="cc_efficiency_load"):
+                efficiency_rows = _build_cortex_efficiency_rows(df_cc)
+                render_priority_dataframe(
+                    efficiency_rows,
+                    title="Cortex token efficiency outliers",
+                    priority_columns=[
+                        "USER_DISPLAY_NAME",
+                        "USER_CHART_LABEL",
+                        "SOURCE",
+                        "TOTAL_TOKENS",
+                        "TOTAL_REQUESTS",
+                        "COST_USD",
+                        "TOTAL_CREDITS",
+                        "TOKENS_PER_REQUEST",
+                        "TOKENS_PER_DOLLAR",
+                        "COST_PER_1K_TOKENS_USD",
+                        "AI_CREDITS_PER_1K_TOKENS",
+                        "OUTLIER_REASON",
+                        "RECOMMENDED_ACTION",
+                    ],
+                    sort_by=["COST_PER_1K_TOKENS_USD", "COST_USD", "TOTAL_TOKENS"],
+                    ascending=[False, False, False],
+                    raw_label="All Cortex token efficiency rows",
+                    height=350,
+                    credit_price=_ai_credit_rate(),
+                    column_config={
+                        "COST_USD": st.column_config.NumberColumn("Cost", format="$%.2f"),
+                        "TOTAL_CREDITS": st.column_config.NumberColumn("AI Credits", format="%.4f"),
+                        "TOTAL_TOKENS": st.column_config.NumberColumn("Tokens", format="%d"),
+                        "TOTAL_REQUESTS": st.column_config.NumberColumn("Requests", format="%d"),
+                        "TOKENS_PER_REQUEST": st.column_config.NumberColumn("Tokens/request", format="%.2f"),
+                        "TOKENS_PER_DOLLAR": st.column_config.NumberColumn("Tokens / $", format="%.2f"),
+                        "COST_PER_1K_TOKENS_USD": st.column_config.NumberColumn("Cost / 1K tokens", format="$%.4f"),
+                        "AI_CREDITS_PER_1K_TOKENS": st.column_config.NumberColumn("AI credits / 1K tokens", format="%.6f"),
+                    },
+                )
+                download_csv(sanitize_user_columns_for_export(efficiency_rows), "cortex_token_efficiency.csv")
 
             # Cost-per-request spike detection
             st.divider()

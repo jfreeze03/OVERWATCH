@@ -1,6 +1,8 @@
 # utils/display.py - chart and drill-down rendering helpers
 import hashlib
 import re
+from collections.abc import Mapping
+from typing import Any
 
 import streamlit as st
 import pandas as pd
@@ -22,6 +24,97 @@ from performance import query_budget_context
 
 DISPLAY_VERSION = "2026-06-05-chart-drillback-cost-v1"
 OVERWATCH_TIME_SERIES_PALETTE = ("#29B5E8", "#71D3DC", "#34d399", "#f59e0b", "#ef4444", "#c084fc")
+RANKED_RATIO_METRICS: dict[str, dict[str, Any]] = {
+    "TOKENS_PER_DOLLAR": {
+        "aggregation": "ratio",
+        "numerator": "TOTAL_TOKENS",
+        "denominator": "COST_USD",
+        "scale": 1,
+        "precision": 2,
+    },
+    "COST_PER_1K_TOKENS_USD": {
+        "aggregation": "ratio",
+        "numerator": "COST_USD",
+        "denominator": "TOTAL_TOKENS",
+        "scale": 1000,
+        "precision": 6,
+    },
+    "TOKENS_PER_REQUEST": {
+        "aggregation": "ratio",
+        "numerator": "TOTAL_TOKENS",
+        "denominator": "TOTAL_REQUESTS",
+        "scale": 1,
+        "precision": 2,
+    },
+    "COST_PER_REQUEST_USD": {
+        "aggregation": "ratio",
+        "numerator": "COST_USD",
+        "denominator": "TOTAL_REQUESTS",
+        "scale": 1,
+        "precision": 6,
+    },
+    "AI_CREDITS_PER_1K_TOKENS": {
+        "aggregation": "ratio",
+        "numerator": "TOTAL_CREDITS",
+        "denominator": "TOTAL_TOKENS",
+        "scale": 1000,
+        "precision": 6,
+    },
+}
+
+
+def _rank_metric_spec(column: str, metric_aggregations: Mapping[str, object] | None = None) -> dict[str, Any]:
+    custom = (metric_aggregations or {}).get(column)
+    if isinstance(custom, str):
+        return {"aggregation": custom}
+    if isinstance(custom, Mapping):
+        return dict(custom)
+    return dict(RANKED_RATIO_METRICS.get(str(column).upper(), {"aggregation": "sum"}))
+
+
+def _safe_ratio_value(
+    numerator: object,
+    denominator: object,
+    *,
+    scale: float = 1.0,
+    precision: int | None = None,
+    source_confirmed_zero: bool = False,
+) -> object:
+    numerator_value = pd.to_numeric(pd.Series([numerator]), errors="coerce").iloc[0]
+    denominator_value = pd.to_numeric(pd.Series([denominator]), errors="coerce").iloc[0]
+    if pd.isna(numerator_value) or pd.isna(denominator_value) or float(denominator_value) == 0:
+        return 0.0 if source_confirmed_zero else pd.NA
+    value = float(numerator_value) / float(denominator_value) * float(scale or 1.0)
+    return round(value, int(precision)) if precision is not None else value
+
+
+def _looks_like_sensitive_identifier(value: object) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return True
+    if re.fullmatch(r"\d+", text):
+        return True
+    if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", text):
+        return True
+    return bool(len(text) >= 18 and re.fullmatch(r"[A-Za-z0-9_-]+", text))
+
+
+def _disambiguate_rank_labels(frame: pd.DataFrame, dimension: str, stable_key: str | None) -> pd.DataFrame:
+    if frame.empty or not stable_key or stable_key not in frame.columns or dimension not in frame.columns:
+        return frame
+    result = frame.copy()
+    labels = result[dimension].fillna("Unknown").astype(str)
+    duplicate_mask = labels.duplicated(keep=False)
+    if not duplicate_mask.any():
+        result[dimension] = labels
+        return result
+    for label, indexes in result[duplicate_mask].groupby(labels[duplicate_mask], sort=False).groups.items():
+        for ordinal, index in enumerate(indexes, start=1):
+            stable_value = str(result.at[index, stable_key] or "").strip()
+            suffix = str(ordinal) if _looks_like_sensitive_identifier(stable_value) else stable_value
+            result.at[index, dimension] = f"{label} · {suffix}"
+    result.loc[~duplicate_mask, dimension] = labels[~duplicate_mask]
+    return result
 
 
 def day_window_selectbox(
@@ -77,24 +170,76 @@ def rank_chart_frame(
     top_n: int = 20,
     ascending: bool = False,
     tooltip_columns: list[str] | tuple[str, ...] | None = None,
+    stable_key: str | None = None,
+    metric_aggregations: Mapping[str, object] | None = None,
+    source_confirmed_zero: bool = False,
 ) -> pd.DataFrame:
     """Return a metric-ranked chart frame with one row per displayed dimension."""
-    if df is None or df.empty or dimension not in df.columns or measure not in df.columns:
+    if df is None or df.empty or dimension not in df.columns:
         return pd.DataFrame(columns=[dimension, measure])
-    extra_columns = [
-        column
-        for column in (tooltip_columns or ())
-        if column in df.columns and column not in {dimension, measure}
-    ]
-    chart_df = df[[dimension, measure, *extra_columns]].dropna(subset=[dimension]).copy()
+    requested_metrics = list(dict.fromkeys([measure, *(tooltip_columns or ())]))
+    metric_specs = {column: _rank_metric_spec(column, metric_aggregations) for column in requested_metrics}
+    required_columns = {dimension}
+    if stable_key and stable_key in df.columns:
+        required_columns.add(stable_key)
+    for column, spec in metric_specs.items():
+        if spec.get("aggregation") == "ratio":
+            required_columns.add(str(spec.get("numerator") or ""))
+            required_columns.add(str(spec.get("denominator") or ""))
+        else:
+            required_columns.add(column)
+    required_columns.discard("")
+    existing_columns = [column for column in required_columns if column in df.columns]
+    chart_df = df[existing_columns].dropna(subset=[dimension]).copy()
     chart_df[dimension] = chart_df[dimension].astype(str)
-    for column in [measure, *extra_columns]:
+    stable_key_used = stable_key if stable_key and stable_key in chart_df.columns else None
+    group_columns = [stable_key_used] if stable_key_used else [dimension]
+    for column in existing_columns:
+        if column in {dimension, stable_key_used}:
+            continue
         chart_df[column] = pd.to_numeric(chart_df[column], errors="coerce")
-    chart_df = chart_df.replace([float("inf"), float("-inf")], pd.NA).dropna(subset=[measure])
+    additive_columns: set[str] = set()
+    for column, spec in metric_specs.items():
+        if spec.get("aggregation") == "ratio":
+            numerator = str(spec.get("numerator") or "")
+            denominator = str(spec.get("denominator") or "")
+            if numerator in chart_df.columns:
+                additive_columns.add(numerator)
+            if denominator in chart_df.columns:
+                additive_columns.add(denominator)
+        elif column in chart_df.columns:
+            additive_columns.add(column)
+    chart_df = chart_df.replace([float("inf"), float("-inf")], pd.NA)
+    measure_spec = metric_specs.get(measure, {})
+    if measure_spec.get("aggregation") != "ratio" and measure in chart_df.columns:
+        chart_df = chart_df.dropna(subset=[measure])
     if chart_df.empty:
         return pd.DataFrame(columns=[dimension, measure])
-    aggregations = {measure: "sum", **{column: "sum" for column in extra_columns}}
-    chart_df = chart_df.groupby(dimension, as_index=False, dropna=False, sort=False).agg(aggregations)
+    aggregations: dict[str, object] = {column: "sum" for column in sorted(additive_columns)}
+    if stable_key_used:
+        aggregations[dimension] = "first"
+    chart_df = chart_df.groupby(group_columns, as_index=False, dropna=False, sort=False).agg(aggregations)
+    for column, spec in metric_specs.items():
+        if spec.get("aggregation") != "ratio":
+            if column not in chart_df.columns:
+                chart_df[column] = pd.NA
+            continue
+        numerator = str(spec.get("numerator") or "")
+        denominator = str(spec.get("denominator") or "")
+        if numerator not in chart_df.columns or denominator not in chart_df.columns:
+            chart_df[column] = pd.NA
+            continue
+        chart_df[column] = chart_df.apply(
+            lambda row: _safe_ratio_value(
+                row.get(numerator),
+                row.get(denominator),
+                scale=safe_float(spec.get("scale"), 1.0),
+                precision=int(spec["precision"]) if spec.get("precision") is not None else None,
+                source_confirmed_zero=source_confirmed_zero,
+            ),
+            axis=1,
+        )
+    chart_df = _disambiguate_rank_labels(chart_df, dimension, stable_key_used)
     chart_df = chart_df.replace([float("inf"), float("-inf")], pd.NA).dropna(subset=[measure])
     chart_df = chart_df.sort_values(measure, ascending=ascending, kind="mergesort")
     return chart_df.head(max(1, int(top_n or 20)))
@@ -226,10 +371,22 @@ def render_ranked_bar_chart(
     top_n: int = 20,
     color: str = "#38bdf8",
     tooltip_columns: list[str] | tuple[str, ...] | None = None,
+    stable_key: str | None = None,
+    metric_aggregations: Mapping[str, object] | None = None,
+    source_confirmed_zero: bool = False,
 ) -> pd.DataFrame:
     """Render a horizontal top-to-bottom ranked bar chart and return plotted rows."""
     chart_df = add_cost_companion_columns(
-        rank_chart_frame(df, dimension, measure, top_n=top_n, tooltip_columns=tooltip_columns)
+        rank_chart_frame(
+            df,
+            dimension,
+            measure,
+            top_n=top_n,
+            tooltip_columns=tooltip_columns,
+            stable_key=stable_key,
+            metric_aggregations=metric_aggregations,
+            source_confirmed_zero=source_confirmed_zero,
+        )
     )
     if chart_df.empty:
         render_chart_empty_state(title or "No ranked data", "No valid ranked rows are loaded for this scope.")

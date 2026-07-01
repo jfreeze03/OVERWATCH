@@ -36,9 +36,12 @@ class CortexUserLabelTests(unittest.TestCase):
 
         self.assertIn('TOTAL_TOKENS=("TOTAL_TOKENS", "sum")', source)
         self.assertIn("tooltip_columns=(", source)
+        self.assertIn('stable_key="USER_NAME"', source)
         self.assertIn('"TOTAL_TOKENS"', source)
         self.assertIn('"TOKENS_PER_DOLLAR"', source)
         self.assertIn('"COST_PER_1K_TOKENS_USD"', source)
+        self.assertIn('"AI_CREDITS_PER_1K_TOKENS"', source)
+        self.assertIn('"Load Cortex Efficiency"', source)
 
     def test_ranked_chart_frame_preserves_opt_in_tooltip_metrics(self):
         from utils.display import rank_chart_frame
@@ -70,6 +73,27 @@ class CortexUserLabelTests(unittest.TestCase):
         self.assertEqual(float(ranked.loc[0, "COST_USD"]), 12.0)
         self.assertEqual(int(ranked.loc[0, "TOTAL_TOKENS"]), 4000)
         self.assertEqual(int(ranked.loc[0, "TOTAL_REQUESTS"]), 6)
+
+    def test_cortex_efficiency_helper_uses_ai_credit_cost_and_not_compute_rate(self):
+        from sections.cortex_monitor import _add_cortex_token_efficiency_columns
+
+        frame = pd.DataFrame(
+            [
+                {
+                    "TOTAL_CREDITS": 10,
+                    "COST_USD": 22,
+                    "TOTAL_TOKENS": 2000,
+                    "TOTAL_REQUESTS": 4,
+                }
+            ]
+        )
+
+        enriched = _add_cortex_token_efficiency_columns(frame)
+
+        self.assertEqual(float(enriched.loc[0, "TOKENS_PER_DOLLAR"]), 90.91)
+        self.assertEqual(float(enriched.loc[0, "COST_PER_1K_TOKENS_USD"]), 11.0)
+        self.assertEqual(float(enriched.loc[0, "AI_CREDITS_PER_1K_TOKENS"]), 5.0)
+        self.assertEqual(float(enriched.loc[0, "TOKENS_PER_REQUEST"]), 500.0)
 
     def test_helper_builds_friendly_chart_label(self):
         from utils.user_display import apply_user_display_columns

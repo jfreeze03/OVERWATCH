@@ -155,6 +155,9 @@ class SnowflakeCredentialValidationTests(unittest.TestCase):
             "credential_expiration_live_validation",
             "cortex_user_label_source",
             "cortex_user_label_export_sanitizer",
+            "cortex_token_efficiency_metrics",
+            "cortex_efficiency_workbench",
+            "cortex_token_efficiency_export",
             "security_credential_render_tile",
             "security_credential_case_payload",
         ):

@@ -18,6 +18,7 @@ class UserDisplaySurfaceAuditTests(unittest.TestCase):
         surfaces = {row["surface"] for row in results["rows"]}
         for expected in (
             "Cortex Usage",
+            "Cortex token efficiency export",
             "Cost Workbench",
             "Security credential expiration tile",
             "Security credential evidence",

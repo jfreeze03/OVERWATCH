@@ -183,6 +183,50 @@ class MetricSemanticRegistryTests(unittest.TestCase):
         self.assertTrue(all(row["live_validation_source"] for row in rows))
         self.assertTrue(all(row["cost_db_mapping"] for row in cost_rows))
 
+    def test_cortex_token_efficiency_metrics_are_governed(self):
+        from sections.metric_semantic_registry import get_metric_semantic
+
+        expected = {
+            "total_tokens": ("sum", "", ""),
+            "total_requests": ("sum", "", ""),
+            "tokens_per_request": (
+                "ratio recomputed from summed tokens and requests",
+                "TOTAL_TOKENS",
+                "TOTAL_REQUESTS",
+            ),
+            "tokens_per_dollar": (
+                "ratio recomputed from summed tokens and Cortex AI cost",
+                "TOTAL_TOKENS",
+                "COST_USD",
+            ),
+            "cost_per_1k_tokens_usd": (
+                "ratio recomputed from summed Cortex AI cost and tokens",
+                "COST_USD",
+                "TOTAL_TOKENS",
+            ),
+            "ai_credits_per_1k_tokens": (
+                "ratio recomputed from summed AI credits and tokens",
+                "TOTAL_CREDITS",
+                "TOTAL_TOKENS",
+            ),
+            "cost_per_request_usd": (
+                "ratio recomputed from summed Cortex AI cost and requests",
+                "COST_USD",
+                "TOTAL_REQUESTS",
+            ),
+        }
+
+        for metric_key, (aggregation, numerator, denominator) in expected.items():
+            semantic = get_metric_semantic("Cortex Monitor", metric_key)
+            self.assertIsNotNone(semantic, metric_key)
+            self.assertEqual(semantic.source_family, "cortex_usage")
+            self.assertEqual(semantic.aggregation, aggregation)
+            self.assertEqual(semantic.numerator_field, numerator)
+            self.assertEqual(semantic.denominator_field, denominator)
+            self.assertIn("unavailable", semantic.unavailable_policy.lower())
+            self.assertEqual(semantic.render_surface, "Cortex Monitor / User Attribution")
+            self.assertEqual(semantic.export_surface, "cortex_code_users.csv")
+
 
 if __name__ == "__main__":
     unittest.main()

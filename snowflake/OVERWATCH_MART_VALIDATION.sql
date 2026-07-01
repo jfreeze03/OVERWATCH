@@ -1,4 +1,4 @@
-﻿-- OVERWATCH_MART_VALIDATION.sql
+-- OVERWATCH_MART_VALIDATION.sql
 -- Read-only deployment validation for the OVERWATCH command-center marts.
 -- Run from the database/schema where OVERWATCH_MART_SETUP.sql was deployed.
 

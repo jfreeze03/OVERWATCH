@@ -315,10 +315,11 @@ def build_user_display_dimension_validation(root: Path) -> dict[str, Any]:
         ),
         _row(
             "cortex_chart_uses_user_chart_label",
-            _contains(cortex_source, 'render_ranked_bar_chart(user_agg, "USER_CHART_LABEL"')
+            _contains(cortex_source, '"USER_CHART_LABEL"')
+            and _contains(cortex_source, 'stable_key="USER_NAME"')
             and _contains(cortex_source, "USER_DISPLAY_NAME"),
-            evidence="Cortex user chart uses USER_CHART_LABEL and tables use USER_DISPLAY_NAME.",
-            recommendation="Use USER_CHART_LABEL for daily Cortex user charts and USER_DISPLAY_NAME for tables.",
+            evidence="Cortex user chart uses USER_CHART_LABEL, stable USER_NAME grouping, and USER_DISPLAY_NAME tables.",
+            recommendation="Use USER_CHART_LABEL for daily Cortex user charts, stable USER_NAME grouping, and USER_DISPLAY_NAME for tables.",
         ),
         _row(
             "default_exports_hide_user_id",
@@ -426,7 +427,8 @@ def build_user_display_surface_results(root: Path) -> dict[str, Any]:
             if _contains(cortex_source, 'groupby(["USER_NAME", "USER_DISPLAY_NAME", "USER_CHART_LABEL"]')
             else "",
             user_id_visible=_contains(cortex_source, 'render_ranked_bar_chart(user_agg, "USER_ID"'),
-            user_chart_label_used=_contains(cortex_source, 'render_ranked_bar_chart(user_agg, "USER_CHART_LABEL"'),
+            user_chart_label_used=_contains(cortex_source, '"USER_CHART_LABEL"')
+            and _contains(cortex_source, 'stable_key="USER_NAME"'),
             user_display_name_used=_contains(cortex_source, '"USER_DISPLAY_NAME"'),
         ),
         _surface_row(
@@ -436,6 +438,16 @@ def build_user_display_surface_results(root: Path) -> dict[str, Any]:
             visible_user_column="USER_DISPLAY_NAME",
             stable_user_key_column="USER_NAME",
             user_id_visible=not _contains(cortex_source, "sanitize_user_columns_for_export(df_cc)"),
+            user_chart_label_used=_contains(cortex_source, "USER_CHART_LABEL"),
+            user_display_name_used=_contains(cortex_source, "USER_DISPLAY_NAME"),
+        ),
+        _surface_row(
+            surface="Cortex token efficiency export",
+            section="Cortex Monitor",
+            chart_or_table="Cortex efficiency workbench export",
+            visible_user_column="USER_DISPLAY_NAME",
+            stable_user_key_column="USER_NAME",
+            user_id_visible=not _contains(cortex_source, "sanitize_user_columns_for_export(efficiency_rows)"),
             user_chart_label_used=_contains(cortex_source, "USER_CHART_LABEL"),
             user_display_name_used=_contains(cortex_source, "USER_DISPLAY_NAME"),
         ),
@@ -763,7 +775,8 @@ def build_cortex_user_label_results(root: Path) -> dict[str, Any]:
         _row(
             "cortex_chart_groups_by_stable_user_and_displays_chart_label",
             _contains(cortex_source, 'groupby(["USER_NAME", "USER_DISPLAY_NAME", "USER_CHART_LABEL"]')
-            and _contains(cortex_source, 'render_ranked_bar_chart(user_agg, "USER_CHART_LABEL"'),
+            and _contains(cortex_source, 'stable_key="USER_NAME"')
+            and _contains(cortex_source, '"USER_CHART_LABEL"'),
             evidence="Cortex chart groups by stable USER_NAME while displaying USER_CHART_LABEL.",
             recommendation="Group by stable key and show friendly chart label.",
         ),

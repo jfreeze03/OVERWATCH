@@ -257,6 +257,20 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
 
         query_cases = {row["case"]: row for row in query_search}
         rendered_surfaces = {(row.get("section"), row.get("workflow")) for row in rendered_fragments}
+        rendered_by_surface = {
+            (row.get("section"), row.get("workflow")): str(
+                row.get("rendered_text") or row.get("first_viewport_text") or row.get("text") or ""
+            )
+            for row in rendered_fragments
+        }
+        self.assertIn(
+            "Credential expirations",
+            rendered_by_surface[("Security Monitoring", "Security Overview")],
+        )
+        self.assertIn(
+            "Credential expirations",
+            rendered_by_surface[("Alert Center", "Active Alerts")],
+        )
         self.assertTrue(query_cases)
         self.assertIn(("Query Search", "No click"), rendered_surfaces)
         self.assertIn(("Query Search", "Explicit search"), rendered_surfaces)

@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -261,6 +263,83 @@ class SecurityCredentialExpirationTests(unittest.TestCase):
         by_key = {metric.key: metric for metric in model.metric_cells}
 
         self.assertEqual(by_key["credential_expirations"].value, "Credential expiration source pending")
+
+    def test_fixture_command_brief_renders_credential_tile_and_priority_finding(self):
+        from sections.decision_workspace_fixtures import build_fixture_brief
+        from sections.decision_workspace_view_model import build_decision_workspace_view_model
+        from sections.section_command_contracts import get_section_command_contract
+
+        brief = build_fixture_brief(
+            get_section_command_contract("Security Monitoring"),
+            company="ALFA",
+            environment="ALL",
+            window_days=7,
+        )
+        model = build_decision_workspace_view_model(brief, current_workflow="Security Overview")
+        metrics = {metric.key: metric for metric in model.metric_cells}
+
+        self.assertIn("credential_expirations", metrics)
+        self.assertEqual(metrics["credential_expirations"].label, "Credential expirations")
+        self.assertIn("Jane Doe", metrics["credential_expirations"].detail)
+        self.assertEqual(model.findings[0].signal, "Credential expirations")
+        self.assertEqual(model.findings[0].entity_type, "USER_CREDENTIAL")
+        self.assertEqual(model.findings[0].route_key, "security_credential_expirations")
+
+    def test_credential_route_and_target_filter_are_allowlisted(self):
+        from sections.command_brief_routes import COMMAND_BRIEF_ROUTES
+        from sections.decision_workspace_target_filters import build_target_sql_filter_contract
+
+        self.assertIn("security_credential_expirations", COMMAND_BRIEF_ROUTES)
+        route = COMMAND_BRIEF_ROUTES["security_credential_expirations"]
+        self.assertEqual(route.section, "Security Monitoring")
+        self.assertEqual(route.workflow, "Security Overview")
+
+        target_filter = build_target_sql_filter_contract(
+            "Security Monitoring",
+            {
+                "entity_type": "USER_CREDENTIAL",
+                "entity_id": "JDOE",
+                "entity_name": "Jane Doe",
+                "evidence_id": "credential_expiration::cred-001",
+            },
+            available_columns=("USER_NAME", "CREDENTIAL_ID", "CREDENTIAL_NAME", "EVIDENCE_ID"),
+        )
+
+        self.assertEqual(target_filter.match_mode, "exact")
+        self.assertIn("USER_NAME", target_filter.matched_columns)
+        self.assertIn("EVIDENCE_ID", target_filter.matched_columns)
+        self.assertFalse(target_filter.raw_sql_included)
+
+    def test_alert_credential_route_stores_security_evidence_target(self):
+        import streamlit as st
+
+        from sections.section_command_rendering import _apply_route_action
+
+        st.session_state.clear()
+        finding = SimpleNamespace(
+            finding_key="CREDENTIAL_EXPIRING::JDOE::cred-001",
+            dedupe_key="CREDENTIAL_EXPIRING::JDOE::cred-001",
+            entity_type="USER_CREDENTIAL",
+            entity_id="JDOE",
+            entity_name="Jane Doe - PAT",
+            evidence_id="credential_expiration::cred-001",
+        )
+        action = SimpleNamespace(route_key="security_credential_expirations")
+
+        with patch("sections.section_command_rendering.apply_command_brief_route", return_value=True):
+            self.assertTrue(
+                _apply_route_action(
+                    action,
+                    finding=finding,
+                    section="Alert Center",
+                    workflow="Active Alerts",
+                )
+            )
+
+        self.assertEqual(st.session_state["decision_workspace_evidence_target"]["section"], "Security Monitoring")
+        self.assertEqual(st.session_state["security_posture_evidence_target"]["entity_type"], "USER_CREDENTIAL")
+        self.assertEqual(st.session_state["security_posture_credential_filter"], "JDOE")
+        self.assertEqual(st.session_state["security_posture_evidence_focus"], "Credential Expirations")
 
 
 if __name__ == "__main__":

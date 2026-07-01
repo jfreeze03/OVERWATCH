@@ -214,7 +214,11 @@ def apply_finding_evidence_target(finding: object | None, section: str, workflow
             )
     elif section_name == "Security Monitoring":
         st.session_state["security_posture_evidence_target"] = target
-        if entity_type in {"user", "role"}:
+        if entity_type == "user_credential":
+            set_state("security_posture_view", "Security Overview")
+            st.session_state["security_posture_credential_filter"] = entity_value
+            st.session_state["security_posture_evidence_focus"] = "Credential Expirations"
+        elif entity_type in {"user", "role"}:
             set_state("security_posture_view", "Failed Logins" if entity_type == "user" else "Risky Grants")
         elif entity_type in {"database", "share", "grant"}:
             set_state("security_posture_view", "Data Sharing" if entity_type == "share" else "Risky Grants")

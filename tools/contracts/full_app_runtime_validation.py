@@ -602,47 +602,170 @@ def _packet_row(section: str) -> dict[str, object]:
         "Alert Center": "alert_center_critical_high",
         "Cost & Contract": "cost_contract_explorer_warehouse",
         "Workload Operations": "workload_pipeline_tasks",
-        "Security Monitoring": "security_risky_grants",
+        "Security Monitoring": "security_credential_expirations",
     }[section]
-    metrics = [{
-        "METRIC_KEY": "active_items",
-        "METRIC_LABEL": "Active items",
-        "METRIC_VALUE": "4",
-        "METRIC_NUMERIC_VALUE": 4,
-        "METRIC_FORMAT": "number",
-        "SOURCE_KEY": "alert_events" if section == "Alert Center" else "query_hourly",
-        "TREND_POINTS": [{"ts": f"2026-06-{day:02d}", "value": day} for day in range(20, 27)],
-        "TREND_PERIOD": "7d",
-        "TREND_POINT_COUNT": 7,
-        "TREND_QUALITY": "complete",
-        "ZERO_FILL_POLICY": "count_zero_fill",
-    }]
-    exceptions = [{
-        "FINDING_KEY": f"{_token(section)}_finding",
-        "DEDUPE_KEY": f"{section}:finding:1",
-        "SEVERITY": "High",
-        "SIGNAL": "Targeted finding",
-        "ENTITY_TYPE": "warehouse" if section == "Cost & Contract" else "query",
-        "ENTITY_ID": "PROD_WH" if section == "Cost & Contract" else "QUERY-123",
-        "ENTITY_NAME": "PROD_WH" if section == "Cost & Contract" else "QUERY-123",
-        "EVIDENCE_ID": "QUERY-123",
-        "FIRST_SEEN_TS": "2026-06-26T09:00:00",
-        "DUE_TS": "2026-06-26T17:00:00",
-        "OWNER_NAME": "Platform Route",
-        "OWNER_GAP": False,
-        "SLA_STATE": "Due soon",
-        "ROUTE_KEY": route_key,
-    }]
+    metrics = [
+        {
+            "METRIC_KEY": "active_items",
+            "METRIC_LABEL": "Active items",
+            "METRIC_VALUE": "4",
+            "METRIC_NUMERIC_VALUE": 4,
+            "METRIC_FORMAT": "number",
+            "SOURCE_KEY": "alert_events" if section == "Alert Center" else "query_hourly",
+            "TREND_POINTS": [{"ts": f"2026-06-{day:02d}", "value": day} for day in range(20, 27)],
+            "TREND_PERIOD": "7d",
+            "TREND_POINT_COUNT": 7,
+            "TREND_QUALITY": "complete",
+            "ZERO_FILL_POLICY": "count_zero_fill",
+        }
+    ]
+    exceptions = [
+        {
+            "FINDING_KEY": f"{_token(section)}_finding",
+            "DEDUPE_KEY": f"{section}:finding:1",
+            "SEVERITY": "High",
+            "SIGNAL": "Targeted finding",
+            "ENTITY_TYPE": "warehouse" if section == "Cost & Contract" else "query",
+            "ENTITY_ID": "PROD_WH" if section == "Cost & Contract" else "QUERY-123",
+            "ENTITY_NAME": "PROD_WH" if section == "Cost & Contract" else "QUERY-123",
+            "EVIDENCE_ID": "QUERY-123",
+            "FIRST_SEEN_TS": "2026-06-26T09:00:00",
+            "DUE_TS": "2026-06-26T17:00:00",
+            "OWNER_NAME": "Platform Route",
+            "OWNER_GAP": False,
+            "SLA_STATE": "Due soon",
+            "ROUTE_KEY": route_key,
+        }
+    ]
+    if section == "Security Monitoring":
+        metrics = [
+            {
+                "METRIC_KEY": "failed_logins",
+                "METRIC_LABEL": "Failed Logins",
+                "METRIC_VALUE": "22",
+                "METRIC_NUMERIC_VALUE": 22,
+                "METRIC_FORMAT": "integer",
+                "SOURCE_KEY": "login_daily",
+                "TREND_POINTS": [{"ts": f"2026-06-{day:02d}", "value": day - 17} for day in range(20, 27)],
+                "TREND_PERIOD": "7d",
+                "TREND_POINT_COUNT": 7,
+                "TREND_QUALITY": "complete",
+                "ZERO_FILL_POLICY": "count_zero_fill",
+            },
+            {
+                "METRIC_KEY": "credential_expirations",
+                "METRIC_LABEL": "Credential expirations",
+                "METRIC_VALUE": "1 expired - 2 due within 30d",
+                "METRIC_NUMERIC_VALUE": 3,
+                "METRIC_DETAIL": "Next: Jane Doe - PAT - 5d",
+                "METRIC_FORMAT": "integer",
+                "SOURCE_KEY": "credential_expiration",
+                "TREND_POINTS": [{"ts": f"2026-06-{day:02d}", "value": 1 + (day % 3)} for day in range(20, 27)],
+                "TREND_PERIOD": "7d",
+                "TREND_POINT_COUNT": 7,
+                "TREND_QUALITY": "complete",
+                "ZERO_FILL_POLICY": "confirmed_zero_only",
+            },
+            {
+                "METRIC_KEY": "mfa_gaps",
+                "METRIC_LABEL": "MFA Gaps",
+                "METRIC_VALUE": "4",
+                "METRIC_NUMERIC_VALUE": 4,
+                "METRIC_FORMAT": "integer",
+                "SOURCE_KEY": "security_operability",
+            },
+            {
+                "METRIC_KEY": "risky_grants",
+                "METRIC_LABEL": "Risky Grants",
+                "METRIC_VALUE": "6",
+                "METRIC_NUMERIC_VALUE": 6,
+                "METRIC_FORMAT": "integer",
+                "SOURCE_KEY": "grant_daily",
+            },
+        ]
+        exceptions = [{
+            "FINDING_KEY": "CREDENTIAL_EXPIRING::JDOE::cred-001",
+            "DEDUPE_KEY": "CREDENTIAL_EXPIRING::JDOE::cred-001",
+            "SEVERITY": "Critical",
+            "SIGNAL": "Credential expirations",
+            "ENTITY_TYPE": "USER_CREDENTIAL",
+            "ENTITY_ID": "JDOE",
+            "ENTITY_NAME": "Jane Doe - PAT",
+            "EVIDENCE_ID": "credential_expiration::cred-001",
+            "FIRST_SEEN_TS": "2026-06-26T09:00:00",
+            "DUE_TS": "2026-07-05T00:00:00",
+            "OWNER_ID": "JDOE",
+            "OWNER_NAME": "Jane Doe",
+            "OWNER_GAP": False,
+            "SLA_STATE": "Due soon",
+            "ROUTE_KEY": "security_credential_expirations",
+        }]
+    elif section == "Alert Center":
+        metrics = [
+            {
+                "METRIC_KEY": "active_alerts",
+                "METRIC_LABEL": "Active Alerts",
+                "METRIC_VALUE": "18",
+                "METRIC_NUMERIC_VALUE": 18,
+                "METRIC_FORMAT": "integer",
+                "SOURCE_KEY": "alert_events",
+                "TREND_POINTS": [{"ts": f"2026-06-{day:02d}", "value": day - 10} for day in range(20, 27)],
+                "TREND_PERIOD": "7d",
+                "TREND_POINT_COUNT": 7,
+                "TREND_QUALITY": "complete",
+                "ZERO_FILL_POLICY": "count_zero_fill",
+            },
+            {
+                "METRIC_KEY": "critical_high",
+                "METRIC_LABEL": "Critical / High",
+                "METRIC_VALUE": "5",
+                "METRIC_NUMERIC_VALUE": 5,
+                "METRIC_FORMAT": "integer",
+                "SOURCE_KEY": "alert_events",
+            },
+            {
+                "METRIC_KEY": "credential_expirations",
+                "METRIC_LABEL": "Credential expirations",
+                "METRIC_VALUE": "1 expired - 2 due within 30d",
+                "METRIC_NUMERIC_VALUE": 3,
+                "METRIC_DETAIL": "Security credential finding routed to Security Monitoring",
+                "METRIC_FORMAT": "integer",
+                "SOURCE_KEY": "credential_expiration",
+            },
+        ]
+        exceptions = [{
+            "FINDING_KEY": "CREDENTIAL_EXPIRING::JDOE::cred-001",
+            "DEDUPE_KEY": "CREDENTIAL_EXPIRING::JDOE::cred-001",
+            "SEVERITY": "Critical",
+            "SIGNAL": "Credential expirations",
+            "ENTITY_TYPE": "USER_CREDENTIAL",
+            "ENTITY_ID": "JDOE",
+            "ENTITY_NAME": "Jane Doe - PAT",
+            "EVIDENCE_ID": "credential_expiration::cred-001",
+            "FIRST_SEEN_TS": "2026-06-26T09:00:00",
+            "DUE_TS": "2026-07-05T00:00:00",
+            "OWNER_ID": "JDOE",
+            "OWNER_NAME": "Jane Doe",
+            "OWNER_GAP": False,
+            "SLA_STATE": "Due soon",
+            "ROUTE_KEY": "security_credential_expirations",
+        }]
+        route_key = "security_credential_expirations"
     actions = [{
         "ACTION_KEY": route_key,
-        "ACTION_LABEL": "Investigate target",
-        "CTA": "Investigate",
-        "ACTION_DETAIL": "Open the owning workflow with target context.",
+        "ACTION_LABEL": "Review Credential Expirations" if route_key == "security_credential_expirations" else "Investigate target",
+        "CTA": "Review Credential Expirations" if route_key == "security_credential_expirations" else "Investigate",
+        "ACTION_DETAIL": (
+            "Route to Security Monitoring with the credential evidence target."
+            if route_key == "security_credential_expirations"
+            else "Open the owning workflow with target context."
+        ),
         "ROUTE_KEY": route_key,
     }]
+    credential_route = route_key == "security_credential_expirations"
     sources = [{
-        "SOURCE_KEY": "query_hourly",
-        "SOURCE_OBJECT": "FACT_QUERY_HOURLY",
+        "SOURCE_KEY": "credential_expiration" if section in {"Security Monitoring", "Alert Center"} else "query_hourly",
+        "SOURCE_OBJECT": "MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT" if section in {"Security Monitoring", "Alert Center"} else "FACT_QUERY_HOURLY",
         "REQUIRED": True,
         "AVAILABLE": True,
         "SUPPORTS_ENVIRONMENT": True,
@@ -663,9 +786,9 @@ def _packet_row(section: str) -> dict[str, object]:
         "STATE": "Ready",
         "HEADLINE": f"{section} Decision Workspace ready",
         "SUMMARY": "Compact packet loaded.",
-        "TOP_SIGNAL": "Targeted finding",
-        "TOP_ENTITY": "PROD_WH",
-        "TOP_ACTION": "Open targeted workbench",
+        "TOP_SIGNAL": "Credential expirations" if credential_route else "Targeted finding",
+        "TOP_ENTITY": "Jane Doe - PAT" if credential_route else "PROD_WH",
+        "TOP_ACTION": "Review Credential Expirations" if credential_route else "Open targeted workbench",
         "SOURCE_STATUS": "Ready",
         "SOURCE_FRESHNESS": "Updated now",
         "SOURCE_OBJECTS": "FACT_QUERY_HOURLY",
@@ -681,8 +804,12 @@ def _packet_row(section: str) -> dict[str, object]:
         "STALE_SOURCE_COUNT": 0,
         "PRIMARY_ROUTE_KEY": route_key,
         "PRIMARY_ACTION_KEY": route_key,
-        "PRIMARY_ACTION_LABEL": "Open targeted workbench",
-        "PRIMARY_ACTION_DETAIL": "Route with target context.",
+        "PRIMARY_ACTION_LABEL": "Review Credential Expirations" if credential_route else "Open targeted workbench",
+        "PRIMARY_ACTION_DETAIL": (
+            "Route to Security Monitoring with credential evidence target."
+            if credential_route
+            else "Route with target context."
+        ),
         "METRICS": metrics,
         "EXCEPTIONS": exceptions,
         "ACTIONS": actions,

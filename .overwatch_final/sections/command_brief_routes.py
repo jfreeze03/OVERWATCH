@@ -77,6 +77,15 @@ COMMAND_BRIEF_ROUTES: Mapping[str, CommandBriefRoute] = {
         "Security Overview",
         (("security_posture_view", "Security Overview"),),
     ),
+    "security_credential_expirations": CommandBriefRoute(
+        "Security Monitoring",
+        "security_posture_workflow",
+        "Security Overview",
+        (
+            ("security_posture_view", "Security Overview"),
+            ("security_posture_evidence_focus", "Credential Expirations"),
+        ),
+    ),
     "security_risky_grants": CommandBriefRoute(
         "Security Monitoring",
         "security_posture_workflow",

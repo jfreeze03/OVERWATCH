@@ -445,9 +445,11 @@ def _priority_route_action(model: DecisionWorkspaceViewModel) -> DecisionActionV
 
 def _apply_route_action(action: object, *, finding: object | None, section: str, workflow: str) -> bool:
     with query_budget_context("route_action", section=section, workflow=workflow, budget=SECTION_ROUTE_QUERY_BUDGET):
-        apply_finding_evidence_target(finding, section, workflow)
         route_key = _action_route_key(action)
         route = COMMAND_BRIEF_ROUTES.get(route_key)
+        target_section = route.section if route is not None else section
+        target_workflow = route.workflow if route is not None else workflow
+        apply_finding_evidence_target(finding, target_section, target_workflow)
         if route is not None:
             for state_key, state_value in route.state_updates:
                 set_state(state_key, state_value)

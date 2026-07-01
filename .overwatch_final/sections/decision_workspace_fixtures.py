@@ -88,9 +88,17 @@ def build_fixture_brief(contract, *, company: str, environment: str, window_days
         ),
         "Security Monitoring": (
             fixture_metric("failed_logins", "Failed Logins", "22", numeric=22, tone="warning", sort=10),
-            fixture_metric("risky_grants", "Risky Grants", "6", numeric=6, tone="warning", sort=20),
-            fixture_metric("sharing_exposure", "Sharing Exposure", "2", numeric=2, sort=30),
-            fixture_metric("security_alerts", "Security Alerts", "4", numeric=4, sort=40),
+            fixture_metric(
+                "credential_expirations",
+                "Credential expirations",
+                "1 expired - 2 due within 30d",
+                numeric=3,
+                tone="critical",
+                detail="Next: Jane Doe - PAT - 5d",
+                sort=20,
+            ),
+            fixture_metric("mfa_gaps", "MFA Gaps", "4", numeric=4, tone="warning", sort=30),
+            fixture_metric("risky_grants", "Risky Grants", "6", numeric=6, tone="warning", sort=40),
         ),
     }
     metrics = fixture_metrics.get(section) or tuple(
@@ -145,6 +153,54 @@ def build_fixture_brief(contract, *, company: str, environment: str, window_days
                 confidence="fixture",
             ),
         )
+    elif section == "Security Monitoring":
+        exceptions = (
+            SectionCommandSignal(
+                severity="Critical",
+                signal="Credential expirations",
+                entity="Jane Doe - PAT",
+                detail="1 expired and 2 due within 30 days. Rotate or renew credential before expiration.",
+                route_section="Security Monitoring",
+                route_workflow="Security Overview",
+                priority_score=96,
+                owner_route="Jane Doe",
+                sla_state="Due soon",
+                route_key="security_credential_expirations",
+                confidence="fixture",
+                finding_key="CREDENTIAL_EXPIRING::JDOE::cred-001",
+                dedupe_key="CREDENTIAL_EXPIRING::JDOE::cred-001",
+                entity_type="USER_CREDENTIAL",
+                entity_id="JDOE",
+                evidence_id="credential_expiration::cred-001",
+                owner_id="JDOE",
+                owner_name="Jane Doe",
+                due_ts="2026-07-05",
+            ),
+        )
+    elif section == "Alert Center":
+        exceptions = (
+            SectionCommandSignal(
+                severity="Critical",
+                signal="Credential expirations",
+                entity="Jane Doe - PAT",
+                detail="Security credential rotation is due from the current command packet.",
+                route_section="Security Monitoring",
+                route_workflow="Security Overview",
+                priority_score=96,
+                owner_route="Jane Doe",
+                sla_state="Due soon",
+                route_key="security_credential_expirations",
+                confidence="fixture",
+                finding_key="CREDENTIAL_EXPIRING::JDOE::cred-001",
+                dedupe_key="CREDENTIAL_EXPIRING::JDOE::cred-001",
+                entity_type="USER_CREDENTIAL",
+                entity_id="JDOE",
+                evidence_id="credential_expiration::cred-001",
+                owner_id="JDOE",
+                owner_name="Jane Doe",
+                due_ts="2026-07-05",
+            ),
+        )
     else:
         exceptions = (
             SectionCommandSignal(
@@ -181,6 +237,30 @@ def build_fixture_brief(contract, *, company: str, environment: str, window_days
             SectionCommandAction("Open Warehouse Drivers", "Open warehouse cost drivers.", "Cost & Contract", "Cost Explorer", cta="Open Warehouse Drivers", action_key="open_warehouse_drivers", route_key="cost_contract_explorer_warehouse"),
             SectionCommandAction("View Open Actions", "Open active alerts and action queue.", "Alert Center", "Active Alerts", cta="View Open Actions", action_key="view_open_actions", route_key="alert_center_active"),
         )
+    elif section == "Security Monitoring":
+        actions = (
+            SectionCommandAction(
+                "Review Credential Expirations",
+                "Open credential expiration evidence target.",
+                "Security Monitoring",
+                "Security Overview",
+                cta="Review Credential Expirations",
+                action_key="review_credential_expirations",
+                route_key="security_credential_expirations",
+            ),
+        ) + actions[:2]
+    elif section == "Alert Center":
+        actions = (
+            SectionCommandAction(
+                "Review Credential Expirations",
+                "Route to Security Monitoring with the credential evidence target.",
+                "Security Monitoring",
+                "Security Overview",
+                cta="Review Credential Expirations",
+                action_key="review_credential_expirations",
+                route_key="security_credential_expirations",
+            ),
+        ) + actions[:2]
     loaded_at = _now_label()
     return SectionCommandBrief(
         section=section,

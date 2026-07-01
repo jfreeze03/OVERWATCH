@@ -309,6 +309,7 @@ def make_credential_case_payload(
         "target": target,
         "freshness": freshness,
         "source": "credential_expiration",
+        "source_family": "credential_expiration",
         "row_count": int(len(enriched)),
         "visible_row_count": int(len(daily)),
         "expired_count": int(summary.get("SECURITY_CREDENTIALS_EXPIRED_COUNT") or 0),

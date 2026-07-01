@@ -85,8 +85,8 @@ def _find_surface_row(root: Path, rel: str, section: str, workflow: str) -> tupl
 
 def _find_action_row(root: Path, section: str, workflow: str) -> tuple[str, int, Mapping[str, Any]]:
     for rel in (
-        "artifacts/full_app_validation/action_click_results.json",
         "artifacts/full_app_validation/button_click_results.json",
+        "artifacts/full_app_validation/action_click_results.json",
     ):
         for index, row in enumerate(_rows(_load_json(root, rel))):
             if (
@@ -119,9 +119,12 @@ def _runtime_references(root: Path, section: str, workflow: str) -> tuple[dict[s
         "case_payload_artifact_path": case_rel if case_row else "",
         "case_payload_row_id": str(case_row.get("id") or case_row.get("filename") or case_row.get("runtime_artifact_row_index") or case_index if case_row else ""),
         "case_payload_row_index": case_index,
+        "expected_section": section,
+        "expected_workflow": workflow,
         "source_rows_present": bool(render_row.get("source_rows_present", render_row)),
         "visible_row_count": int(render_row.get("visible_row_count") or export_row.get("visible_row_count") or 0) if (render_row or export_row) else 0,
         "exported_row_count": int(export_row.get("parsed_row_count") or export_row.get("row_count") or 0) if export_row else 0,
+        "case_row_count": int(case_row.get("parsed_row_count") or case_row.get("row_count") or 0) if case_row else 0,
         "producer_signature": str(render_row.get("producer_signature") or ""),
         "commit_sha": str(render_row.get("commit_sha") or ""),
     }
@@ -137,6 +140,20 @@ def _runtime_references(root: Path, section: str, workflow: str) -> tuple[dict[s
     ]
     if export_row and refs["visible_row_count"] != refs["exported_row_count"]:
         missing.append("visible/exported row count mismatch")
+    if case_row and refs["visible_row_count"] != refs["case_row_count"]:
+        missing.append("visible/case row count mismatch")
+    for name, row in (
+        ("rendered runtime row", render_row),
+        ("clicked action row", action_row),
+        ("file-backed export row", export_row),
+        ("case payload row", case_row),
+    ):
+        if row and not row.get("producer_signature"):
+            missing.append(f"{name} missing producer_signature")
+        if row and str(row.get("section") or "") != section:
+            missing.append(f"{name} section mismatch")
+        if row and str(row.get("workflow") or "") != workflow:
+            missing.append(f"{name} workflow mismatch")
     if any(bool(row.get("raw_sql_included")) for row in (render_row, action_row, export_row, case_row) if row):
         missing.append("runtime artifact row included raw SQL")
     return refs, missing
@@ -301,10 +318,17 @@ def evaluate_cortex_token_efficiency_gate(payload: Mapping[str, Any]) -> dict[st
         "action_artifact_path": payload.get("action_artifact_path", ""),
         "action_row_id": payload.get("action_row_id", ""),
         "export_artifact_path": payload.get("export_artifact_path", ""),
+        "export_row_id": payload.get("export_row_id", ""),
+        "export_row_index": payload.get("export_row_index", -1),
         "case_payload_artifact_path": payload.get("case_payload_artifact_path", ""),
+        "case_payload_row_id": payload.get("case_payload_row_id", ""),
+        "case_payload_row_index": payload.get("case_payload_row_index", -1),
+        "expected_section": payload.get("expected_section", "Cortex Efficiency"),
+        "expected_workflow": payload.get("expected_workflow", "Explicit action"),
         "source_rows_present": bool(payload.get("source_rows_present")),
         "visible_row_count": payload.get("visible_row_count", 0),
         "exported_row_count": payload.get("exported_row_count", 0),
+        "case_row_count": payload.get("case_row_count", 0),
         "producer_signature": payload.get("producer_signature", ""),
         "commit_sha": payload.get("commit_sha", ""),
         "failure_count": len(failures),

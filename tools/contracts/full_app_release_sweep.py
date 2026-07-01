@@ -9,6 +9,7 @@ additional gates, never as substitutes for rendered/clicked/file-backed proof.
 
 from __future__ import annotations
 
+import csv
 from datetime import UTC, datetime
 import hashlib
 import json
@@ -471,6 +472,105 @@ def _resolve_payload_path(root: Path, payload_file: object) -> Path:
     return raw if raw.is_absolute() else root / raw
 
 
+def _artifact_payload(payloads: Mapping[str, Any], root: Path, rel: str) -> Any:
+    normalized = str(rel or "").replace("\\", "/")
+    if normalized in payloads:
+        return payloads[normalized]
+    raw_path = Path(str(rel or ""))
+    path = raw_path if raw_path.is_absolute() else root / normalized
+    if not path.exists():
+        return []
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"passed": False, "failure_reason": "malformed_json"}
+
+
+def _referenced_row(
+    payloads: Mapping[str, Any],
+    root: Path,
+    *,
+    artifact_path: str,
+    row_id: object = "",
+    row_index: object = None,
+) -> Mapping[str, Any]:
+    rows = _artifact_rows(payloads, artifact_path)
+    if not rows:
+        rows = _rows_from_payload(_artifact_payload(payloads, root, artifact_path))
+    wanted_id = str(row_id or "").strip()
+    if wanted_id:
+        for row in rows:
+            if _row_id(row) == wanted_id:
+                return row
+    try:
+        index = int(cast(Any, row_index))
+    except (TypeError, ValueError):
+        index = -1
+    if 0 <= index < len(rows):
+        return rows[index]
+    return {}
+
+
+def _credential_export_content_failures(row: Mapping[str, Any], text: str) -> list[str]:
+    if str(row.get("section") or "") != "Security Credential Evidence":
+        return []
+    reader = csv.DictReader(text.splitlines())
+    columns = set(reader.fieldnames or [])
+    parsed_rows = list(reader)
+    required = {"User", "Credential", "Type", "Status", "Recommended action"}
+    reasons = []
+    missing = sorted(required - columns)
+    if missing:
+        reasons.append(f"credential export missing required columns: {', '.join(missing)}")
+    if "Expires" not in columns and "Days left" not in columns:
+        reasons.append("credential export missing Expires or Days left column")
+    forbidden_columns = {"USER_ID", "RAW_USER_ID", "CREDENTIAL_ID", "SOURCE_OBJECT", "RAW_SQL", "query_text", "QUERY_TEXT"}
+    leaked_columns = sorted(column for column in columns if column in forbidden_columns)
+    if leaked_columns and not bool(row.get("admin_only")):
+        reasons.append(f"credential default export leaks raw columns: {', '.join(leaked_columns)}")
+    visible_rows = _as_int(row.get("visible_row_count") or row.get("row_count"))
+    if visible_rows != len(parsed_rows):
+        reasons.append("credential export parsed row count differs from visible row count")
+    return reasons
+
+
+def _credential_case_content_failures(row: Mapping[str, Any], text: str) -> list[str]:
+    if str(row.get("section") or "") != "Security Credential Evidence":
+        return []
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return ["credential case payload is not valid JSON"]
+    required = {
+        "section",
+        "workflow",
+        "scope",
+        "target",
+        "freshness",
+        "source_family",
+        "summary",
+        "row_count",
+        "visible_row_count",
+        "recommended_action",
+        "expired_count",
+        "expiring_30d_count",
+        "next_expiration",
+        "owner_labels",
+    }
+    missing = sorted(field for field in required if field not in payload)
+    reasons = [f"credential case payload missing required fields: {', '.join(missing)}"] if missing else []
+    if str(payload.get("source_family") or "") != "credential_expiration":
+        reasons.append("credential case payload source_family must be credential_expiration")
+    visible_rows = _as_int(row.get("visible_row_count") or row.get("row_count"))
+    if visible_rows != _as_int(payload.get("visible_row_count")):
+        reasons.append("credential case visible row count differs from payload")
+    if "USER_ID" in text.upper() and not bool(row.get("admin_only")):
+        reasons.append("credential default case payload leaks USER_ID")
+    if "CREDENTIAL_ID" in text.upper() and not bool(row.get("admin_only")):
+        reasons.append("credential default case payload leaks CREDENTIAL_ID")
+    return reasons
+
+
 def _file_backed_failures(row: Mapping[str, Any], *, root: Path, row_kind: str) -> list[str]:
     reasons: list[str] = []
     payload_file = str(row.get("payload_file") or "")
@@ -510,7 +610,81 @@ def _file_backed_failures(row: Mapping[str, Any], *, root: Path, row_kind: str) 
             reasons.append(f"{row_kind} default payload contains query_text")
     if bool(row.get("raw_sql_included")):
         reasons.append(f"{row_kind} row included raw SQL")
+    if row_kind == "export":
+        reasons.extend(_credential_export_content_failures(row, text))
+    if row_kind == "case payload":
+        reasons.extend(_credential_case_content_failures(row, text))
     return reasons
+
+
+def _linked_gate_reference_failures(
+    linked_gate: Mapping[str, Any],
+    payloads: Mapping[str, Any],
+    *,
+    root: Path,
+    current_commit: str,
+    expected_section: str,
+    expected_workflow: str,
+    aliases: Sequence[str],
+) -> tuple[list[str], dict[str, Any]]:
+    reasons: list[str] = []
+    dereferenced: dict[str, Any] = {}
+    specs = (
+        ("rendered", "rendered_artifact_path", "rendered_row_id", "rendered_row_index", ""),
+        ("action", "action_artifact_path", "action_row_id", "action_row_index", ""),
+        ("export", "export_artifact_path", "export_row_id", "export_row_index", "export"),
+        ("case payload", "case_payload_artifact_path", "case_payload_row_id", "case_payload_row_index", "case payload"),
+    )
+    for label, path_key, id_key, index_key, file_kind in specs:
+        artifact_path = str(linked_gate.get(path_key) or "")
+        row_id = linked_gate.get(id_key)
+        row_index = linked_gate.get(index_key)
+        if not artifact_path:
+            reasons.append(f"linked feature gate missing {path_key}")
+            continue
+        if not row_id:
+            reasons.append(f"linked feature gate missing {id_key}")
+            continue
+        row = _referenced_row(
+            payloads,
+            root,
+            artifact_path=artifact_path,
+            row_id=row_id,
+            row_index=row_index,
+        )
+        if not row:
+            reasons.append(f"linked feature gate {label} row not found")
+            continue
+        dereferenced[label] = row
+        if str(row.get("section") or "") != expected_section:
+            reasons.append(f"linked feature gate {label} row section mismatch")
+        workflow = str(row.get("workflow") or "")
+        if workflow not in aliases and workflow != expected_workflow:
+            reasons.append(f"linked feature gate {label} row workflow mismatch")
+        reasons.extend(f"{label}: {reason}" for reason in _runtime_provenance_failures(row, current_commit=current_commit))
+        if label == "action" and not bool(row.get("clicked", row.get("passed", False))):
+            reasons.append("linked feature gate action row was not clicked")
+        if file_kind:
+            reasons.extend(_file_backed_failures(row, root=root, row_kind=file_kind))
+
+    visible_row_count = _as_int(linked_gate.get("visible_row_count"))
+    exported_row_count = _as_int(linked_gate.get("exported_row_count"))
+    case_row_count = _as_int(linked_gate.get("case_row_count") or linked_gate.get("case_payload_row_count"))
+    export_row = _as_mapping(dereferenced.get("export"))
+    case_row = _as_mapping(dereferenced.get("case payload"))
+    if export_row:
+        export_count = _as_int(export_row.get("parsed_row_count") or export_row.get("row_count"))
+        if exported_row_count and export_count != exported_row_count:
+            reasons.append("linked feature gate exported row count disagrees with export artifact")
+        if visible_row_count and export_count != visible_row_count:
+            reasons.append("linked feature gate visible row count disagrees with export artifact")
+    if case_row:
+        parsed_case_count = _as_int(case_row.get("parsed_row_count") or case_row.get("row_count"))
+        if case_row_count and parsed_case_count != case_row_count:
+            reasons.append("linked feature gate case row count disagrees with case artifact")
+        if visible_row_count and parsed_case_count != visible_row_count:
+            reasons.append("linked feature gate visible row count disagrees with case artifact")
+    return reasons, dereferenced
 
 
 def _global_gate_failed(payloads: Mapping[str, Any], key: str) -> bool:
@@ -638,17 +812,16 @@ def _surface_row(surface: Mapping[str, Any], payloads: Mapping[str, Any], *, cur
         elif not bool(linked_gate.get("passed")):
             reasons.append("linked feature gate failed")
         else:
-            required_refs = (
-                "rendered_artifact_path",
-                "rendered_row_id",
-                "action_artifact_path",
-                "action_row_id",
-                "export_artifact_path",
-                "case_payload_artifact_path",
+            linked_reasons, _linked_rows = _linked_gate_reference_failures(
+                linked_gate,
+                payloads,
+                root=root,
+                current_commit=current_commit,
+                expected_section=section,
+                expected_workflow=workflow,
+                aliases=aliases,
             )
-            missing_refs = [field for field in required_refs if not linked_gate.get(field)]
-            if missing_refs:
-                reasons.append(f"linked feature gate missing runtime artifact references: {', '.join(missing_refs)}")
+            reasons.extend(linked_reasons)
     if require_command_brief and command_brief_count != 1:
         reasons.append("primary overview must render exactly one CommandBrief")
     if require_command_brief and marker_count != 1:
@@ -827,6 +1000,7 @@ def build_full_app_release_sweep(
         for row in rows
         if row.get("area") == "primary_overview"
     )
+    credential_row = next((row for row in rows if row.get("area") == "security_credential"), {})
     first_paint_failure_count = sum(
         1
         for row in rows
@@ -868,6 +1042,13 @@ def build_full_app_release_sweep(
         "duplicate_command_brief_count": duplicate_command_brief_count,
         "old_board_marker_count": sum(_as_int(row.get("old_board_marker_count")) for row in rows),
         "credential_tile_rendered": bool(_gate(payloads, "security_credential_render_gate_results").get("passed")),
+        "credential_evidence_rendered": bool(credential_row.get("rendered")),
+        "credential_action_clicked": bool(credential_row.get("clicked")),
+        "credential_export_file_validated": bool(credential_row.get("exported")) and bool(credential_row.get("passed")),
+        "credential_case_payload_validated": bool(credential_row.get("exported")) and bool(credential_row.get("passed")),
+        "credential_live_validation_status": str(
+            _gate(payloads, "security_credential_expiration_live_gate_results").get("live_validation_status") or ""
+        ),
         "cortex_efficiency_rendered": bool(_gate(payloads, "cortex_token_efficiency_gate_results").get("passed")),
         "user_id_daily_leak_count": _as_int(_gate(payloads, "user_display_surface_gate_results").get("user_id_daily_leak_count")),
         "credential_id_daily_leak_count": _as_int(_gate(payloads, "security_credential_export_gate_results").get("credential_export_leak_count")),
@@ -913,6 +1094,11 @@ def evaluate_full_app_release_sweep_gate(payload: object) -> dict[str, Any]:
         "duplicate_command_brief_count": _as_int(results.get("duplicate_command_brief_count")),
         "old_board_marker_count": _as_int(results.get("old_board_marker_count")),
         "credential_tile_rendered": bool(results.get("credential_tile_rendered")),
+        "credential_evidence_rendered": bool(results.get("credential_evidence_rendered")),
+        "credential_action_clicked": bool(results.get("credential_action_clicked")),
+        "credential_export_file_validated": bool(results.get("credential_export_file_validated")),
+        "credential_case_payload_validated": bool(results.get("credential_case_payload_validated")),
+        "credential_live_validation_status": str(results.get("credential_live_validation_status") or ""),
         "cortex_efficiency_rendered": bool(results.get("cortex_efficiency_rendered")),
         "user_id_daily_leak_count": _as_int(results.get("user_id_daily_leak_count")),
         "credential_id_daily_leak_count": _as_int(results.get("credential_id_daily_leak_count")),
@@ -953,6 +1139,7 @@ def write_full_app_release_sweep_artifacts(
                 "artifacts/launch_readiness/rendered_ui_leak_gate_results.json",
                 "artifacts/launch_readiness/security_credential_render_gate_results.json",
                 "artifacts/launch_readiness/security_credential_evidence_gate_results.json",
+                "artifacts/launch_readiness/security_credential_expiration_live_gate_results.json",
                 "artifacts/launch_readiness/security_credential_export_gate_results.json",
                 "artifacts/launch_readiness/user_display_surface_gate_results.json",
                 "artifacts/launch_readiness/cortex_token_efficiency_gate_results.json",

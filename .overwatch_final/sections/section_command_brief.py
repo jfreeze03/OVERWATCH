@@ -17,10 +17,25 @@ from sections.decision_workspace_state import decision_fixture_enabled, snowflak
 from sections.section_command_contracts import SectionCommandContract, get_section_command_contract
 from utils.mart_names import mart_object_name
 from utils.query import run_query, sql_literal
+from utils.security_credentials import credential_expiration_tile_from_packet
 
 
 SESSION_CACHE_SECONDS = 300
 NEGATIVE_CACHE_SECONDS = 45
+
+SECURITY_CREDENTIAL_PACKET_FIELDS = (
+    "SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT",
+    "SECURITY_CREDENTIALS_EXPIRED_COUNT",
+    "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT",
+    "SECURITY_CREDENTIALS_EXPIRING_7D_COUNT",
+    "SECURITY_CREDENTIAL_NEXT_EXPIRATION_USER",
+    "SECURITY_CREDENTIAL_NEXT_EXPIRATION_TYPE",
+    "SECURITY_CREDENTIAL_NEXT_EXPIRATION_TS",
+    "SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO",
+    "SECURITY_CREDENTIAL_SOURCE_STATUS",
+    "SECURITY_CREDENTIAL_SOURCE_FRESHNESS_TS",
+    "SECURITY_CREDENTIAL_SOURCE_LATENCY_NOTE",
+)
 
 
 @dataclass(frozen=True)
@@ -335,6 +350,52 @@ def _metric_from_row(row: Mapping[str, object]) -> SectionCommandMetric:
         trend_quality=_string(_column(row, "TREND_QUALITY")),
         zero_fill_policy=_string(_column(row, "ZERO_FILL_POLICY")),
     )
+
+
+def _security_credential_tone(severity: object) -> str:
+    value = str(severity or "").strip().lower()
+    if value == "critical":
+        return "critical"
+    if value in {"high", "medium", "watch"}:
+        return "warning"
+    return "neutral"
+
+
+def _security_credential_metric_from_packet(row: Mapping[str, object]) -> SectionCommandMetric | None:
+    if not any(field in row for field in SECURITY_CREDENTIAL_PACKET_FIELDS):
+        return None
+    tile = credential_expiration_tile_from_packet(dict(row))
+    available = bool(tile.get("available"))
+    return SectionCommandMetric(
+        key="credential_expirations",
+        label=str(tile.get("title") or "Credential expirations"),
+        value=str(tile.get("value") or "Credential expiration source pending"),
+        detail=str(tile.get("detail") or ""),
+        tone=_security_credential_tone(tile.get("severity")),
+        sort_order=20,
+        numeric_value=_float_or_none(tile.get("numeric_value")),
+        metric_format="integer",
+        available=available,
+        availability_state="Available" if available else str(tile.get("value") or "Credential expiration source pending"),
+        unavailable_reason="" if available else "Credential expiration source pending",
+        source_key="credential_expiration",
+        confidence="packet",
+        zero_fill_policy="confirmed_zero_only",
+    )
+
+
+def _metrics_with_flat_credential_tile(
+    contract: SectionCommandContract,
+    metrics: tuple[SectionCommandMetric, ...],
+    row: Mapping[str, object],
+) -> tuple[SectionCommandMetric, ...]:
+    if contract.section != "Security Monitoring":
+        return metrics
+    credential_metric = _security_credential_metric_from_packet(row)
+    if credential_metric is None:
+        return metrics
+    retained = tuple(metric for metric in metrics if metric.key != "credential_expirations")
+    return retained + (credential_metric,)
 
 
 def _signal_from_row(row: Mapping[str, object]) -> SectionCommandSignal:
@@ -690,7 +751,18 @@ SELECT
     EXCEPTIONS,
     ACTIONS,
     SOURCES,
-    PACKET_BYTES
+    PACKET_BYTES,
+    SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT,
+    SECURITY_CREDENTIALS_EXPIRED_COUNT,
+    SECURITY_CREDENTIALS_EXPIRING_30D_COUNT,
+    SECURITY_CREDENTIALS_EXPIRING_7D_COUNT,
+    SECURITY_CREDENTIAL_NEXT_EXPIRATION_USER,
+    SECURITY_CREDENTIAL_NEXT_EXPIRATION_TYPE,
+    SECURITY_CREDENTIAL_NEXT_EXPIRATION_TS,
+    SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO,
+    SECURITY_CREDENTIAL_SOURCE_STATUS,
+    SECURITY_CREDENTIAL_SOURCE_FRESHNESS_TS,
+    SECURITY_CREDENTIAL_SOURCE_LATENCY_NOTE
     FROM {current_table}
     WHERE {where}
     ORDER BY
@@ -739,9 +811,11 @@ def _brief_from_packet(
     cache_hit: bool,
 ) -> SectionCommandBrief:
     row = packet.iloc[0].to_dict()
+    raw_metrics = tuple(_metric_from_row(item) for item in _variant_records(_column(row, "METRICS")))
+    raw_metrics = _metrics_with_flat_credential_tile(contract, raw_metrics, row)
     metrics = _ordered_metrics(
         contract,
-        tuple(_metric_from_row(item) for item in _variant_records(_column(row, "METRICS"))),
+        raw_metrics,
     )
     exceptions = tuple(_signal_from_row(item) for item in _variant_records(_column(row, "EXCEPTIONS")))
     sources = tuple(_source_from_row(item) for item in _variant_records(_column(row, "SOURCES")))

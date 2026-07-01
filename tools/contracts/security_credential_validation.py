@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import csv
 from datetime import UTC, datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -119,8 +121,8 @@ def _find_surface_row(root: Path, rel: str, section: str, workflow: str) -> tupl
 
 def _find_action_row(root: Path, section: str, workflow: str) -> tuple[str, int, Mapping[str, Any]]:
     for rel in (
-        "artifacts/full_app_validation/action_click_results.json",
         "artifacts/full_app_validation/button_click_results.json",
+        "artifacts/full_app_validation/action_click_results.json",
     ):
         for index, row in enumerate(_rows(_load_json(root, rel))):
             if (
@@ -130,6 +132,95 @@ def _find_action_row(root: Path, section: str, workflow: str) -> tuple[str, int,
             ):
                 return rel, index, row
     return "", -1, {}
+
+
+def _resolve_payload_path(root: Path, payload_file: object) -> Path:
+    raw = Path(str(payload_file or ""))
+    return raw if raw.is_absolute() else root / raw
+
+
+def _payload_file_failures(root: Path, row: Mapping[str, Any], *, row_kind: str) -> tuple[str, list[str]]:
+    reasons: list[str] = []
+    payload_file = str(row.get("payload_file") or "")
+    if not payload_file:
+        return "", [f"{row_kind} row missing payload_file"]
+    path = _resolve_payload_path(root, payload_file)
+    if not path.exists():
+        return "", [f"{row_kind} payload file missing"]
+    payload = path.read_bytes()
+    text = payload.decode("utf-8", errors="ignore")
+    expected_sha = str(row.get("sha256") or row.get("payload_hash") or "")
+    if expected_sha and hashlib.sha256(payload).hexdigest() != expected_sha:
+        reasons.append(f"{row_kind} payload sha256 mismatch")
+    expected_size = int(row.get("size_bytes") or row.get("content_length") or 0)
+    if expected_size and expected_size != len(payload):
+        reasons.append(f"{row_kind} payload size mismatch")
+    if len(payload) <= 0 and not bool(row.get("intentional_empty")):
+        reasons.append(f"{row_kind} payload is empty")
+    return text, reasons
+
+
+def _credential_export_payload_failures(root: Path, row: Mapping[str, Any]) -> list[str]:
+    text, reasons = _payload_file_failures(root, row, row_kind="credential export")
+    if not text:
+        return reasons
+    reader = csv.DictReader(text.splitlines())
+    columns = set(reader.fieldnames or [])
+    parsed_rows = list(reader)
+    required = {"User", "Credential", "Type", "Status", "Recommended action"}
+    missing = sorted(required - columns)
+    if missing:
+        reasons.append(f"credential export missing required columns: {', '.join(missing)}")
+    if "Expires" not in columns and "Days left" not in columns:
+        reasons.append("credential export missing Expires or Days left column")
+    forbidden = {"USER_ID", "RAW_USER_ID", "CREDENTIAL_ID", "SOURCE_OBJECT", "RAW_SQL", "query_text", "QUERY_TEXT"}
+    leaked = sorted(column for column in columns if column in forbidden)
+    if leaked and not bool(row.get("admin_only")):
+        reasons.append(f"credential default export leaks raw columns: {', '.join(leaked)}")
+    visible_rows = int(row.get("visible_row_count") or row.get("row_count") or 0)
+    if visible_rows != len(parsed_rows):
+        reasons.append("credential export parsed row count differs from visible row count")
+    if "ACCOUNT_USAGE" in text.upper() or "CREDENTIAL_ID" in text.upper() or "USER_ID" in text.upper():
+        if not bool(row.get("admin_only")):
+            reasons.append("credential default export leaks source or raw identifier text")
+    return reasons
+
+
+def _credential_case_payload_failures(root: Path, row: Mapping[str, Any]) -> list[str]:
+    text, reasons = _payload_file_failures(root, row, row_kind="credential case payload")
+    if not text:
+        return reasons
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return reasons + ["credential case payload is not valid JSON"]
+    required = {
+        "section",
+        "workflow",
+        "scope",
+        "target",
+        "freshness",
+        "source_family",
+        "summary",
+        "row_count",
+        "visible_row_count",
+        "recommended_action",
+        "expired_count",
+        "expiring_30d_count",
+        "next_expiration",
+        "owner_labels",
+    }
+    missing = sorted(field for field in required if field not in payload)
+    if missing:
+        reasons.append(f"credential case payload missing required fields: {', '.join(missing)}")
+    if str(payload.get("source_family") or "") != "credential_expiration":
+        reasons.append("credential case payload source_family must be credential_expiration")
+    visible_rows = int(row.get("visible_row_count") or row.get("row_count") or 0)
+    if visible_rows != int(payload.get("visible_row_count") or 0):
+        reasons.append("credential case visible row count differs from payload")
+    if ("USER_ID" in text.upper() or "CREDENTIAL_ID" in text.upper() or "ACCOUNT_USAGE" in text.upper()) and not bool(row.get("admin_only")):
+        reasons.append("credential default case payload leaks source or raw identifier text")
+    return reasons
 
 
 def _runtime_references(root: Path, section: str, workflow: str) -> tuple[dict[str, Any], list[str]]:
@@ -153,9 +244,12 @@ def _runtime_references(root: Path, section: str, workflow: str) -> tuple[dict[s
         "case_payload_artifact_path": case_rel if case_row else "",
         "case_payload_row_id": str(case_row.get("id") or case_row.get("filename") or case_row.get("runtime_artifact_row_index") or case_index if case_row else ""),
         "case_payload_row_index": case_index,
+        "expected_section": section,
+        "expected_workflow": workflow,
         "source_rows_present": bool(render_row.get("source_rows_present", render_row)),
         "visible_row_count": int(render_row.get("visible_row_count") or export_row.get("visible_row_count") or 0) if (render_row or export_row) else 0,
         "exported_row_count": int(export_row.get("parsed_row_count") or export_row.get("row_count") or 0) if export_row else 0,
+        "case_row_count": int(case_row.get("parsed_row_count") or case_row.get("row_count") or 0) if case_row else 0,
         "producer_signature": str(render_row.get("producer_signature") or ""),
         "commit_sha": str(render_row.get("commit_sha") or ""),
     }
@@ -171,8 +265,26 @@ def _runtime_references(root: Path, section: str, workflow: str) -> tuple[dict[s
     ]
     if export_row and refs["visible_row_count"] != refs["exported_row_count"]:
         missing.append("visible/exported row count mismatch")
+    if case_row and refs["visible_row_count"] != refs["case_row_count"]:
+        missing.append("visible/case row count mismatch")
+    for name, row in (
+        ("rendered runtime row", render_row),
+        ("clicked action row", action_row),
+        ("file-backed export row", export_row),
+        ("case payload row", case_row),
+    ):
+        if row and not row.get("producer_signature"):
+            missing.append(f"{name} missing producer_signature")
+        if row and str(row.get("section") or "") != section:
+            missing.append(f"{name} section mismatch")
+        if row and str(row.get("workflow") or "") != workflow:
+            missing.append(f"{name} workflow mismatch")
     if any(bool(row.get("raw_sql_included")) for row in (render_row, action_row, export_row, case_row) if row):
         missing.append("runtime artifact row included raw SQL")
+    if export_row:
+        missing.extend(_credential_export_payload_failures(root, export_row))
+    if case_row:
+        missing.extend(_credential_case_payload_failures(root, case_row))
     return refs, missing
 
 
@@ -616,6 +728,24 @@ def build_security_credential_render_results(root: Path) -> dict[str, Any]:
     proc_sql = _read(root, "snowflake/mart_setup/05_load_procedures.sql")
     helper_source = _read(root, ".overwatch_final/utils/security_credentials.py")
     view_model = _read(root, ".overwatch_final/sections/decision_workspace_view_model.py")
+    render_index, render_row = _find_surface_row(
+        root,
+        "artifacts/full_app_validation/rendered_fragments.json",
+        "Security Monitoring",
+        "Security Overview",
+    )
+    if not render_row:
+        render_index, render_row = _find_surface_row(
+            root,
+            "artifacts/full_app_validation/view_results.json",
+            "Security Monitoring",
+            "Security Overview",
+        )
+    rendered_text = "\n".join(
+        str(render_row.get(key) or "")
+        for key in ("text", "html_fragment", "rendered_text", "first_viewport_text")
+    )
+    forbidden_render_tokens = ("CREDENTIAL_ID", "USER_ID", "ACCOUNT_USAGE", "SNOWFLAKE.ACCOUNT_USAGE.CREDENTIALS")
     rows = [
         _row(
             "security_credential_tile_packet_backed",
@@ -646,6 +776,14 @@ def build_security_credential_render_results(root: Path) -> dict[str, Any]:
             and _contains(helper_source, "ADMIN_ONLY_CREDENTIAL_COLUMNS"),
             evidence="Daily credential render helpers do not read source object names and hide raw IDs.",
             recommendation="Keep source object details in setup/live validation only.",
+        ),
+        _row(
+            "security_credential_runtime_tile_rendered",
+            bool(render_row)
+            and _contains(rendered_text, "Credential expirations")
+            and not any(_contains(rendered_text, token) for token in forbidden_render_tokens),
+            evidence=f"Security runtime render row index {render_index} contains the daily credential tile.",
+            recommendation="Render Security Monitoring overview from runtime packet fields and keep raw identifiers out.",
         ),
     ]
     failures = [row for row in rows if not row["passed"]]
@@ -796,6 +934,9 @@ def build_credential_sql_inventory_gate(root: Path) -> dict[str, Any]:
         "credential_expiration_alert_action",
         "credential_expiration_evidence",
         "credential_expiration_live_validation",
+        "security_credential_route",
+        "security_credential_target_filter",
+        "security_credential_export",
         "user_display_dimension_refresh_source",
         "cortex_user_label_source",
         "cortex_user_label_export_sanitizer",
@@ -1000,11 +1141,22 @@ def build_credential_expiration_live_results(root: Path, profile: str | None = N
         {
             "phase": "credential_expiration_live_validation",
             "source_family": "credential_expiration",
+            "live_source": "SNOWFLAKE.ACCOUNT_USAGE.CREDENTIALS",
+            "compact_mart": "MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT",
+            "chain": (
+                "SNOWFLAKE.ACCOUNT_USAGE.CREDENTIALS -> "
+                "MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT -> "
+                "Security packet -> rendered tile -> evidence -> export -> case"
+            ),
             "source_accessible": False,
             "source_rows_present": None,
             "compact_mart_checked": False,
             "packet_checked": False,
             "render_checked": False,
+            "evidence_checked": False,
+            "export_checked": False,
+            "case_payload_checked": False,
+            "packet_fields_checked": list(SECURITY_CREDENTIAL_PACKET_FIELDS),
             "status": "skipped",
             "sanitized_error": "",
             "recommendation": "Run the Snowflake CLI live validation lane for Account Usage to compact mart to packet to render proof.",
@@ -1205,6 +1357,8 @@ def _evaluate_simple_gate(payload: Mapping[str, Any], *, source: str, passed_key
                     "case_payload_artifact_path",
                     "case_payload_row_id",
                     "case_payload_row_index",
+                    "expected_section",
+                    "expected_workflow",
                     "source_rows_present",
                     "visible_row_count",
                     "exported_row_count",

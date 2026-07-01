@@ -159,7 +159,10 @@ def _passing_payload(root: Path) -> dict:
         )
     ]
     cortex_csv = "USER_DISPLAY_NAME,TOTAL_TOKENS,COST_PER_1K_TOKENS_USD\nJane Doe,1000,2.2\n"
-    credential_csv = "User,Credential,Type,Status\nJane Doe,Jane PAT,PAT,ACTIVE\n"
+    credential_csv = (
+        "User,Credential,Type,Domain,Status,Expires,Days left,Last used,Recommended action\n"
+        "Jane Doe,Jane PAT,PAT,USER,ACTIVE,2026-07-05,5,2026-06-29,Rotate credential\n"
+    )
     cortex_case_json = json.dumps(
         {
             "section": "Cortex Efficiency",
@@ -187,6 +190,10 @@ def _passing_payload(root: Path) -> dict:
             "row_count": 1,
             "visible_row_count": 1,
             "recommended_action": "Rotate credential.",
+            "expired_count": 0,
+            "expiring_30d_count": 1,
+            "next_expiration": "2026-07-05",
+            "owner_labels": ["Jane Doe"],
         },
         sort_keys=True,
     )
@@ -258,10 +265,17 @@ def _passing_payload(root: Path) -> dict:
             "action_artifact_path": "artifacts/full_app_validation/action_click_results.json",
             "action_row_id": action["id"],
             "export_artifact_path": "artifacts/full_app_validation/export_results.json",
+            "export_row_id": export["id"],
+            "export_row_index": export_rows.index(export),
             "case_payload_artifact_path": "artifacts/full_app_validation/case_payload_results.json",
+            "case_payload_row_id": case["id"],
+            "case_payload_row_index": case_rows.index(case),
+            "expected_section": section,
+            "expected_workflow": "Explicit action",
             "source_rows_present": True,
             "visible_row_count": 1,
             "exported_row_count": 1,
+            "case_row_count": 1,
             "producer_signature": render["producer_signature"],
             "commit_sha": TEST_COMMIT,
             "raw_sql_included": False,
@@ -443,6 +457,73 @@ class FullAppReleaseSweepTests(unittest.TestCase):
 
         self.assertFalse(results["passed"])
         self.assertTrue(any(row["section"] == "Cortex Efficiency" for row in results["failures"]))
+
+    def test_linked_gate_missing_export_row_id_fails(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = _passing_payload(root)
+            payload["artifacts/launch_readiness/security_credential_evidence_gate_results.json"].pop(
+                "export_row_id"
+            )
+            results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT, root=root)
+
+        self.assertFalse(results["passed"])
+        self.assertTrue(any(row["section"] == "Security Credential Evidence" for row in results["failures"]))
+
+    def test_linked_gate_wrong_export_row_fails(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = _passing_payload(root)
+            payload["artifacts/launch_readiness/security_credential_evidence_gate_results.json"][
+                "export_row_id"
+            ] = "cortex_efficiency::export"
+            results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT, root=root)
+
+        self.assertFalse(results["passed"])
+        self.assertTrue(any("section mismatch" in row["failure_reason"] for row in results["failures"]))
+
+    def test_default_credential_export_with_user_id_fails(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = _passing_payload(root)
+            export = next(
+                row
+                for row in payload["artifacts/full_app_validation/export_results.json"]
+                if row["section"] == "Security Credential Evidence"
+            )
+            leaked_csv = "User,USER_ID,Credential,Type,Status,Recommended action\nJane Doe,123,Jane PAT,PAT,ACTIVE,Rotate\n"
+            export.update(_write_payload(root, export["payload_file"], leaked_csv))
+            export["parsed_row_count"] = 1
+            export["visible_row_count"] = 1
+            results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT, root=root)
+
+        self.assertFalse(results["passed"])
+        self.assertTrue(any("USER_ID" in row["failure_reason"] for row in results["failures"]))
+
+    def test_credential_case_missing_source_family_fails(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = _passing_payload(root)
+            case = next(
+                row
+                for row in payload["artifacts/full_app_validation/case_payload_results.json"]
+                if row["section"] == "Security Credential Evidence"
+            )
+            payload_json = json.loads((root / case["payload_file"]).read_text(encoding="utf-8"))
+            payload_json.pop("source_family")
+            case.update(_write_payload(root, case["payload_file"], json.dumps(payload_json, sort_keys=True)))
+            results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT, root=root)
+
+        self.assertFalse(results["passed"])
+        self.assertTrue(any("source_family" in row["failure_reason"] for row in results["failures"]))
 
     def test_missing_export_payload_file_fails(self):
         from tools.contracts.full_app_release_sweep import build_full_app_release_sweep

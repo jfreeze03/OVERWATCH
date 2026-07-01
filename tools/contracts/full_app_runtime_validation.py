@@ -815,6 +815,23 @@ def _packet_row(section: str) -> dict[str, object]:
         "ACTIONS": actions,
         "SOURCES": sources,
         "PACKET_BYTES": 42000,
+        **(
+            {
+                "SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT": 3,
+                "SECURITY_CREDENTIALS_EXPIRED_COUNT": 1,
+                "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT": 2,
+                "SECURITY_CREDENTIALS_EXPIRING_7D_COUNT": 1,
+                "SECURITY_CREDENTIAL_NEXT_EXPIRATION_USER": "Jane Doe",
+                "SECURITY_CREDENTIAL_NEXT_EXPIRATION_TYPE": "PAT",
+                "SECURITY_CREDENTIAL_NEXT_EXPIRATION_TS": "2026-07-05T00:00:00",
+                "SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO": False,
+                "SECURITY_CREDENTIAL_SOURCE_STATUS": "available",
+                "SECURITY_CREDENTIAL_SOURCE_FRESHNESS_TS": "2026-06-26T10:00:00",
+                "SECURITY_CREDENTIAL_SOURCE_LATENCY_NOTE": "Credential expiration source current",
+            }
+            if credential_route
+            else {}
+        ),
     }
 
 
@@ -1476,7 +1493,7 @@ class RuntimeValidationHarness:
         content_length = _payload_content_length(data)
         row_count = _payload_row_count(data)
         capture.downloads.append({
-            "source": "runtime_export_payload",
+            "source": "file_backed_export",
             "proof_source": "runtime_export",
             "label": str(kwargs.get("label") or stable_name),
             "key": str(kwargs.get("key") or f"download_{_token(stable_name)}"),
@@ -1509,8 +1526,9 @@ class RuntimeValidationHarness:
         token_findings = _daily_token_findings(payload_text, surface="export_payload", item=filename)
         query_text_included = bool(download.get("query_text_included"))
         record = {
-            "source": "runtime_export_payload",
+            "source": "file_backed_export",
             "proof_source": "runtime_export",
+            "runtime_source": "runtime_export_payload",
             "filename": filename,
             "content_type": str(download.get("content_type") or "text/csv"),
             "content_length": content_length,
@@ -1563,8 +1581,9 @@ class RuntimeValidationHarness:
         visible_row_count = int(payload.get("visible_row_count") or row_count)
         token_findings = _daily_token_findings(payload_text, surface="case_payload", item=filename)
         record = {
-            "source": "runtime_case_payload",
+            "source": "case_payload",
             "proof_source": "runtime_export",
+            "runtime_source": "runtime_case_payload",
             "section": section,
             "workflow": workflow,
             "filename": filename,
@@ -1578,7 +1597,7 @@ class RuntimeValidationHarness:
             "payload_row_count": row_count,
             "rendered_artifact_path": "artifacts/full_app_validation/rendered_fragments.json",
             "rendered_row_id": rendered_row_id,
-            "action_artifact_path": "artifacts/full_app_validation/action_click_results.json",
+            "action_artifact_path": "artifacts/full_app_validation/button_click_results.json",
             "action_row_id": action_row_id,
             "admin_only": False,
             "sanitized_default_export": True,
@@ -1610,7 +1629,6 @@ class RuntimeValidationHarness:
         from utils.security_credentials import (
             credential_evidence_daily_frame,
             make_credential_case_payload,
-            sanitize_credential_export,
         )
         from utils.user_display import sanitize_user_columns_for_export
 
@@ -1651,7 +1669,7 @@ class RuntimeValidationHarness:
         rendered_rows.append(
             {
                 "id": cortex_render_id,
-                "source": "runtime_feature_render",
+                "source": "rendered_app",
                 "proof_source": "runtime_render",
                 "runtime_source": "actual_section_render",
                 "render_call_path": "sections.cortex_monitor.render(cortex_efficiency_action)",
@@ -1679,7 +1697,7 @@ class RuntimeValidationHarness:
         action_rows.append(
             {
                 "id": cortex_action_id,
-                "source": "runtime_feature_click",
+                "source": "clicked_action",
                 "proof_source": "runtime_click",
                 "runtime_source": "runtime_button_click",
                 "section": "Cortex Efficiency",
@@ -1719,7 +1737,7 @@ class RuntimeValidationHarness:
             action_rows.append(
                 {
                     "id": action_id,
-                    "source": "runtime_feature_click",
+                    "source": "clicked_action",
                     "proof_source": "runtime_click",
                     "runtime_source": "runtime_button_click",
                     "section": "Cortex Efficiency",
@@ -1775,7 +1793,7 @@ class RuntimeValidationHarness:
                 "stable_key": "cortex_token_efficiency_export",
                 "rendered_artifact_path": "artifacts/full_app_validation/rendered_fragments.json",
                 "rendered_row_id": cortex_render_id,
-                "action_artifact_path": "artifacts/full_app_validation/action_click_results.json",
+                "action_artifact_path": "artifacts/full_app_validation/button_click_results.json",
                 "action_row_id": cortex_export_action_id,
                 "sanitized_default_export": True,
                 "admin_only": False,
@@ -1827,7 +1845,7 @@ class RuntimeValidationHarness:
             ]
         )
         credential_daily = credential_evidence_daily_frame(credential_source)
-        credential_export_frame = sanitize_credential_export(credential_source, admin_only=False)
+        credential_export_frame = credential_daily.copy()
         credential_render_id = "security_credential_evidence::explicit_action"
         credential_action_id = "security_credential_evidence::load_security_evidence"
         credential_export_action_id = "security_credential_evidence::export_click"
@@ -1835,7 +1853,7 @@ class RuntimeValidationHarness:
         rendered_rows.append(
             {
                 "id": credential_render_id,
-                "source": "runtime_feature_render",
+                "source": "rendered_app",
                 "proof_source": "runtime_render",
                 "runtime_source": "actual_section_render",
                 "render_call_path": "sections.security_monitoring.render(credential_evidence_action)",
@@ -1865,7 +1883,7 @@ class RuntimeValidationHarness:
         action_rows.append(
             {
                 "id": credential_action_id,
-                "source": "runtime_feature_click",
+                "source": "clicked_action",
                 "proof_source": "runtime_click",
                 "runtime_source": "runtime_button_click",
                 "section": "Security Credential Evidence",
@@ -1912,7 +1930,7 @@ class RuntimeValidationHarness:
             action_rows.append(
                 {
                     "id": action_id,
-                    "source": "runtime_feature_click",
+                    "source": "clicked_action",
                     "proof_source": "runtime_click",
                     "runtime_source": "runtime_button_click",
                     "section": "Security Credential Evidence",
@@ -1967,7 +1985,7 @@ class RuntimeValidationHarness:
                 "stable_key": "security_credential_evidence_export",
                 "rendered_artifact_path": "artifacts/full_app_validation/rendered_fragments.json",
                 "rendered_row_id": credential_render_id,
-                "action_artifact_path": "artifacts/full_app_validation/action_click_results.json",
+                "action_artifact_path": "artifacts/full_app_validation/button_click_results.json",
                 "action_row_id": credential_export_action_id,
                 "sanitized_default_export": True,
                 "admin_only": False,

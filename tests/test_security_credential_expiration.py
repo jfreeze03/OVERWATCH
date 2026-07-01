@@ -152,9 +152,62 @@ class SecurityCredentialExpirationTests(unittest.TestCase):
 
         payload = make_credential_case_payload(frame, scope="ALFA / ALL / 7 days", now=NOW)
         self.assertEqual(payload["source"], "credential_expiration")
+        self.assertEqual(payload["source_family"], "credential_expiration")
         self.assertEqual(payload["visible_row_count"], 1)
         self.assertEqual(payload["expiring_30d_count"], 1)
         self.assertIn("Jane Doe", payload["owner_labels"])
+
+    def test_flat_packet_fields_build_runtime_security_credential_metric(self):
+        from sections.section_command_brief import _brief_from_packet
+        from sections.section_command_contracts import get_section_command_contract
+
+        packet = pd.DataFrame(
+            [
+                {
+                    "BRIEF_ID": "security-brief",
+                    "SECTION_NAME": "Security Monitoring",
+                    "COMPANY": "ALFA",
+                    "ENVIRONMENT": "ALL",
+                    "WINDOW_DAYS": 7,
+                    "SNAPSHOT_TS": "2026-06-30T00:00:00",
+                    "STATE": "Watch",
+                    "HEADLINE": "Security posture needs review.",
+                    "SUMMARY": "Security view",
+                    "SOURCE_STATUS": "Ready",
+                    "SOURCE_FRESHNESS": "Updated now",
+                    "METRICS": [],
+                    "EXCEPTIONS": [],
+                    "ACTIONS": [],
+                    "SOURCES": [],
+                    "SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT": 3,
+                    "SECURITY_CREDENTIALS_EXPIRED_COUNT": 1,
+                    "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT": 2,
+                    "SECURITY_CREDENTIALS_EXPIRING_7D_COUNT": 1,
+                    "SECURITY_CREDENTIAL_NEXT_EXPIRATION_USER": "Jane Doe",
+                    "SECURITY_CREDENTIAL_NEXT_EXPIRATION_TYPE": "PAT",
+                    "SECURITY_CREDENTIAL_NEXT_EXPIRATION_TS": "2026-07-06",
+                    "SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO": False,
+                    "SECURITY_CREDENTIAL_SOURCE_STATUS": "available",
+                    "SECURITY_CREDENTIAL_SOURCE_FRESHNESS_TS": "2026-06-30T00:00:00",
+                }
+            ]
+        )
+
+        brief = _brief_from_packet(
+            get_section_command_contract("Security Monitoring"),
+            company="ALFA",
+            environment="ALL",
+            window_days=7,
+            packet=packet,
+            elapsed_ms=4.0,
+            cache_hit=False,
+        )
+        metrics = {metric.key: metric for metric in brief.metrics}
+
+        self.assertIn("credential_expirations", metrics)
+        self.assertEqual(metrics["credential_expirations"].value, "1 expired - 2 due within 30d")
+        self.assertEqual(metrics["credential_expirations"].numeric_value, 3)
+        self.assertIn("Jane Doe", metrics["credential_expirations"].detail)
 
     def test_snowflake_sql_promotes_credential_metric_and_findings(self):
         setup_sql = (ROOT / "snowflake" / "mart_setup" / "05_load_procedures.sql").read_text(

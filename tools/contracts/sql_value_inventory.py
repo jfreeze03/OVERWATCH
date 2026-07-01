@@ -93,6 +93,30 @@ def _supplemental_overwatch_rows(root: Path) -> list[dict[str, Any]]:
         return []
     setup_text = setup.read_text(encoding="utf-8", errors="ignore").upper()
     validation_text = validation.read_text(encoding="utf-8", errors="ignore").upper() if validation.exists() else ""
+    route_text = (
+        (root / ".overwatch_final" / "sections" / "command_brief_routes.py").read_text(
+            encoding="utf-8",
+            errors="ignore",
+        ).upper()
+        if (root / ".overwatch_final" / "sections" / "command_brief_routes.py").exists()
+        else ""
+    )
+    target_filter_text = (
+        (root / ".overwatch_final" / "sections" / "decision_workspace_target_filters.py").read_text(
+            encoding="utf-8",
+            errors="ignore",
+        ).upper()
+        if (root / ".overwatch_final" / "sections" / "decision_workspace_target_filters.py").exists()
+        else ""
+    )
+    credential_helper_text = (
+        (root / ".overwatch_final" / "utils" / "security_credentials.py").read_text(
+            encoding="utf-8",
+            errors="ignore",
+        ).upper()
+        if (root / ".overwatch_final" / "utils" / "security_credentials.py").exists()
+        else ""
+    )
     rows: list[dict[str, Any]] = []
 
     def add(
@@ -248,6 +272,45 @@ def _supplemental_overwatch_rows(root: Path) -> list[dict[str, Any]]:
             value_to_app="Lets users route and package credential remediation context without raw credential identifiers.",
             row_limit="visible credential evidence rows",
             pruning_predicate="route target and compact evidence filters",
+        )
+    if "SECURITY_CREDENTIAL_EXPIRATIONS" in route_text:
+        add(
+            "security_credential_route",
+            purpose="Route Alert Center credential findings to Security Monitoring with target context.",
+            user_visible_feature="Review Credential Expirations",
+            source_family="route_action",
+            account_usage_use="none",
+            admin_only=False,
+            daily_safe=True,
+            value_to_app="Preserves credential evidence context while keeping route actions query-free.",
+            row_limit="one route target context",
+            pruning_predicate="selected credential finding",
+        )
+    if "USER_CREDENTIAL" in target_filter_text and "CREDENTIAL_ID" in target_filter_text:
+        add(
+            "security_credential_target_filter",
+            purpose="Push USER_CREDENTIAL target filters into credential evidence SQL before load.",
+            user_visible_feature="Credential expiration evidence",
+            source_family="targeted_evidence",
+            account_usage_use="none",
+            admin_only=False,
+            daily_safe=True,
+            value_to_app="Prevents broad evidence loads when users route from a credential finding.",
+            row_limit="targeted compact evidence rows",
+            pruning_predicate="USER_NAME/CREDENTIAL/EVIDENCE_ID exact target filter",
+        )
+    if "SANITIZE_CREDENTIAL_EXPORT" in credential_helper_text:
+        add(
+            "security_credential_export",
+            purpose="Export sanitized credential evidence rows without raw credential/user identifiers.",
+            user_visible_feature="Credential expiration export",
+            source_family="compact_evidence",
+            account_usage_use="none",
+            admin_only=False,
+            daily_safe=True,
+            value_to_app="Provides file-backed remediation evidence while excluding USER_ID and CREDENTIAL_ID by default.",
+            row_limit="visible credential evidence rows",
+            pruning_predicate="explicit evidence row set",
         )
     if "MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT" in validation_text:
         add(

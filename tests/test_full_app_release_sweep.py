@@ -142,7 +142,9 @@ def _passing_payload(root: Path) -> dict:
             "stable_key": f"{section.lower().replace(' ', '_')}_{workflow.lower().replace(' ', '_')}",
             "label": f"{section} {workflow}",
             "clicked": True,
-            "action_area": "evidence_action" if section not in {"Cortex Efficiency", "Cost Workbench"} else "cost_workbench",
+            "action_area": "query_search"
+            if section == "Query Search"
+            else ("evidence_action" if section not in {"Cortex Efficiency", "Cost Workbench"} else "cost_workbench"),
             "passed": True,
         }
         for section, workflow in (
@@ -158,7 +160,11 @@ def _passing_payload(root: Path) -> dict:
             ("Security Credential Evidence", "Explicit action"),
         )
     ]
-    cortex_csv = "USER_DISPLAY_NAME,TOTAL_TOKENS,COST_PER_1K_TOKENS_USD\nJane Doe,1000,2.2\n"
+    cortex_csv = (
+        "USER_DISPLAY_NAME,TOTAL_TOKENS,TOTAL_REQUESTS,COST_USD,TOTAL_CREDITS,"
+        "TOKENS_PER_REQUEST,TOKENS_PER_DOLLAR,COST_PER_1K_TOKENS_USD,AI_CREDITS_PER_1K_TOKENS\n"
+        "Jane Doe,1000,10,2.2,1.0,100,454.55,2.2,1.0\n"
+    )
     credential_csv = (
         "User,Credential,Type,Domain,Status,Expires,Days left,Last used,Recommended action\n"
         "Jane Doe,Jane PAT,PAT,USER,ACTIVE,2026-07-05,5,2026-06-29,Rotate credential\n"
@@ -175,6 +181,9 @@ def _passing_payload(root: Path) -> dict:
             "row_count": 1,
             "visible_row_count": 1,
             "recommended_action": "Review token efficiency.",
+            "total_tokens": 1000,
+            "tokens_per_dollar": 454.55,
+            "cost_per_1k_tokens_usd": 2.2,
         },
         sort_keys=True,
     )
@@ -309,6 +318,7 @@ def _passing_payload(root: Path) -> dict:
         "artifacts/launch_readiness/rendered_ui_leak_gate_results.json": passed_gate,
         "artifacts/launch_readiness/security_credential_render_gate_results.json": passed_gate,
         "artifacts/launch_readiness/security_credential_evidence_gate_results.json": _feature_gate("Security Credential Evidence"),
+        "artifacts/launch_readiness/security_credential_snapshot_gate_results.json": passed_gate,
         "artifacts/launch_readiness/security_credential_export_gate_results.json": passed_gate,
         "artifacts/launch_readiness/user_display_surface_gate_results.json": passed_gate,
         "artifacts/launch_readiness/cortex_token_efficiency_gate_results.json": {
@@ -486,6 +496,43 @@ class FullAppReleaseSweepTests(unittest.TestCase):
         self.assertFalse(results["passed"])
         self.assertTrue(any("section mismatch" in row["failure_reason"] for row in results["failures"]))
 
+    def test_loaded_surface_wrong_section_click_cannot_satisfy_action(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = _passing_payload(root)
+            for row in payload["artifacts/full_app_validation/action_click_results.json"]["rows"]:
+                if row["section"] == "Alert Center" and row["workflow"] == "Loaded":
+                    row["section"] = "Security Monitoring"
+            for row in payload["artifacts/full_app_validation/button_click_results.json"]:
+                if row["section"] == "Alert Center" and row["workflow"] == "Loaded":
+                    row["section"] = "Security Monitoring"
+            results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT, root=root)
+
+        self.assertFalse(results["passed"])
+        self.assertTrue(any(row["section"] == "Alert Center" and "action" in row["failure_reason"] for row in results["failures"]))
+
+    def test_cortex_export_metadata_count_mismatch_fails_release_sweep(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = _passing_payload(root)
+            export = next(
+                row
+                for row in payload["artifacts/full_app_validation/export_results.json"]
+                if row["section"] == "Cortex Efficiency"
+            )
+            export["parsed_row_count"] = 2
+            export["visible_row_count"] = 2
+            payload["artifacts/launch_readiness/cortex_token_efficiency_gate_results.json"]["visible_row_count"] = 2
+            payload["artifacts/launch_readiness/cortex_token_efficiency_gate_results.json"]["exported_row_count"] = 2
+            results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT, root=root)
+
+        self.assertFalse(results["passed"])
+        self.assertTrue(any("parsed row count differs from metadata" in row["failure_reason"] for row in results["failures"]))
+
     def test_default_credential_export_with_user_id_fails(self):
         from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
 
@@ -519,6 +566,7 @@ class FullAppReleaseSweepTests(unittest.TestCase):
             )
             payload_json = json.loads((root / case["payload_file"]).read_text(encoding="utf-8"))
             payload_json.pop("source_family")
+            payload_json.pop("source", None)
             case.update(_write_payload(root, case["payload_file"], json.dumps(payload_json, sort_keys=True)))
             results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT, root=root)
 

@@ -212,6 +212,18 @@ def _supplemental_overwatch_rows(root: Path) -> list[dict[str, Any]]:
             pruning_predicate="expiration due/expired flags",
         )
         add(
+            "security_credential_compact_evidence",
+            purpose="Serve targeted credential evidence from compact mart rows after explicit click.",
+            user_visible_feature="Security credential evidence",
+            source_family="targeted_evidence",
+            account_usage_use="none",
+            admin_only=False,
+            daily_safe=True,
+            value_to_app="Proves Security credential evidence is compact-mart-backed and not an Account Usage daily path.",
+            row_limit="visible credential evidence rows, default evidence limit applies",
+            pruning_predicate="USER_CREDENTIAL target predicate and expiration flags",
+        )
+        add(
             "credential_expiration_evidence",
             purpose="Expose credential-expiration rows only through explicit Security evidence loads.",
             user_visible_feature="Credential expirations",
@@ -224,6 +236,18 @@ def _supplemental_overwatch_rows(root: Path) -> list[dict[str, Any]]:
             pruning_predicate="expiration due/expired flags plus target filters",
         )
     if "SECURITY_CREDENTIALS_EXPIRING_30D_COUNT" in setup_text:
+        add(
+            "security_credential_expiration_packet",
+            purpose="Carry combined credential risk and source status fields in the Security packet.",
+            user_visible_feature="Security Monitoring credential expirations tile",
+            source_family="daily_first_paint_packet",
+            account_usage_use="none",
+            admin_only=False,
+            daily_safe=True,
+            value_to_app="Allows one-packet first paint to render expired plus expiring credential risk.",
+            row_limit="one active packet row per scope",
+            pruning_predicate="active packet logical key",
+        )
         add(
             "credential_expiration_security_packet",
             purpose="Add credential-expiration fields to Security Monitoring decision packets.",
@@ -325,6 +349,30 @@ def _supplemental_overwatch_rows(root: Path) -> list[dict[str, Any]]:
             row_limit="validation metadata only",
             pruning_predicate="information_schema/object contract checks",
         )
+        add(
+            "security_credential_live_validation",
+            purpose="Reconcile live credential source, compact mart, packet, render, evidence, export, and case artifacts.",
+            user_visible_feature="Credential expirations",
+            source_family="live_validation",
+            account_usage_use="setup/live validation only",
+            admin_only=True,
+            daily_safe=True,
+            value_to_app="Blocks internal_live/prod_candidate when credential value proof is missing or mismatched.",
+            row_limit="bounded live validation aggregate rows",
+            pruning_predicate="selected scope and expiration bucket filters",
+        )
+    add(
+        "security_credential_snapshot_proof",
+        purpose="Generate sanitized rendered snapshots for Alert credential route and Security credential evidence flow.",
+        user_visible_feature="Security credential expiration release snapshots",
+        source_family="deployment_validation",
+        account_usage_use="none",
+        admin_only=False,
+        daily_safe=True,
+        value_to_app="Provides release-visible render proof for the credential route/evidence/export/case workflow.",
+        row_limit="six deterministic snapshot files",
+        pruning_predicate="runtime rendered rows and file-backed payload previews",
+    )
     if "USER_CHART_LABEL" in setup_text and "FACT_CORTEX_DAILY" in setup_text:
         add(
             "cortex_user_label_source",

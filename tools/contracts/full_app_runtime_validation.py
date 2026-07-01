@@ -240,15 +240,39 @@ def _action_area_for_row(row: Mapping[str, Any]) -> str:
     }.get(action_type, "export_download" if "export" in key.lower() or "download" in key.lower() else "route_action")
 
 
-def _action_like_elements_from_buttons(buttons: Iterable[Mapping[str, Any]]) -> list[dict[str, str]]:
-    return [
-        {
+def _rendered_action_id(section: object, workflow: object, stable_key: object) -> str:
+    key = str(stable_key or "").strip()
+    if not key:
+        return ""
+    return f"{_token(section)}::{_token(workflow)}::{key}"
+
+
+def _action_like_elements_from_buttons(
+    buttons: Iterable[Mapping[str, Any]],
+    *,
+    section: object = "",
+    workflow: object = "",
+) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    for button in buttons:
+        stable_key = str(button.get("key") or button.get("stable_key") or "").strip()
+        action = {
+            "rendered_action_id": str(button.get("rendered_action_id") or _rendered_action_id(section, workflow, stable_key)),
             "label": str(button.get("label") or ""),
-            "stable_key": str(button.get("key") or button.get("stable_key") or ""),
+            "stable_key": stable_key,
             "action_area": _action_area_for_row(button),
+            "source_render_row_id": str(button.get("source_render_row_id") or ""),
+            "data_interactive": bool(button.get("data_interactive", button.get("interactive", True))),
         }
-        for button in buttons
-    ]
+        actions.append(action)
+    return actions
+
+
+def _snapshot_action_like_elements(buttons: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    actions = _action_like_elements_from_buttons(buttons)
+    for action in actions:
+        action["data_interactive"] = False
+    return actions
 
 
 def _stable_key_for_row(row: Mapping[str, Any]) -> str:
@@ -287,10 +311,19 @@ def _enrich_render_row(stamped: dict[str, Any]) -> None:
     for action in _safe_list(stamped.get("action_like_elements")):
         if not isinstance(action, Mapping):
             continue
+        stable_key = str(action.get("stable_key") or action.get("key") or action.get("label") or "")
         normalized = {
+            "rendered_action_id": str(
+                action.get("rendered_action_id")
+                or _rendered_action_id(stamped.get("section") or stamped.get("surface"), stamped.get("workflow"), stable_key)
+            ),
             "label": str(action.get("label") or action.get("stable_key") or action.get("key") or ""),
-            "stable_key": str(action.get("stable_key") or action.get("key") or action.get("label") or ""),
+            "stable_key": stable_key,
             "action_area": str(action.get("action_area") or _action_area_for_row(action)),
+            "source_render_row_id": str(
+                action.get("source_render_row_id") or stamped.get("id") or stamped.get("runtime_artifact_row_index") or ""
+            ),
+            "data_interactive": bool(action.get("data_interactive", action.get("interactive", True))),
         }
         normalized_actions.append(normalized)
     if normalized_actions:
@@ -321,6 +354,9 @@ def _enrich_action_row(stamped: dict[str, Any], *, filename: str) -> None:
     stable_key = _stable_key_for_row(stamped)
     if stable_key:
         stamped.setdefault("stable_key", stable_key)
+        action_id = _rendered_action_id(stamped.get("section"), stamped.get("workflow"), stable_key)
+        stamped.setdefault("rendered_action_id", action_id)
+        stamped.setdefault("clicked_action_id", action_id)
     module = _module_for_section(stamped.get("section") or ("Query Search" if "query_search" in filename else ""))
     stamped.setdefault("click_call_path", str(stamped.get("render_call_path") or f"{module}.render(action)"))
     target = _target_for_row(stamped)
@@ -2697,9 +2733,11 @@ class RuntimeValidationHarness:
             "proof_source": "runtime_render",
             "runtime_source": "actual_section_render",
             "render_call_path": "sections.query_search.render",
+            "section": "Query Search",
+            "workflow": "No click",
             "first_viewport_text": render_html,
             "html_fragment": render_html,
-            "action_like_elements": _action_like_elements_from_buttons(render_capture.buttons),
+            "action_like_elements": _action_like_elements_from_buttons(render_capture.buttons, section="Query Search", workflow="No click"),
             "control_key_clicked": "",
             "observed_contexts": [str(context.get("name") or "") for context in render_contexts],
             "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in render_events)),
@@ -2730,6 +2768,8 @@ class RuntimeValidationHarness:
                 "proof_source": "runtime_render",
                 "runtime_source": "actual_section_render",
                 "render_call_path": "sections.query_search.render",
+                "section": "Query Search",
+                "workflow": "No click",
                 "first_viewport_text": no_autorun_html,
                 "html_fragment": no_autorun_html,
                 "control_key_clicked": "",
@@ -2768,16 +2808,12 @@ class RuntimeValidationHarness:
                 "source": "runtime_query_search_click",
                 "proof_source": "runtime_click",
                 "render_call_path": "sections.query_search.render(explicit_search)",
+                "section": "Query Search",
+                "workflow": "Explicit search",
+                "action_surfaces": ["No click", "Explicit search"],
                 "first_viewport_text": click_html,
                 "html_fragment": click_html,
-                "action_like_elements": [
-                    {
-                        "label": str(button.get("label") or ""),
-                        "stable_key": str(button.get("key") or ""),
-                        "action_area": str(button.get("action_area") or "query_search"),
-                    }
-                    for button in capture.buttons
-                ],
+                "action_like_elements": _action_like_elements_from_buttons(capture.buttons, section="Query Search", workflow="Explicit search"),
                 "control_key_clicked": click_key,
                 "observed_contexts": [str(context.get("name") or "") for context in contexts],
                 "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in events)),
@@ -2820,6 +2856,9 @@ class RuntimeValidationHarness:
                 "case": name,
                 "source": "runtime_query_search_click",
                 "proof_source": "runtime_click",
+                "section": "Query Search",
+                "workflow": "Explicit search",
+                "action_surfaces": ["No click", "Explicit search"],
                 "control_key_clicked": "qs_run",
                 "observed_contexts": [str(context.get("name") or "") for context in contexts],
                 "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in events)),
@@ -2860,6 +2899,9 @@ class RuntimeValidationHarness:
                 "case": name,
                 "source": "runtime_query_search_click",
                 "proof_source": "runtime_click",
+                "section": "Query Search",
+                "workflow": "Explicit search",
+                "action_surfaces": ["Explicit search"],
                 "control_key_clicked": click_key,
                 "observed_contexts": [str(context.get("name") or "") for context in contexts],
                 "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in events)),
@@ -2886,6 +2928,9 @@ class RuntimeValidationHarness:
             "case": "account_usage_fallback_unconfirmed",
             "source": "runtime_query_search_click",
             "proof_source": "runtime_click",
+            "section": "Query Search",
+            "workflow": "Explicit search",
+            "action_surfaces": ["No click", "Explicit search"],
             "control_key_clicked": "qs_account_usage_fallback",
             "observed_contexts": [str(context.get("name") or "") for context in contexts],
             "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in events)),
@@ -2913,6 +2958,9 @@ class RuntimeValidationHarness:
             "case": "account_usage_fallback_confirmed",
             "source": "runtime_query_search_click",
             "proof_source": "runtime_click",
+            "section": "Query Search",
+            "workflow": "Explicit search",
+            "action_surfaces": ["No click", "Explicit search"],
             "control_key_clicked": "qs_account_usage_fallback",
             "observed_contexts": [str(context.get("name") or "") for context in contexts],
             "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in events)),
@@ -2935,7 +2983,7 @@ class RuntimeValidationHarness:
         })
         export_state = _base_state("Workload Operations", "Query Investigation")
         export_state["qs_df_qs"] = pd.DataFrame([{"QUERY_ID": "01abc-def-1234567890", "QUERY_HASH": "hash_abc"}])
-        export_click_key = "dl_query_search_results.csv_Export_CSV_show"
+        export_click_key = "dl_query_search_results.csv_Export_CSV"
         export_capture, export_contexts = self.render_query_search(state=export_state, click_key=export_click_key)
         export_sessions = _state_events(export_capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
         export_direct = _state_events(export_capture.state, DIRECT_SQL_EVENTS_KEY)
@@ -2943,6 +2991,9 @@ class RuntimeValidationHarness:
             "case": "default_export_no_query_text",
             "source": "runtime_query_search_click",
             "proof_source": "runtime_click",
+            "section": "Query Search",
+            "workflow": "Explicit search",
+            "action_surfaces": ["Explicit search"],
             "control_key_clicked": export_click_key,
             "observed_contexts": [str(context.get("name") or "") for context in export_contexts],
             "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in _state_events(export_capture.state, UI_QUERY_EVENTS_KEY))),
@@ -3041,6 +3092,12 @@ class RuntimeValidationHarness:
                     },
                     "passed": first_paint_passed and len(packet_execs) == 1,
                 }
+                for button in capture.buttons:
+                    button_key = str(button.get("key") or button.get("stable_key") or "")
+                    if button_key:
+                        button.setdefault("stable_key", button_key)
+                        button.setdefault("source_render_row_id", row["id"])
+                        button.setdefault("rendered_action_id", _rendered_action_id(section, workflow, button_key))
                 view_results.append(row)
                 first_paint_performance_results.append({
                     "id": f"first_paint::{_token(section)}::{_token(workflow)}",
@@ -3117,7 +3174,12 @@ class RuntimeValidationHarness:
                         "action_type": str(button.get("action_type") or ""),
                         "contract_resolved": bool(button.get("contract_resolved") or button.get("skip_reason")),
                     })
-                    if key and not any(existing.get("key") == key and existing.get("section") == section for existing in button_manifest):
+                    if key and not any(
+                        existing.get("key") == key
+                        and existing.get("section") == section
+                        and existing.get("workflow") == workflow
+                        for existing in button_manifest
+                    ):
                         button_manifest.append({k: v for k, v in button.items() if k != "clicked"})
                 for download in capture.downloads:
                     record, payload = self._export_record(
@@ -3220,7 +3282,7 @@ class RuntimeValidationHarness:
                     "diagnostic_card_count": click_html.lower().count("diagnostic card"),
                     "unavailable_tile_count": max(0, click_html.lower().count("summary unavailable") - 1),
                     "old_board_marker_count": 0,
-                    "action_like_elements": _action_like_elements_from_buttons(click_capture.buttons),
+                    "action_like_elements": _snapshot_action_like_elements(click_capture.buttons),
                     "text": click_html,
                 }
             if action_type == "evidence_load":
@@ -3238,7 +3300,7 @@ class RuntimeValidationHarness:
                         "diagnostic_card_count": click_html.lower().count("diagnostic card"),
                         "unavailable_tile_count": max(0, click_html.lower().count("summary unavailable") - 1),
                         "old_board_marker_count": 0,
-                        "action_like_elements": _action_like_elements_from_buttons(click_capture.buttons),
+                        "action_like_elements": _snapshot_action_like_elements(click_capture.buttons),
                         "text": click_html or f"{section} loaded evidence.",
                         "rendered": True,
                     },
@@ -3257,7 +3319,7 @@ class RuntimeValidationHarness:
                         "diagnostic_card_count": click_html.lower().count("diagnostic card"),
                         "unavailable_tile_count": max(0, click_html.lower().count("summary unavailable") - 1),
                         "old_board_marker_count": 0,
-                        "action_like_elements": _action_like_elements_from_buttons(click_capture.buttons),
+                        "action_like_elements": _snapshot_action_like_elements(click_capture.buttons),
                         "text": click_html,
                     },
                 )
@@ -3276,7 +3338,7 @@ class RuntimeValidationHarness:
                             "diagnostic_card_count": click_html.lower().count("diagnostic card"),
                             "unavailable_tile_count": max(0, click_html.lower().count("summary unavailable") - 1),
                             "old_board_marker_count": 0,
-                            "action_like_elements": _action_like_elements_from_buttons(click_capture.buttons),
+                            "action_like_elements": _snapshot_action_like_elements(click_capture.buttons),
                             "text": click_html,
                         },
                     )
@@ -3318,22 +3380,27 @@ class RuntimeValidationHarness:
                     "scope": "ALFA / ALL / 7",
                     "target": "Selected finding",
                     "freshness": "Current",
+                    "source_family": "compact_evidence",
                     "source_table_family": "Compact evidence",
                     "summary": "Evidence click produced filtered rows.",
                     "row_count": row_count,
-                }
-                case_payload_results.append({
-                    "source": "runtime_evidence_click",
-                    "proof_source": "runtime_export",
-                    **case_payload_seed,
                     "visible_row_count": row_count,
-                    "payload_row_count": row_count,
-                    "row_count": row_count,
-                    "payload_hash": hashlib.sha256(
-                        json.dumps(case_payload_seed, sort_keys=True).encode("utf-8")
-                    ).hexdigest(),
-                    "passed": bool(row_count and click_capture.evidence_loader_calls),
-                })
+                    "recommended_action": "Review filtered evidence and assign the next owner.",
+                }
+                case_row, case_file = self._case_payload_record(
+                    case_payload_seed,
+                    section=section,
+                    workflow=workflow,
+                    filename=f"{_token(section)}_{_token(workflow)}_evidence_case.json",
+                    rendered_row_id=str(button.get("source_render_row_id") or f"{_token(section)}::{_token(workflow)}"),
+                    action_row_id=str(button.get("rendered_action_id") or _rendered_action_id(section, workflow, key)),
+                )
+                case_row["source"] = "runtime_evidence_click"
+                case_row["proof_source"] = "runtime_export"
+                case_row["passed"] = bool(case_row.get("passed") and row_count and click_capture.evidence_loader_calls)
+                case_row["failure_reason"] = "" if case_row["passed"] else "runtime_evidence_case_payload_failed"
+                case_payload_results.append(case_row)
+                generated_export_payloads.append(case_file)
                 for call in click_capture.evidence_loader_calls:
                     evidence_loader_results.append({
                         **call,
@@ -3831,28 +3898,27 @@ class RuntimeValidationHarness:
                 for call in query_case.get("loader_calls", [])
                 if isinstance(call, dict)
             )
-        if not export_results:
-            query_export_state = _base_state("Workload Operations", "Query Investigation")
-            query_export_state["qs_df_qs"] = pd.DataFrame([{"QUERY_ID": "01abc-def-1234567890", "QUERY_HASH": "hash_abc"}])
-            query_export_capture, _query_export_contexts = self.render_query_search(
-                state=query_export_state,
-                click_key="dl_query_search_results.csv_Export_CSV_show",
-            )
-            query_download = next(iter(query_export_capture.downloads), {})
-            record, payload = self._export_record(
-                query_download,
-                section="Workload Operations",
-                workflow="Query Investigation",
-                target_label="Query 01abc",
-                scope="Recent query search",
-            )
-            if not query_download:
-                record["no_row_state"] = True
-                record["skip_reason"] = "query search export control was not rendered"
-                record["passed"] = False
-            export_results.append(record)
-            if payload:
-                generated_export_payloads.append(payload)
+        query_export_state = _base_state("Workload Operations", "Query Investigation")
+        query_export_state["qs_df_qs"] = pd.DataFrame([{"QUERY_ID": "01abc-def-1234567890", "QUERY_HASH": "hash_abc"}])
+        query_export_capture, _query_export_contexts = self.render_query_search(
+            state=query_export_state,
+            click_key="dl_query_search_results.csv_Export_CSV",
+        )
+        query_download = next(iter(query_export_capture.downloads), {})
+        record, payload = self._export_record(
+            query_download,
+            section="Query Search",
+            workflow="Explicit search",
+            target_label="Query 01abc",
+            scope="Recent query search",
+        )
+        if not query_download:
+            record["no_row_state"] = True
+            record["skip_reason"] = "query search export control was not rendered"
+            record["passed"] = False
+        export_results.append(record)
+        if payload:
+            generated_export_payloads.append(payload)
         live_feature_inventory = [
             {
                 "source": "runtime_button_manifest",

@@ -117,6 +117,28 @@ INTERNAL_WORDING_TOKENS = (
     "RoleGate",
     "Lock button",
 )
+CORTEX_EFFICIENCY_EXPORT_FIELDS = {
+    "TOTAL_TOKENS",
+    "TOTAL_REQUESTS",
+    "COST_USD",
+    "TOTAL_CREDITS",
+    "TOKENS_PER_REQUEST",
+    "TOKENS_PER_DOLLAR",
+    "COST_PER_1K_TOKENS_USD",
+    "AI_CREDITS_PER_1K_TOKENS",
+}
+CREDENTIAL_EXPORT_FIELDS = {"User", "Credential", "Type", "Status", "Recommended action"}
+CASE_REQUIRED_FIELDS = {
+    "section",
+    "workflow",
+    "scope",
+    "target",
+    "freshness",
+    "summary",
+    "row_count",
+    "visible_row_count",
+    "recommended_action",
+}
 DIAGNOSTIC_TOKENS = (
     "diagnostic card",
     "setup validation row",
@@ -421,7 +443,84 @@ def _find_action_row(
     section: str,
     aliases: Sequence[str],
     area: str,
+    render_row: Mapping[str, Any] | None = None,
 ) -> tuple[str, Mapping[str, Any]]:
+    all_rendered_actions = [
+        _as_mapping(action)
+        for action in _rows_from_payload(_as_mapping(render_row or {}).get("action_like_elements") or [])
+        if isinstance(action, Mapping)
+    ]
+    rendered_actions = [
+        action
+        for action in all_rendered_actions
+        if str(action.get("data_interactive", action.get("interactive", True))).lower() not in {"false", "0", "no"}
+    ]
+    all_rendered_keys = {
+        str(action.get("stable_key") or action.get("key") or "").strip()
+        for action in all_rendered_actions
+        if str(action.get("stable_key") or action.get("key") or "").strip()
+    }
+    all_rendered_action_ids = {
+        str(action.get("rendered_action_id") or "").strip()
+        for action in all_rendered_actions
+        if str(action.get("rendered_action_id") or "").strip()
+    }
+    rendered_keys = {
+        str(action.get("stable_key") or action.get("key") or "").strip()
+        for action in rendered_actions
+        if str(action.get("stable_key") or action.get("key") or "").strip()
+    }
+    rendered_action_ids = {
+        str(action.get("rendered_action_id") or "").strip()
+        for action in rendered_actions
+        if str(action.get("rendered_action_id") or "").strip()
+    }
+
+    def _row_action_id(row: Mapping[str, Any]) -> str:
+        explicit = str(row.get("clicked_action_id") or row.get("rendered_action_id") or row.get("id") or "").strip()
+        if explicit:
+            return explicit
+        row_key = str(row.get("stable_key") or row.get("key") or row.get("action_key") or "").strip()
+        return f"{section.lower().replace(' ', '_')}::{str(row.get('workflow') or '').lower().replace(' ', '_')}::{row_key}" if row_key else ""
+
+    def _same_surface(row: Mapping[str, Any]) -> bool:
+        row_section = str(row.get("section") or "")
+        row_workflow = str(row.get("workflow") or "")
+        row_key = str(row.get("stable_key") or row.get("key") or row.get("action_key") or "").strip()
+        key_matches_rendered_source = bool(
+            (row_key and row_key in all_rendered_keys)
+            or (_row_action_id(row) and _row_action_id(row) in all_rendered_action_ids)
+        )
+        if row_section == section and (not aliases or row_workflow in aliases or key_matches_rendered_source):
+            return True
+        return area in {"targeted_evidence", "cost_workbench"} and key_matches_rendered_source
+
+    def _allowed_area(row: Mapping[str, Any]) -> bool:
+        row_area = str(row.get("action_area") or "")
+        if area == "query_search":
+            return row_area == "query_search"
+        if area == "loaded_surface":
+            return row_area in {"evidence_action", "cost_workbench"}
+        if area == "targeted_evidence":
+            return row_area in {"route_action", "evidence_action", "cost_workbench"}
+        if area == "cost_workbench":
+            return row_area == "cost_workbench"
+        if area == "security_credential":
+            return row_area == "evidence_action"
+        if area == "cortex_efficiency":
+            return row_area == "cost_workbench"
+        return True
+
+    def _identity_matches(row: Mapping[str, Any]) -> bool:
+        active_keys = rendered_keys or all_rendered_keys
+        active_action_ids = rendered_action_ids or all_rendered_action_ids
+        if not active_keys and not active_action_ids:
+            return True
+        row_id = _row_action_id(row)
+        row_key = str(row.get("stable_key") or row.get("key") or row.get("action_key") or "").strip()
+        return bool((row_id and row_id in active_action_ids) or (row_key and row_key in active_keys))
+
+    candidates: list[tuple[str, Mapping[str, Any], int]] = []
     action_rels = (
         "artifacts/full_app_validation/button_click_results.json",
         "artifacts/full_app_validation/action_click_results.json",
@@ -431,23 +530,19 @@ def _find_action_row(
         for row in _artifact_rows(payloads, rel):
             if not bool(row.get("clicked", row.get("passed", False))):
                 continue
-            row_section = str(row.get("section") or "")
-            row_workflow = str(row.get("workflow") or "")
-            if area == "query_search":
-                case = str(row.get("case") or "")
-                if row_section in {"Workload Operations", "Query Search"} and case not in {"render_no_click", "text_contains_no_autorun", "warehouse_prefill_no_autorun"}:
-                    return rel, row
-            elif area == "loaded_surface":
-                if row_section == section and str(row.get("action_area") or "") in {"evidence_action", "cost_workbench"}:
-                    return rel, row
-            elif area == "targeted_evidence":
-                if str(row.get("action_area") or "") in {"route_action", "evidence_action", "cost_workbench"}:
-                    return rel, row
-            elif area == "cost_workbench":
-                if str(row.get("action_area") or "") == "cost_workbench" and (row_section == "Cost & Contract" or row_section == section):
-                    return rel, row
-            elif row_section == section and (not aliases or row_workflow in aliases):
-                return rel, row
+            if not _same_surface(row) or not _allowed_area(row) or not _identity_matches(row):
+                continue
+            score = 0
+            if str(row.get("producer") or ""):
+                score += 10
+            if str(row.get("provenance_origin") or "") == "producer":
+                score += 10
+            if _row_action_id(row) in (rendered_action_ids or all_rendered_action_ids):
+                score += 5
+            candidates.append((rel, row, score))
+    if candidates:
+        rel, row, _score = sorted(candidates, key=lambda item: item[2], reverse=True)[0]
+        return rel, row
     return "", {}
 
 
@@ -470,6 +565,133 @@ def _find_case_row(payloads: Mapping[str, Any], *, section: str, aliases: Sequen
 def _resolve_payload_path(root: Path, payload_file: object) -> Path:
     raw = Path(str(payload_file or ""))
     return raw if raw.is_absolute() else root / raw
+
+
+def _domain_from_row(row: Mapping[str, Any]) -> str:
+    section = str(row.get("section") or "").lower()
+    source_family = str(row.get("source_family") or row.get("source") or "").lower()
+    surface = " ".join(
+        str(row.get(key) or "").lower()
+        for key in ("section", "workflow", "filename", "payload_file", "source_family")
+    )
+    if "credential" in surface:
+        return "security_credential"
+    if "token_efficiency" in surface or source_family == "cortex_token_efficiency" or section == "cortex efficiency":
+        return "cortex_efficiency"
+    if section == "alert center":
+        return "alert"
+    if "query" in surface:
+        return "query_search"
+    if "cost" in surface:
+        return "cost"
+    if "alert" in surface:
+        return "alert"
+    if "workload" in surface:
+        return "workload"
+    if "dba" in surface:
+        return "dba"
+    if "executive" in surface:
+        return "executive"
+    return "generic"
+
+
+def _parse_payload_file(path: Path, content_type: str) -> tuple[set[str], int, object, str]:
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    suffix = path.suffix.lower()
+    if "json" in content_type.lower() or suffix == ".json":
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError as exc:
+            return set(), 0, {}, f"json parse failed: {exc}"
+        if isinstance(payload, Mapping):
+            return set(str(key) for key in payload.keys()), _as_int(payload.get("visible_row_count") or payload.get("row_count") or 1), payload, ""
+        if isinstance(payload, list):
+            return set(), len(payload), payload, ""
+        return set(), 1, payload, ""
+    if "csv" in content_type.lower() or suffix == ".csv":
+        try:
+            reader = csv.DictReader(text.splitlines())
+            rows = list(reader)
+            return set(reader.fieldnames or []), len(rows), rows, ""
+        except csv.Error as exc:
+            return set(), 0, [], f"csv parse failed: {exc}"
+    if not suffix and not content_type:
+        return set(), 0, text, "payload content type missing"
+    return set(), _as_int(0), text, ""
+
+
+def _default_payload_column_failures(row: Mapping[str, Any], columns: set[str], text: str, row_kind: str) -> list[str]:
+    if bool(row.get("admin_only")):
+        return []
+    reasons: list[str] = []
+    forbidden_columns = {"USER_ID", "RAW_USER_ID", "CREDENTIAL_ID", "SOURCE_OBJECT", "RAW_SQL", "query_text", "QUERY_TEXT"}
+    leaked_columns = sorted(column for column in columns if column in forbidden_columns or column.upper() in forbidden_columns)
+    if leaked_columns:
+        reasons.append(f"{row_kind} default payload leaks raw columns: {', '.join(leaked_columns)}")
+    forbidden_count = (
+        _token_count(text, RAW_SOURCE_TOKENS)
+        + _token_count(text, INTERNAL_WORDING_TOKENS)
+        + _token_count(text, DIAGNOSTIC_TOKENS)
+    )
+    if forbidden_count:
+        reasons.append(f"{row_kind} default payload contains forbidden daily/internal token")
+    if "QUERY_TEXT" in text.upper() or "query_text" in text:
+        reasons.append(f"{row_kind} default payload contains query_text")
+    return reasons
+
+
+def _domain_payload_failures(row: Mapping[str, Any], *, columns: set[str], payload: object, text: str, row_kind: str) -> list[str]:
+    reasons: list[str] = []
+    domain = _domain_from_row(row)
+    if row_kind == "export":
+        if domain == "security_credential":
+            missing = sorted(CREDENTIAL_EXPORT_FIELDS - columns)
+            if missing:
+                reasons.append(f"credential export missing required columns: {', '.join(missing)}")
+            if "Expires" not in columns and "Days left" not in columns:
+                reasons.append("credential export missing Expires or Days left column")
+        elif domain == "cortex_efficiency":
+            missing = sorted(CORTEX_EFFICIENCY_EXPORT_FIELDS - columns)
+            if not ({"USER_DISPLAY_NAME", "USER_CHART_LABEL"} & columns):
+                reasons.append("cortex efficiency export missing USER_DISPLAY_NAME or USER_CHART_LABEL")
+            if missing:
+                reasons.append(f"cortex efficiency export missing required columns: {', '.join(missing)}")
+        elif domain == "query_search" and "query_text" in {column.lower() for column in columns}:
+            reasons.append("query search default export includes query_text")
+        elif domain == "cost":
+            if "BILLING_BRIDGE_STATUS" not in columns:
+                reasons.append("cost export missing BILLING_BRIDGE_STATUS")
+            if not ({"ACCOUNT_BILLED_COST_USD", "SPEND_USD", "COST_USD"} & columns):
+                reasons.append("cost export missing billed spend/cost field")
+    if row_kind == "case payload":
+        if not isinstance(payload, Mapping):
+            reasons.append("case payload is not a JSON object")
+        else:
+            missing = [field for field in CASE_REQUIRED_FIELDS if not payload.get(field)]
+            if not (payload.get("source") or payload.get("source_family")):
+                missing.append("source/source_family")
+            if missing:
+                reasons.append(f"case payload missing required fields: {', '.join(sorted(missing))}")
+            if domain == "security_credential":
+                credential_missing = [
+                    field
+                    for field in ("expired_count", "expiring_30d_count", "next_expiration", "owner_labels")
+                    if field not in payload
+                ]
+                if credential_missing:
+                    reasons.append(f"credential case payload missing fields: {', '.join(credential_missing)}")
+                if str(payload.get("source_family") or payload.get("source") or "") != "credential_expiration":
+                    reasons.append("credential case payload source_family must be credential_expiration")
+            if domain == "cortex_efficiency":
+                cortex_missing = [
+                    field
+                    for field in ("total_tokens", "tokens_per_dollar", "cost_per_1k_tokens_usd")
+                    if field not in payload
+                ]
+                if cortex_missing:
+                    reasons.append(f"cortex efficiency case payload missing fields: {', '.join(cortex_missing)}")
+    reasons.extend(_default_payload_column_failures(row, columns, text, row_kind))
+    return reasons
 
 
 def _artifact_payload(payloads: Mapping[str, Any], root: Path, rel: str) -> Any:
@@ -591,29 +813,30 @@ def _file_backed_failures(row: Mapping[str, Any], *, root: Path, row_kind: str) 
             reasons.append(f"{row_kind} payload sha256 mismatch")
     if size <= 0 and not bool(row.get("intentional_empty")):
         reasons.append(f"{row_kind} payload is empty without intentional_empty=true")
-    parsed_rows = _as_int(row.get("parsed_row_count") or row.get("payload_row_count") or row.get("row_count"))
+    content_type = str(row.get("content_type") or row.get("mime") or "")
+    parsed_columns, parsed_rows, parsed_payload, parse_error = _parse_payload_file(path, content_type)
+    if parse_error:
+        reasons.append(f"{row_kind} payload parser failed: {parse_error}")
+    metadata_parsed_rows = _as_int(row.get("parsed_row_count") or row.get("payload_row_count") or row.get("row_count"))
     visible_rows = _as_int(row.get("visible_row_count") or row.get("row_count"))
-    if parsed_rows != visible_rows:
+    if metadata_parsed_rows and parsed_rows != metadata_parsed_rows:
+        reasons.append(f"{row_kind} parsed row count differs from metadata row count")
+    if visible_rows and parsed_rows != visible_rows:
         reasons.append(f"{row_kind} parsed row count differs from visible row count")
-    if not str(row.get("content_type") or row.get("mime") or "").strip():
+    if not content_type.strip():
         reasons.append(f"{row_kind} row missing content_type")
     text = payload.decode("utf-8", errors="ignore")
-    if not bool(row.get("admin_only")):
-        forbidden_count = (
-            _token_count(text, RAW_SOURCE_TOKENS)
-            + _token_count(text, INTERNAL_WORDING_TOKENS)
-            + _token_count(text, DIAGNOSTIC_TOKENS)
-        )
-        if forbidden_count:
-            reasons.append(f"{row_kind} default payload contains forbidden daily/internal token")
-        if "QUERY_TEXT" in text.upper() or "query_text" in text:
-            reasons.append(f"{row_kind} default payload contains query_text")
     if bool(row.get("raw_sql_included")):
         reasons.append(f"{row_kind} row included raw SQL")
-    if row_kind == "export":
-        reasons.extend(_credential_export_content_failures(row, text))
-    if row_kind == "case payload":
-        reasons.extend(_credential_case_content_failures(row, text))
+    reasons.extend(
+        _domain_payload_failures(
+            row,
+            columns=parsed_columns,
+            payload=parsed_payload,
+            text=text,
+            row_kind=row_kind,
+        )
+    )
     return reasons
 
 
@@ -674,12 +897,30 @@ def _linked_gate_reference_failures(
     case_row = _as_mapping(dereferenced.get("case payload"))
     if export_row:
         export_count = _as_int(export_row.get("parsed_row_count") or export_row.get("row_count"))
+        export_file = str(export_row.get("payload_file") or "")
+        if export_file and _resolve_payload_path(root, export_file).exists():
+            export_columns, parsed_export_count, _payload, _error = _parse_payload_file(
+                _resolve_payload_path(root, export_file),
+                str(export_row.get("content_type") or export_row.get("mime") or ""),
+            )
+            del export_columns, _payload, _error
+            if parsed_export_count:
+                export_count = parsed_export_count
         if exported_row_count and export_count != exported_row_count:
             reasons.append("linked feature gate exported row count disagrees with export artifact")
         if visible_row_count and export_count != visible_row_count:
             reasons.append("linked feature gate visible row count disagrees with export artifact")
     if case_row:
         parsed_case_count = _as_int(case_row.get("parsed_row_count") or case_row.get("row_count"))
+        case_file = str(case_row.get("payload_file") or "")
+        if case_file and _resolve_payload_path(root, case_file).exists():
+            case_columns, actual_case_count, _payload, _error = _parse_payload_file(
+                _resolve_payload_path(root, case_file),
+                str(case_row.get("content_type") or case_row.get("mime") or ""),
+            )
+            del case_columns, _payload, _error
+            if actual_case_count:
+                parsed_case_count = actual_case_count
         if case_row_count and parsed_case_count != case_row_count:
             reasons.append("linked feature gate case row count disagrees with case artifact")
         if visible_row_count and parsed_case_count != visible_row_count:
@@ -708,7 +949,13 @@ def _surface_row(surface: Mapping[str, Any], payloads: Mapping[str, Any], *, cur
     case_artifact = ""
     case_row: Mapping[str, Any] = {}
     if bool(surface.get("require_action")):
-        action_artifact, action_row = _find_action_row(payloads, section=section, aliases=aliases, area=str(surface["area"]))
+        action_artifact, action_row = _find_action_row(
+            payloads,
+            section=section,
+            aliases=aliases,
+            area=str(surface["area"]),
+            render_row=render_row,
+        )
     if bool(surface.get("require_export")):
         export_artifact, export_row = _find_export_row(payloads, section=section, aliases=aliases)
     if bool(surface.get("require_case")):
@@ -924,6 +1171,7 @@ def build_full_app_release_sweep(
         ("sql_cleanup_gate", "sql_cleanup_gate_results"),
         ("delete_first_cleanup_gate", "delete_first_cleanup_gate_results"),
         ("security_credential_evidence", "security_credential_evidence_gate_results"),
+        ("security_credential_snapshot", "security_credential_snapshot_gate_results"),
         ("cortex_token_efficiency", "cortex_token_efficiency_gate_results"),
     )
     gate_rows: list[dict[str, Any]] = []
@@ -1039,6 +1287,7 @@ def build_full_app_release_sweep(
         "missing_render_surface_count": sum(1 for row in rows if not row.get("rendered")),
         "producer_provenance_failure_count": sum(_as_int(row.get("producer_provenance_failure_count")) for row in rows),
         "synthetic_render_count": sum(1 for row in rows if bool(row.get("synthetic_render_used"))),
+        "snapshot_failure_count": _as_int(_gate(payloads, "security_credential_snapshot_gate_results").get("failure_count")),
         "duplicate_command_brief_count": duplicate_command_brief_count,
         "old_board_marker_count": sum(_as_int(row.get("old_board_marker_count")) for row in rows),
         "credential_tile_rendered": bool(_gate(payloads, "security_credential_render_gate_results").get("passed")),
@@ -1091,6 +1340,7 @@ def evaluate_full_app_release_sweep_gate(payload: object) -> dict[str, Any]:
         "missing_render_surface_count": _as_int(results.get("missing_render_surface_count")),
         "producer_provenance_failure_count": _as_int(results.get("producer_provenance_failure_count")),
         "synthetic_render_count": _as_int(results.get("synthetic_render_count")),
+        "snapshot_failure_count": _as_int(results.get("snapshot_failure_count")),
         "duplicate_command_brief_count": _as_int(results.get("duplicate_command_brief_count")),
         "old_board_marker_count": _as_int(results.get("old_board_marker_count")),
         "credential_tile_rendered": bool(results.get("credential_tile_rendered")),

@@ -20,6 +20,7 @@ class SnowflakeCredentialValidationTests(unittest.TestCase):
             build_security_credential_export_results,
             build_security_credential_first_paint_results,
             build_security_credential_render_results,
+            build_security_credential_snapshot_results,
             build_user_display_dimension_validation,
             build_user_display_dimension_live_results,
             build_user_display_surface_results,
@@ -35,6 +36,7 @@ class SnowflakeCredentialValidationTests(unittest.TestCase):
         credential_render = build_security_credential_render_results(ROOT)
         credential_evidence = build_security_credential_evidence_results(ROOT)
         credential_first_paint = build_security_credential_first_paint_results(ROOT)
+        credential_snapshot = build_security_credential_snapshot_results(ROOT)
         credential_sql_inventory = build_credential_sql_inventory_gate(ROOT)
         credential_rendered_leak = build_credential_rendered_leak_gate(ROOT)
 
@@ -52,6 +54,7 @@ class SnowflakeCredentialValidationTests(unittest.TestCase):
         self.assertTrue(credential_render["passed"], credential_render.get("failures"))
         self.assertTrue(credential_evidence["passed"], credential_evidence.get("failures"))
         self.assertTrue(credential_first_paint["passed"], credential_first_paint.get("failures"))
+        self.assertTrue(credential_snapshot["passed"], credential_snapshot.get("failures"))
         self.assertTrue(credential_sql_inventory["passed"], credential_sql_inventory.get("failures"))
         self.assertTrue(credential_rendered_leak["passed"], credential_rendered_leak.get("failures"))
 
@@ -94,6 +97,7 @@ class SnowflakeCredentialValidationTests(unittest.TestCase):
             SECURITY_CREDENTIAL_LIVE_GATE_REL,
             SECURITY_CREDENTIAL_RENDERED_LEAK_GATE_REL,
             SECURITY_CREDENTIAL_RENDER_GATE_REL,
+            SECURITY_CREDENTIAL_SNAPSHOT_GATE_REL,
             SECURITY_CREDENTIAL_SQL_INVENTORY_GATE_REL,
             USER_DISPLAY_NAME_GATE_REL,
             USER_DISPLAY_NAME_LIVE_GATE_REL,
@@ -110,6 +114,7 @@ class SnowflakeCredentialValidationTests(unittest.TestCase):
         self.assertIn(SECURITY_CREDENTIAL_RENDER_GATE_REL, REQUIRED_LAUNCH_READINESS_ARTIFACTS)
         self.assertIn(SECURITY_CREDENTIAL_EVIDENCE_GATE_REL, REQUIRED_LAUNCH_READINESS_ARTIFACTS)
         self.assertIn(SECURITY_CREDENTIAL_FIRST_PAINT_GATE_REL, REQUIRED_LAUNCH_READINESS_ARTIFACTS)
+        self.assertIn(SECURITY_CREDENTIAL_SNAPSHOT_GATE_REL, REQUIRED_LAUNCH_READINESS_ARTIFACTS)
         self.assertIn(SECURITY_CREDENTIAL_SQL_INVENTORY_GATE_REL, REQUIRED_LAUNCH_READINESS_ARTIFACTS)
         self.assertIn(SECURITY_CREDENTIAL_RENDERED_LEAK_GATE_REL, REQUIRED_LAUNCH_READINESS_ARTIFACTS)
 
@@ -153,6 +158,10 @@ class SnowflakeCredentialValidationTests(unittest.TestCase):
             "credential_expiration_security_packet",
             "credential_expiration_alert_action",
             "credential_expiration_live_validation",
+            "security_credential_expiration_packet",
+            "security_credential_compact_evidence",
+            "security_credential_live_validation",
+            "security_credential_snapshot_proof",
             "cortex_user_label_source",
             "cortex_user_label_export_sanitizer",
             "cortex_token_efficiency_metrics",

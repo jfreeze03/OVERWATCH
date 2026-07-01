@@ -44,8 +44,13 @@ class MetricSemantic:
     denominator_field: str = ""
     render_surface: str = "summary_card"
     export_surface: str = "default"
+    export_domain: str = ""
     freshness_policy: str = "packet freshness must be within section target"
+    freshness_field: str = ""
     latency_note: str = "source refresh latency is shown through Data Trust"
+    source_status_field: str = ""
+    source_confirmed_zero_field: str = ""
+    higher_is_worse: bool = False
     evidence_action_key: str = ""
     export_fields: tuple[str, ...] = ()
     case_payload_fields: tuple[str, ...] = ()
@@ -109,8 +114,13 @@ def _sem(
     denominator_field: str = "",
     render_surface: str = "summary_card",
     export_surface: str = "default",
+    export_domain: str = "",
     freshness_policy: str = "packet freshness must be within section target",
+    freshness_field: str = "",
     latency_note: str = "source refresh latency is shown through Data Trust",
+    source_status_field: str = "",
+    source_confirmed_zero_field: str = "",
+    higher_is_worse: bool = False,
     evidence_action_key: str = "",
     export_fields: Sequence[str] = (),
     case_payload_fields: Sequence[str] = (),
@@ -150,8 +160,13 @@ def _sem(
         denominator_field=denominator_field,
         render_surface=render_surface,
         export_surface=export_surface,
+        export_domain=export_domain,
         freshness_policy=freshness_policy,
+        freshness_field=freshness_field,
         latency_note=latency_note,
+        source_status_field=source_status_field,
+        source_confirmed_zero_field=source_confirmed_zero_field,
+        higher_is_worse=higher_is_worse,
         evidence_action_key=evidence_action_key,
         export_fields=tuple(export_fields or ()),
         case_payload_fields=tuple(case_payload_fields or ()),
@@ -605,13 +620,46 @@ _ROWS: tuple[MetricSemantic, ...] = (
         description="Expired credentials and credentials due within 30 days from the compact credential mart.",
         source_family="credential_expiration",
         source_object="compact credential expiration summary",
-        aggregation="expired count plus expiring-within-30-days count",
+        aggregation="expired_count + expiring_30d_count",
         value_unit="count",
         metric_format="integer",
         expected_max=1_000_000,
         packet_field="SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT",
-        zero_policy="zero requires credential source availability proving no due credentials",
-        unavailable_policy="Credential expiration source pending",
+        zero_policy="confirmed_zero_only",
+        unavailable_policy="source_pending_or_unavailable",
+        freshness_field="SECURITY_CREDENTIAL_SOURCE_FRESHNESS_TS",
+        source_status_field="SECURITY_CREDENTIAL_SOURCE_STATUS",
+        source_confirmed_zero_field="SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO",
+        higher_is_worse=True,
+        evidence_action_key="load_security_evidence",
+        export_domain="security_credential",
+        render_surface="Security Monitoring / Security Overview",
+        export_surface="security_credential_evidence.csv",
+        export_fields=(
+            "User",
+            "Credential",
+            "Type",
+            "Status",
+            "Expires",
+            "Days left",
+            "Recommended action",
+        ),
+        case_payload_fields=(
+            "section",
+            "workflow",
+            "scope",
+            "target",
+            "freshness",
+            "source_family",
+            "summary",
+            "row_count",
+            "visible_row_count",
+            "recommended_action",
+            "expired_count",
+            "expiring_30d_count",
+            "next_expiration",
+            "owner_labels",
+        ),
         live_validation_source="credential_expiration_live_or_fixture",
         cost_db_mapping="not_applicable_security_credential_expiration",
     ),

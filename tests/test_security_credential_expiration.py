@@ -235,6 +235,15 @@ class SecurityCredentialExpirationTests(unittest.TestCase):
         self.assertIsNotNone(semantic)
         self.assertEqual(semantic.source_family, "credential_expiration")
         self.assertEqual(semantic.packet_field, "SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT")
+        self.assertEqual(semantic.aggregation, "expired_count + expiring_30d_count")
+        self.assertEqual(semantic.zero_policy, "confirmed_zero_only")
+        self.assertEqual(semantic.unavailable_policy, "source_pending_or_unavailable")
+        self.assertEqual(semantic.freshness_field, "SECURITY_CREDENTIAL_SOURCE_FRESHNESS_TS")
+        self.assertEqual(semantic.source_status_field, "SECURITY_CREDENTIAL_SOURCE_STATUS")
+        self.assertEqual(semantic.source_confirmed_zero_field, "SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO")
+        self.assertTrue(semantic.higher_is_worse)
+        self.assertEqual(semantic.evidence_action_key, "load_security_evidence")
+        self.assertEqual(semantic.export_domain, "security_credential")
 
         brief = SectionCommandBrief(
             "Security Monitoring",

@@ -14,6 +14,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import re
 import subprocess
 from typing import Any, Iterable, Mapping
 
@@ -134,6 +135,12 @@ def _as_int(value: object) -> int:
     return 0
 
 
+def _slug(value: object) -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    return text.strip("_") or "item"
+
+
 def _csv_columns(text: str) -> list[str]:
     try:
         reader = csv.reader(io.StringIO(text))
@@ -214,6 +221,10 @@ def _launch_row(
     passed: bool = True,
     failure_reason: str = "",
     recommendation: str = "",
+    rendered_action_id: str = "",
+    clicked_action_id: str = "",
+    expected_target: str = "",
+    observed_target: str = "",
 ) -> dict[str, Any]:
     return {
         "area": area,
@@ -233,6 +244,10 @@ def _launch_row(
         "elapsed_ms": elapsed_ms,
         "passed": passed,
         "failure_reason": failure_reason,
+        "rendered_action_id": rendered_action_id,
+        "clicked_action_id": clicked_action_id,
+        "expected_target": expected_target,
+        "observed_target": observed_target,
         "recommendation": recommendation
         or "Fix the owning runtime row, then rerun the full app launch gauntlet.",
         "raw_sql_included": False,
@@ -287,7 +302,13 @@ def build_action_manifest(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
                 action_area=str(button.get("action_area") or action_type or "button"),
                 section=section,
                 workflow=str(button.get("workflow") or ""),
-                action_key=str(button.get("key") or button.get("control_key") or button.get("label") or action_type),
+                action_key=str(
+                    button.get("stable_key")
+                    or button.get("key")
+                    or button.get("control_key")
+                    or button.get("label")
+                    or action_type
+                ),
                 expected_behavior=f"{action_type} action has a click contract",
                 observed_behavior="clicked" if clicked else str(button.get("skip_reason") or "not clicked"),
                 clicked=clicked,
@@ -308,9 +329,16 @@ def build_action_manifest(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
             _launch_row(
                 area="settings",
                 action_area=str(row.get("action_area") or "settings_control"),
-                section="Settings",
-                workflow="Settings/Admin Setup Health",
-                action_key=str(row.get("control_key") or row.get("action") or row.get("label") or "settings_action"),
+                section=str(row.get("section") or "Settings"),
+                workflow=str(row.get("workflow") or "Settings/Admin Setup Health"),
+                action_key=str(
+                    row.get("stable_key")
+                    or row.get("key")
+                    or row.get("control_key")
+                    or row.get("action")
+                    or row.get("label")
+                    or "settings_action"
+                ),
                 expected_behavior="settings action is stable-keyed, admin-safe, and query-budgeted",
                 observed_behavior="clicked" if clicked else str(row.get("skip_reason") or "not clicked"),
                 clicked=clicked,
@@ -374,12 +402,24 @@ def build_action_manifest(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
             action_area = "export_download"
         elif control_key == "qs_account_usage_fallback":
             action_area = "live_feature"
-        rows.append(
+        surfaces = row.get("action_surfaces")
+        if not isinstance(surfaces, list) or not surfaces:
+            surfaces = [str(row.get("workflow") or ("No click" if no_click else "Explicit search"))]
+        if no_click:
+            surfaces = [str(row.get("workflow") or "No click")]
+        for surface_workflow in surfaces:
+            rendered_action_id = (
+                f"query_search::{_slug(str(surface_workflow or 'explicit_search'))}::{control_key}"
+                if control_key
+                else ""
+            )
+            target = "Query Search / Explicit search" if control_key and surface_workflow == "No click" else ""
+            rows.append(
             _launch_row(
                 area="query_search",
                 action_area=action_area,
-                section="Workload Operations",
-                workflow="Query Search",
+                section="Query Search",
+                workflow=str(surface_workflow or "Explicit search"),
                 action_key=control_key or case,
                 expected_behavior="no-click is zero-cost; explicit search is bounded and sanitized",
                 observed_behavior="zero cost" if no_click else "explicit search validated",
@@ -391,6 +431,10 @@ def build_action_manifest(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
                 artifact_path=str(row.get("payload_file") or ""),
                 passed=passed,
                 failure_reason=str(row.get("failure_reason") or ""),
+                rendered_action_id=rendered_action_id,
+                clicked_action_id=rendered_action_id,
+                expected_target=target,
+                observed_target=target,
             )
         )
 

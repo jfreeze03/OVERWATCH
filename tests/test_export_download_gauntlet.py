@@ -1,5 +1,6 @@
 from pathlib import Path
 import hashlib
+import json
 import sys
 import tempfile
 import unittest
@@ -137,3 +138,143 @@ class ExportDownloadGauntletTests(unittest.TestCase):
         )
 
         self.assertFalse(gate["passed"])
+
+    def test_gate_parses_export_file_instead_of_trusting_metadata_count(self):
+        from tools.contracts.export_download_gauntlet import evaluate_export_download_gate
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            root = Path(tmp)
+            payload_path = root / "artifacts/full_app_validation/cortex.csv"
+            payload_path.parent.mkdir(parents=True)
+            payload_text = (
+                "USER_DISPLAY_NAME,TOTAL_TOKENS,TOTAL_REQUESTS,COST_USD,TOTAL_CREDITS,"
+                "TOKENS_PER_REQUEST,TOKENS_PER_DOLLAR,COST_PER_1K_TOKENS_USD,AI_CREDITS_PER_1K_TOKENS\n"
+                "Jane Doe,1000,10,2.2,1,100,454.55,2.2,1\n"
+            )
+            payload_path.write_text(payload_text, encoding="utf-8")
+            gate = evaluate_export_download_gate(
+                [
+                    {
+                        "section": "Cortex Efficiency",
+                        "workflow": "Explicit action",
+                        "payload_file": "artifacts/full_app_validation/cortex.csv",
+                        "sha256": hashlib.sha256(payload_text.encode("utf-8")).hexdigest(),
+                        "size_bytes": len(payload_text.encode("utf-8")),
+                        "content_type": "text/csv",
+                        "parsed_row_count": 2,
+                        "visible_row_count": 2,
+                        "row_count": 2,
+                        "passed": True,
+                    }
+                ],
+                {"passed": True, "download_count": 1},
+                [],
+                root=root,
+            )
+
+        self.assertFalse(gate["passed"])
+        self.assertTrue(any(row["code"] == "PAYLOAD_METADATA_ROW_COUNT_MISMATCH" for row in gate["failures"]))
+
+    def test_cortex_efficiency_export_missing_token_fields_fails(self):
+        from tools.contracts.export_download_gauntlet import evaluate_export_download_gate
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            root = Path(tmp)
+            payload_path = root / "artifacts/full_app_validation/cortex.csv"
+            payload_path.parent.mkdir(parents=True)
+            payload_text = "USER_DISPLAY_NAME,TOTAL_TOKENS\nJane Doe,1000\n"
+            payload_path.write_text(payload_text, encoding="utf-8")
+            gate = evaluate_export_download_gate(
+                [
+                    {
+                        "section": "Cortex Efficiency",
+                        "workflow": "Explicit action",
+                        "payload_file": "artifacts/full_app_validation/cortex.csv",
+                        "sha256": hashlib.sha256(payload_text.encode("utf-8")).hexdigest(),
+                        "size_bytes": len(payload_text.encode("utf-8")),
+                        "content_type": "text/csv",
+                        "parsed_row_count": 1,
+                        "visible_row_count": 1,
+                        "row_count": 1,
+                        "passed": True,
+                    }
+                ],
+                {"passed": True, "download_count": 1},
+                [],
+                root=root,
+            )
+
+        self.assertFalse(gate["passed"])
+        self.assertTrue(any("cortex efficiency export missing required columns" in row.get("failure_reason", "") for row in gate["failures"]))
+
+    def test_case_payload_file_is_parsed_for_required_fields(self):
+        from tools.contracts.export_download_gauntlet import evaluate_export_download_gate
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            root = Path(tmp)
+            payload_path = root / "artifacts/full_app_validation/case.json"
+            payload_path.parent.mkdir(parents=True)
+            payload_text = json.dumps({"section": "Executive Landing", "workflow": "Overview", "row_count": 1})
+            payload_path.write_text(payload_text, encoding="utf-8")
+            gate = evaluate_export_download_gate(
+                [],
+                {"passed": True, "download_count": 0},
+                [
+                    {
+                        "section": "Executive Landing",
+                        "workflow": "Overview",
+                        "payload_file": "artifacts/full_app_validation/case.json",
+                        "sha256": hashlib.sha256(payload_text.encode("utf-8")).hexdigest(),
+                        "size_bytes": len(payload_text.encode("utf-8")),
+                        "content_type": "application/json",
+                        "parsed_row_count": 1,
+                        "visible_row_count": 1,
+                        "row_count": 1,
+                        "passed": True,
+                    }
+                ],
+                root=root,
+            )
+
+        self.assertFalse(gate["passed"])
+        self.assertTrue(any(row["code"] == "PAYLOAD_SCHEMA_OR_LEAK_FAILURE" for row in gate["failures"]))
+
+    def test_alert_cortex_workflow_is_not_token_efficiency_domain(self):
+        from tools.contracts.export_download_gauntlet import evaluate_export_download_gate
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            root = Path(tmp)
+            payload_path = root / "artifacts/full_app_validation/case.json"
+            payload_path.parent.mkdir(parents=True)
+            payload = {
+                "section": "Alert Center",
+                "workflow": "Cortex Predictive Alerts",
+                "scope": "ALFA / ALL / 7",
+                "target": "Selected finding",
+                "freshness": "Current",
+                "source_family": "compact_evidence",
+                "summary": "Evidence click produced filtered rows.",
+                "row_count": 1,
+                "visible_row_count": 1,
+                "recommended_action": "Review filtered evidence.",
+            }
+            payload_text = json.dumps(payload, sort_keys=True)
+            payload_path.write_text(payload_text, encoding="utf-8")
+            gate = evaluate_export_download_gate(
+                [],
+                {"passed": True, "download_count": 0},
+                [
+                    {
+                        **payload,
+                        "payload_file": "artifacts/full_app_validation/case.json",
+                        "sha256": hashlib.sha256(payload_text.encode("utf-8")).hexdigest(),
+                        "size_bytes": len(payload_text.encode("utf-8")),
+                        "content_type": "application/json",
+                        "parsed_row_count": 1,
+                        "passed": True,
+                    }
+                ],
+                root=root,
+            )
+
+        self.assertTrue(gate["passed"], gate)

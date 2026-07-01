@@ -285,10 +285,11 @@ def build_deterministic_streamlit_render_results(
             if isinstance(action, Mapping)
         ]
         existing_keys = {action.get("stable_key") for action in actions}
-        for action in _actions_for_surface(section, payloads):
-            if action.get("stable_key") not in existing_keys:
-                actions.append(action)
-                existing_keys.add(action.get("stable_key"))
+        if not actions:
+            for action in _actions_for_surface(section, payloads):
+                if action.get("stable_key") not in existing_keys:
+                    actions.append(action)
+                    existing_keys.add(action.get("stable_key"))
         admin_only = section == "Settings/Admin Setup Health"
         raw_internal_token_count = _daily_forbidden_count(text, admin_only=admin_only)
         query_count = _query_count(view)

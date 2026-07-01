@@ -152,3 +152,75 @@ class ActionClickGauntletTests(unittest.TestCase):
 
         self.assertFalse(results["passed"])
         self.assertTrue(any(row.get("failure_reason") == "rendered_action_area_mismatch" for row in results["failures"]))
+
+    def test_rendered_action_prefix_key_does_not_match(self):
+        from tools.contracts.action_click_gauntlet import build_action_click_results
+
+        _manifest, results = build_action_click_results(
+            {
+                "artifacts/full_app_validation/rendered_fragments.json": [
+                    {
+                        "id": "alert::overview",
+                        "section": "Alert Center",
+                        "workflow": "Active Alerts",
+                        "action_like_elements": [
+                            {
+                                "label": "Review Credential Expirations",
+                                "stable_key": "alert_center_command_brief_primary_security_credential_expirations",
+                                "action_area": "route_action",
+                            }
+                        ],
+                    }
+                ],
+                "artifacts/full_app_validation/button_click_results.json": [
+                    {
+                        "section": "Alert Center",
+                        "workflow": "Active Alerts",
+                        "label": "Review Credential Expirations",
+                        "stable_key": "alert_center_command_brief_primary_security",
+                        "action_area": "route_action",
+                        "clicked": True,
+                        "passed": True,
+                    }
+                ],
+            }
+        )
+
+        self.assertFalse(results["passed"])
+        self.assertTrue(any(row.get("failure_reason") == "rendered_action_without_click_result" for row in results["failures"]))
+
+    def test_rendered_action_wrong_section_click_fails(self):
+        from tools.contracts.action_click_gauntlet import build_action_click_results
+
+        _manifest, results = build_action_click_results(
+            {
+                "artifacts/full_app_validation/rendered_fragments.json": [
+                    {
+                        "id": "security::overview",
+                        "section": "Security Monitoring",
+                        "workflow": "Security Overview",
+                        "action_like_elements": [
+                            {
+                                "label": "Load Security Evidence",
+                                "stable_key": "security_monitoring_security_overview_load_security_evidence",
+                                "action_area": "evidence_action",
+                            }
+                        ],
+                    }
+                ],
+                "artifacts/full_app_validation/button_click_results.json": [
+                    {
+                        "section": "Alert Center",
+                        "workflow": "Active Alerts",
+                        "label": "Load Security Evidence",
+                        "stable_key": "security_monitoring_security_overview_load_security_evidence",
+                        "action_area": "evidence_action",
+                        "clicked": True,
+                        "passed": True,
+                    }
+                ],
+            }
+        )
+
+        self.assertFalse(results["passed"])
+        self.assertTrue(any(row.get("failure_reason") == "rendered_action_surface_mismatch" for row in results["failures"]))

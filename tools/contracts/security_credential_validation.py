@@ -53,6 +53,11 @@ SECURITY_CREDENTIAL_SQL_INVENTORY_GATE_REL = (
 SECURITY_CREDENTIAL_RENDERED_LEAK_GATE_REL = (
     f"{LAUNCH_READINESS_DIR}/credential_rendered_leak_gate_results.json"
 )
+SECURITY_CREDENTIAL_SNAPSHOT_REL = f"{FULL_APP_VALIDATION_DIR}/security_credential_snapshot_results.json"
+SECURITY_CREDENTIAL_SNAPSHOT_GATE_REL = (
+    f"{LAUNCH_READINESS_DIR}/security_credential_snapshot_gate_results.json"
+)
+SNAPSHOT_DIR = "artifacts/decision_workspace_html_snapshots"
 
 SECURITY_CREDENTIAL_PACKET_FIELDS = (
     "SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT",
@@ -134,9 +139,88 @@ def _find_action_row(root: Path, section: str, workflow: str) -> tuple[str, int,
     return "", -1, {}
 
 
+def _find_action_row_by_key(root: Path, section: str, workflow: str, stable_key: str) -> tuple[str, int, Mapping[str, Any]]:
+    for rel in (
+        "artifacts/full_app_validation/button_click_results.json",
+        "artifacts/full_app_validation/action_click_results.json",
+    ):
+        for index, row in enumerate(_rows(_load_json(root, rel))):
+            row_key = str(row.get("stable_key") or row.get("key") or row.get("action_key") or "")
+            if (
+                str(row.get("section") or "") == section
+                and str(row.get("workflow") or "") == workflow
+                and row_key == stable_key
+                and bool(row.get("clicked", row.get("passed", False)))
+            ):
+                return rel, index, row
+    return "", -1, {}
+
+
 def _resolve_payload_path(root: Path, payload_file: object) -> Path:
     raw = Path(str(payload_file or ""))
     return raw if raw.is_absolute() else root / raw
+
+
+def _row_text(row: Mapping[str, Any]) -> str:
+    return "\n".join(
+        str(row.get(key) or "")
+        for key in ("first_viewport_text", "html_fragment", "rendered_text", "text")
+        if row.get(key)
+    )
+
+
+def _snapshot_safe_text(text: str) -> str:
+    safe = text
+    replacements = {
+        "MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT": "credential evidence cache",
+        "SNOWFLAKE.ACCOUNT_USAGE.CREDENTIALS": "credential source",
+        "ACCOUNT_USAGE.CREDENTIALS": "credential source",
+        "ACCOUNT_USAGE": "source",
+        "CREDENTIAL_ID": "credential key",
+        "USER_ID": "user key",
+        "RAW_USER_ID": "user key",
+    }
+    for raw, replacement in replacements.items():
+        safe = safe.replace(raw, replacement)
+    return safe
+
+
+def _snapshot_html(title: str, body: str) -> str:
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        f"<title>{title}</title></head><body>"
+        "<main class='ow-kit-command-brief ow-decision-workspace-marker'>"
+        f"<h1>{title}</h1><pre>{_snapshot_safe_text(body)}</pre>"
+        "</main></body></html>"
+    )
+
+
+def _snapshot_forbidden_hits(text: str) -> list[str]:
+    forbidden = (
+        "SNOWFLAKE.ACCOUNT_USAGE.CREDENTIALS",
+        "ACCOUNT_USAGE.CREDENTIALS",
+        "ACCOUNT_USAGE",
+        "CREDENTIAL_ID",
+        "USER_ID",
+        "RAW_USER_ID",
+        "raw SQL",
+        "procedure name",
+        "diagnostic card",
+        "fixture",
+        "mock",
+        "proof",
+        "internal test",
+    )
+    upper = text.upper()
+    lower = text.lower()
+    hits: list[str] = []
+    for token in forbidden:
+        if token.isupper() or "_" in token:
+            if token.upper() in upper:
+                hits.append(token)
+        elif token.lower() in lower:
+            hits.append(token)
+    return sorted(set(hits))
 
 
 def _payload_file_failures(root: Path, row: Mapping[str, Any], *, row_kind: str) -> tuple[str, list[str]]:
@@ -228,7 +312,14 @@ def _runtime_references(root: Path, section: str, workflow: str) -> tuple[dict[s
     export_rel = "artifacts/full_app_validation/export_results.json"
     case_rel = "artifacts/full_app_validation/case_payload_results.json"
     render_index, render_row = _find_surface_row(root, render_rel, section, workflow)
-    action_rel, action_index, action_row = _find_action_row(root, section, workflow)
+    action_rel, action_index, action_row = _find_action_row_by_key(
+        root,
+        section,
+        workflow,
+        "security_command_brief_load_evidence",
+    )
+    if not action_row:
+        action_rel, action_index, action_row = _find_action_row(root, section, workflow)
     export_index, export_row = _find_surface_row(root, export_rel, section, workflow)
     case_index, case_row = _find_surface_row(root, case_rel, section, workflow)
     refs = {
@@ -334,6 +425,7 @@ def build_credential_expiration_validation(root: Path) -> dict[str, Any]:
     split_validation_sql = _read(root, "snowflake/mart_setup/08_validation.sql")
     setup_sql = _read(root, "snowflake/OVERWATCH_MART_SETUP.sql")
     validation_sql = _read(root, "snowflake/OVERWATCH_MART_VALIDATION.sql")
+    semantic_registry = _read(root, ".overwatch_final/sections/metric_semantic_registry.py")
     security_daily_hits = _scan_forbidden_daily_source(
         root,
         "SNOWFLAKE.ACCOUNT_USAGE.CREDENTIALS",
@@ -408,6 +500,26 @@ def build_credential_expiration_validation(root: Path) -> dict[str, Any]:
             and _contains(proc_sql, "No credentials due within 30d"),
             evidence="Security command metrics include a Credential expirations tile.",
             recommendation="Add a compact Security Monitoring metric tile backed by packet fields.",
+        ),
+        _row(
+            "credential_metric_semantic_registry_governed",
+            all(
+                _contains(semantic_registry, token)
+                for token in (
+                    "credential_expirations",
+                    "SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT",
+                    "credential_expiration",
+                    "confirmed_zero_only",
+                    "source_pending_or_unavailable",
+                    "SECURITY_CREDENTIAL_SOURCE_FRESHNESS_TS",
+                    "SECURITY_CREDENTIAL_SOURCE_STATUS",
+                    "SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO",
+                    "load_security_evidence",
+                    "security_credential",
+                )
+            ),
+            evidence="Metric semantic registry governs credential_expirations source, zero, freshness, action, and export domain.",
+            recommendation="Add the full credential_expirations semantic row to the metric registry.",
         ),
         _row(
             "credential_action_and_finding_present",
@@ -918,6 +1030,102 @@ def build_security_credential_first_paint_results(root: Path) -> dict[str, Any]:
     }
 
 
+def build_security_credential_snapshot_results(root: Path) -> dict[str, Any]:
+    snapshot_root = root / SNAPSHOT_DIR
+    snapshot_root.mkdir(parents=True, exist_ok=True)
+    specs: list[tuple[str, str, str, str]] = []
+
+    for filename, section, workflow, title in (
+        ("security_credential_alert_overview.html", "Alert Center", "Active Alerts", "Alert Center credential finding"),
+        ("security_credential_security_overview.html", "Security Monitoring", "Security Overview", "Security credential tile"),
+        (
+            "security_credential_evidence_explicit_action.html",
+            "Security Credential Evidence",
+            "Explicit action",
+            "Security credential evidence",
+        ),
+    ):
+        _index, row = _find_surface_row(root, "artifacts/full_app_validation/rendered_fragments.json", section, workflow)
+        body = _row_text(row) or f"{title}: rendered surface missing."
+        specs.append((filename, title, body, section))
+
+    _action_rel, _action_index, action_row = _find_action_row_by_key(
+        root,
+        "Alert Center",
+        "Active Alerts",
+        "alert_center_command_brief_primary_security_credential_expirations",
+    )
+    route_body = (
+        "Review Credential Expirations action clicked. "
+        f"Expected: {action_row.get('expected_target') or ''}. "
+        f"Observed: {action_row.get('observed_target') or ''}."
+    ) if action_row else "Review Credential Expirations action missing."
+    specs.append(("security_credential_alert_route.html", "Alert credential route", route_body, "Alert Center"))
+
+    _export_index, export_row = _find_surface_row(
+        root,
+        "artifacts/full_app_validation/export_results.json",
+        "Security Credential Evidence",
+        "Explicit action",
+    )
+    export_text = ""
+    if export_row.get("payload_file"):
+        export_path = _resolve_payload_path(root, export_row.get("payload_file"))
+        if export_path.exists():
+            export_text = export_path.read_text(encoding="utf-8", errors="ignore")[:4000]
+    specs.append(("security_credential_export_preview.html", "Security credential export preview", export_text or "Credential export missing.", "Security Credential Evidence"))
+
+    _case_index, case_row = _find_surface_row(
+        root,
+        "artifacts/full_app_validation/case_payload_results.json",
+        "Security Credential Evidence",
+        "Explicit action",
+    )
+    case_text = ""
+    if case_row.get("payload_file"):
+        case_path = _resolve_payload_path(root, case_row.get("payload_file"))
+        if case_path.exists():
+            case_text = case_path.read_text(encoding="utf-8", errors="ignore")[:4000]
+    specs.append(("security_credential_case_preview.html", "Security credential case preview", case_text or "Credential case payload missing.", "Security Credential Evidence"))
+
+    rows: list[dict[str, Any]] = []
+    for filename, title, body, section in specs:
+        snapshot_rel = f"{SNAPSHOT_DIR}/{filename}"
+        html = _snapshot_html(title, body)
+        (root / snapshot_rel).write_text(html, encoding="utf-8")
+        hits = _snapshot_forbidden_hits(html)
+        visible = "Credential" in html or "credential" in html
+        missing_body = "missing" in body.lower()
+        row = {
+            "section": section,
+            "workflow": title,
+            "snapshot_path": snapshot_rel,
+            "credential_visible": visible,
+            "command_brief_present": "ow-kit-command-brief" in html,
+            "decision_workspace_marker_present": "ow-decision-workspace-marker" in html,
+            "forbidden_token_count": len(hits),
+            "forbidden_tokens": hits,
+            "passed": bool(visible) and not hits and not missing_body,
+            "failure_reason": ""
+            if bool(visible) and not hits and not missing_body
+            else "credential snapshot missing visible credential flow or contains forbidden tokens",
+            "raw_sql_included": False,
+        }
+        rows.append(row)
+
+    failures = [row for row in rows if not row["passed"]]
+    return {
+        "source": "security_credential_snapshot_results",
+        "generated_at": _now(),
+        "passed": not failures,
+        "failure_count": len(failures),
+        "snapshot_count": len(rows),
+        "rows": rows,
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+
+
 def build_credential_sql_inventory_gate(root: Path) -> dict[str, Any]:
     from tools.contracts.sql_value_inventory import build_sql_value_inventory
 
@@ -1135,38 +1343,68 @@ def _build_skipped_live_results(
 def build_credential_expiration_live_results(root: Path, profile: str | None = None) -> dict[str, Any]:
     """Write profile-aware live proof status without running Snowflake from daily tooling."""
 
-    del root
     launch_profile = _selected_profile(profile)
+    runtime_refs, runtime_failures = _runtime_references(root, "Security Credential Evidence", "Explicit action")
+    render_index, render_row = _find_surface_row(
+        root,
+        "artifacts/full_app_validation/rendered_fragments.json",
+        "Security Monitoring",
+        "Security Overview",
+    )
+    rendered_text = _row_text(render_row)
+    live_chain_row = {
+        "phase": "credential_expiration_live_validation",
+        "source_family": "credential_expiration",
+        "live_source": "SNOWFLAKE.ACCOUNT_USAGE.CREDENTIALS",
+        "compact_mart": "MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT",
+        "chain": (
+            "SNOWFLAKE.ACCOUNT_USAGE.CREDENTIALS -> "
+            "MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT -> "
+            "Security packet -> rendered tile -> evidence -> export -> case"
+        ),
+        "source_accessible": False,
+        "source_rows_present": None,
+        "source_unavailable_clean": True,
+        "expired_count": None,
+        "expiring_30d_count": None,
+        "expiring_7d_count": None,
+        "risk_count": None,
+        "risk_formula": "expired_count + expiring_30d_count",
+        "next_expiration_user": "",
+        "next_expiration_type": "",
+        "next_expiration_days": None,
+        "compact_mart_checked": False,
+        "packet_checked": False,
+        "render_checked": bool(render_row and "Credential expirations" in rendered_text),
+        "render_row_index": render_index,
+        "evidence_checked": bool(runtime_refs.get("rendered_artifact_path")) and not runtime_failures,
+        "export_checked": bool(runtime_refs.get("export_artifact_path")) and not runtime_failures,
+        "case_payload_checked": bool(runtime_refs.get("case_payload_artifact_path")) and not runtime_failures,
+        "rendered_tile_matches_packet": False,
+        "evidence_row_count_matches_mart": False,
+        "export_row_count_matches_evidence": bool(runtime_refs.get("visible_row_count") == runtime_refs.get("exported_row_count"))
+        if runtime_refs
+        else False,
+        "case_row_count_matches_evidence": bool(runtime_refs.get("visible_row_count") == runtime_refs.get("case_row_count"))
+        if runtime_refs
+        else False,
+        "packet_fields_checked": list(SECURITY_CREDENTIAL_PACKET_FIELDS),
+        "referenced_runtime_artifacts": runtime_refs,
+        "runtime_reference_failures": runtime_failures,
+        "status": "skipped",
+        "sanitized_error": "",
+        "recommendation": "Run the Snowflake CLI live validation lane for Account Usage to compact mart to packet to render proof.",
+        "raw_sql_included": False,
+    }
     rows = [
-        {
-            "phase": "credential_expiration_live_validation",
-            "source_family": "credential_expiration",
-            "live_source": "SNOWFLAKE.ACCOUNT_USAGE.CREDENTIALS",
-            "compact_mart": "MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT",
-            "chain": (
-                "SNOWFLAKE.ACCOUNT_USAGE.CREDENTIALS -> "
-                "MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT -> "
-                "Security packet -> rendered tile -> evidence -> export -> case"
-            ),
-            "source_accessible": False,
-            "source_rows_present": None,
-            "compact_mart_checked": False,
-            "packet_checked": False,
-            "render_checked": False,
-            "evidence_checked": False,
-            "export_checked": False,
-            "case_payload_checked": False,
-            "packet_fields_checked": list(SECURITY_CREDENTIAL_PACKET_FIELDS),
-            "status": "skipped",
-            "sanitized_error": "",
-            "recommendation": "Run the Snowflake CLI live validation lane for Account Usage to compact mart to packet to render proof.",
-            "raw_sql_included": False,
-        }
+        live_chain_row
     ]
     return _build_skipped_live_results(
         source="credential_expiration_live_results",
         profile=launch_profile,
-        validation_status="not_executed_static_contract",
+        validation_status="fixture_runtime_chain_ready_live_not_executed"
+        if launch_profile == "internal_fixture"
+        else "live_not_executed",
         rows=rows,
     )
 
@@ -1391,6 +1629,7 @@ def write_security_credential_validation_artifacts(
     credential_render = build_security_credential_render_results(root_path)
     credential_evidence = build_security_credential_evidence_results(root_path)
     credential_first_paint = build_security_credential_first_paint_results(root_path)
+    credential_snapshot = build_security_credential_snapshot_results(root_path)
     credential_sql_inventory_gate = build_credential_sql_inventory_gate(root_path)
     credential_rendered_leak_gate = build_credential_rendered_leak_gate(root_path)
     credential_gate = evaluate_security_credential_expiration_gate(credential)
@@ -1427,6 +1666,11 @@ def write_security_credential_validation_artifacts(
         source="security_credential_first_paint_gate_results",
         passed_key="security_credential_first_paint_gate_passed",
     )
+    credential_snapshot_gate = _evaluate_simple_gate(
+        credential_snapshot,
+        source="security_credential_snapshot_gate_results",
+        passed_key="security_credential_snapshot_gate_passed",
+    )
 
     artifacts = {
         CREDENTIAL_EXPIRATION_VALIDATION_REL: credential,
@@ -1439,6 +1683,7 @@ def write_security_credential_validation_artifacts(
         SECURITY_CREDENTIAL_RENDER_REL: credential_render,
         SECURITY_CREDENTIAL_EVIDENCE_REL: credential_evidence,
         SECURITY_CREDENTIAL_FIRST_PAINT_REL: credential_first_paint,
+        SECURITY_CREDENTIAL_SNAPSHOT_REL: credential_snapshot,
         SECURITY_CREDENTIAL_GATE_REL: credential_gate,
         SECURITY_CREDENTIAL_LIVE_GATE_REL: credential_live_gate,
         USER_DISPLAY_NAME_GATE_REL: user_display_gate,
@@ -1449,6 +1694,7 @@ def write_security_credential_validation_artifacts(
         SECURITY_CREDENTIAL_RENDER_GATE_REL: credential_render_gate,
         SECURITY_CREDENTIAL_EVIDENCE_GATE_REL: credential_evidence_gate,
         SECURITY_CREDENTIAL_FIRST_PAINT_GATE_REL: credential_first_paint_gate,
+        SECURITY_CREDENTIAL_SNAPSHOT_GATE_REL: credential_snapshot_gate,
         SECURITY_CREDENTIAL_SQL_INVENTORY_GATE_REL: credential_sql_inventory_gate,
         SECURITY_CREDENTIAL_RENDERED_LEAK_GATE_REL: credential_rendered_leak_gate,
     }
@@ -1480,6 +1726,8 @@ __all__ = [
     "SECURITY_CREDENTIAL_FIRST_PAINT_GATE_REL",
     "SECURITY_CREDENTIAL_FIRST_PAINT_REL",
     "SECURITY_CREDENTIAL_RENDERED_LEAK_GATE_REL",
+    "SECURITY_CREDENTIAL_SNAPSHOT_GATE_REL",
+    "SECURITY_CREDENTIAL_SNAPSHOT_REL",
     "SECURITY_CREDENTIAL_RENDER_GATE_REL",
     "SECURITY_CREDENTIAL_RENDER_REL",
     "SECURITY_CREDENTIAL_SQL_INVENTORY_GATE_REL",
@@ -1499,6 +1747,7 @@ __all__ = [
     "build_security_credential_evidence_results",
     "build_security_credential_export_results",
     "build_security_credential_first_paint_results",
+    "build_security_credential_snapshot_results",
     "build_security_credential_render_results",
     "build_user_display_dimension_validation",
     "build_user_display_dimension_live_results",

@@ -173,6 +173,7 @@ from tools.contracts.security_credential_validation import (
     SECURITY_CREDENTIAL_LIVE_GATE_REL,
     SECURITY_CREDENTIAL_RENDERED_LEAK_GATE_REL,
     SECURITY_CREDENTIAL_RENDER_GATE_REL,
+    SECURITY_CREDENTIAL_SNAPSHOT_GATE_REL,
     SECURITY_CREDENTIAL_SQL_INVENTORY_GATE_REL,
     USER_DISPLAY_NAME_GATE_REL,
     USER_DISPLAY_NAME_LIVE_GATE_REL,
@@ -274,6 +275,7 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     SECURITY_CREDENTIAL_RENDER_GATE_REL,
     SECURITY_CREDENTIAL_EVIDENCE_GATE_REL,
     SECURITY_CREDENTIAL_FIRST_PAINT_GATE_REL,
+    SECURITY_CREDENTIAL_SNAPSHOT_GATE_REL,
     SECURITY_CREDENTIAL_SQL_INVENTORY_GATE_REL,
     SECURITY_CREDENTIAL_RENDERED_LEAK_GATE_REL,
     USER_STRESS_GATE_REL,
@@ -6204,6 +6206,9 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["security_credential_first_paint_gate_results"] = security_credential_artifacts[
         SECURITY_CREDENTIAL_FIRST_PAINT_GATE_REL
     ]
+    launch_artifacts["security_credential_snapshot_gate_results"] = security_credential_artifacts[
+        SECURITY_CREDENTIAL_SNAPSHOT_GATE_REL
+    ]
     launch_artifacts["credential_sql_inventory_gate_results"] = security_credential_artifacts[
         SECURITY_CREDENTIAL_SQL_INVENTORY_GATE_REL
     ]
@@ -6409,6 +6414,11 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         "failures": _as_list(live_cost_reconciliation_payload.get("failures")),
         "raw_sql_included": False,
     }
+    refreshed_full_app_payloads, _refreshed_missing = _load_payloads(
+        root_path,
+        REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS,
+    )
+    payloads.update(refreshed_full_app_payloads)
     release_sweep_payloads = {
         **payloads,
         **{

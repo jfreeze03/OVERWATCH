@@ -307,7 +307,7 @@ def _enrich_render_row(stamped: dict[str, Any]) -> None:
     text = _row_render_text(stamped)
     if not text:
         return
-    normalized_actions: list[dict[str, str]] = []
+    normalized_actions: list[dict[str, object]] = []
     for action in _safe_list(stamped.get("action_like_elements")):
         if not isinstance(action, Mapping):
             continue

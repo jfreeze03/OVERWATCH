@@ -1754,7 +1754,7 @@ def _setup_migration_live_results(
             "expected_migration_count": int(_as_float(ledger_payload.get("expected_migration_count")) or len(expected_versions)),
             "present_migration_count": int(_as_float(ledger_payload.get("present_migration_count")) or 0),
             "missing_migration_count": missing_count,
-            "latest_migration_version": _safe_label(ledger_payload.get("latest_migration_version")),
+            "latest_migration_version": _safe_label(str(ledger_payload.get("latest_migration_version") or "")),
             "repo_source_file_count": int(_as_float(ledger_payload.get("repo_source_file_count")) or 0),
             **_row_temp_sql_metadata(ledger_temp),
         }

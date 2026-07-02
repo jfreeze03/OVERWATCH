@@ -16,8 +16,6 @@ from utils.primitives import (
 from utils.downloads import (
     download_text,
 )
-
-_clean_display_text = clean_display_text
 from .types import (
     ACTION_QUEUE_WORKFLOW,
     FAILURE_TRIAGE_WORKFLOW,
@@ -540,7 +538,7 @@ def _build_dba_operator_runbook_markdown(
                 f"Gate: {row.get('GO_NO_GO_GATE', '')}",
                 f"Move: {row.get('DBA_MOVE', '')}",
                 f"Telemetry: {row.get('EVIDENCE_REQUIRED', '')}",
-                f"Escalation route: {_clean_display_text(row.get('OWNER_ROUTE', ''))}",
+                f"Escalation route: {clean_display_text(row.get('OWNER_ROUTE', ''))}",
                 f"Stop: {row.get('STOP_CONDITION', '')}",
             ])
             if proof:
@@ -821,12 +819,12 @@ def _build_dba_escalation_packet_markdown(
         lines.append("- No escalation rows were available.")
     else:
         for _, row in rows.iterrows():
-            route = _clean_display_text(row.get("ROUTE", ""))
-            owner_route = _clean_display_text(row.get("OWNER_ROUTE", ""))
-            why_now = _clean_display_text(row.get("WHY_NOW", ""))
-            first_move = _clean_display_text(row.get("FIRST_MOVE", ""))
-            gate = _clean_display_text(row.get("GO_NO_GO", ""))
-            telemetry_basis = _clean_display_text(row.get("PROOF_REQUIRED", ""))
+            route = clean_display_text(row.get("ROUTE", ""))
+            owner_route = clean_display_text(row.get("OWNER_ROUTE", ""))
+            why_now = clean_display_text(row.get("WHY_NOW", ""))
+            first_move = clean_display_text(row.get("FIRST_MOVE", ""))
+            gate = clean_display_text(row.get("GO_NO_GO", ""))
+            telemetry_basis = clean_display_text(row.get("PROOF_REQUIRED", ""))
             lines.append(
                 f"- {row.get('ESCALATION_ID', '')} [{row.get('ESCALATION_LEVEL', '')}] "
                 f"{route} -> {owner_route}. "
@@ -907,7 +905,7 @@ def _render_watch_floor(
         workflow = str(item.get("Workflow", "") or "")
         with cols[idx]:
             render_escaped_bold_text(f"{item.get('Severity', 'Signal')}: {item.get('Signal', '')}")
-            st.caption(_clean_display_text(str(item.get("Telemetry", item.get("Evidence", "")))))
+            st.caption(clean_display_text(str(item.get("Telemetry", item.get("Evidence", "")))))
             st.write(str(item.get("Action", "")))
             if route and st.button(f"Open {route}", key=f"dba_watch_floor_{idx}_{route}", width="stretch"):
                 _jump(route, workflow=workflow)
@@ -1147,13 +1145,13 @@ def _build_dba_incident_markdown(
         lines.append("- No incident rows were available.")
     else:
         for _, row in rows.iterrows():
-            incident_type = _clean_display_text(row.get("INCIDENT_TYPE", ""))
-            affected_routes = _clean_display_text(row.get("AFFECTED_ROUTES", ""))
-            signals = _clean_display_text(row.get("SIGNALS", ""))
-            telemetry = _clean_display_text(row.get("EVIDENCE", ""))
-            containment = _clean_display_text(row.get("CONTAINMENT_ACTION", ""))
-            sla_target = _clean_display_text(row.get("SLA_TARGET", ""))
-            telemetry_basis = _clean_display_text(row.get("PROOF_REQUIRED", ""))
+            incident_type = clean_display_text(row.get("INCIDENT_TYPE", ""))
+            affected_routes = clean_display_text(row.get("AFFECTED_ROUTES", ""))
+            signals = clean_display_text(row.get("SIGNALS", ""))
+            telemetry = clean_display_text(row.get("EVIDENCE", ""))
+            containment = clean_display_text(row.get("CONTAINMENT_ACTION", ""))
+            sla_target = clean_display_text(row.get("SLA_TARGET", ""))
+            telemetry_basis = clean_display_text(row.get("PROOF_REQUIRED", ""))
             lines.append(
                 f"- {row.get('INCIDENT_ID', '')} [{row.get('SEVERITY', '')} / {row.get('STATUS', '')}] "
                 f"{incident_type} on {affected_routes}: {signals}. "

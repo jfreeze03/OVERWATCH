@@ -213,7 +213,7 @@ def scan_session_open_usage(paths: Iterable[Path], *, root: Path) -> list[dict[s
         except ValueError:
             relative = str(path)
         try:
-            lines = path.read_text(encoding="utf-8").splitlines()
+            lines = path.read_text(encoding="utf-8-sig").splitlines()
         except UnicodeDecodeError:
             lines = path.read_text(errors="ignore").splitlines()
         calls = _session_open_calls("\n".join(lines))

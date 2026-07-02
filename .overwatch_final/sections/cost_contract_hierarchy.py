@@ -18,7 +18,7 @@ from sections.cost_contract_contracts import (
     _PRESERVE_COST_CENTER_VIEW_KEY,
 )
 from sections.cost_contract_helpers import get_credit_price
-from sections.cost_contract_splash import _cached_cost_splash, _cost_splash_summary
+from sections.cost_contract_evidence_load import _cached_cost_splash, _cost_splash_summary
 from sections.cortex_signals import build_cortex_signal
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.shell_helpers import render_action_cards, render_primary_section_tabs, render_secondary_lens_pills

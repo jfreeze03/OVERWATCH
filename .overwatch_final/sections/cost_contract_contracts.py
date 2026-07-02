@@ -136,9 +136,9 @@ ADVANCED_COST_TOOL_MODULES = {
 
 _DETAIL_WORKFLOW_KEY = "_cost_contract_detail_workflow"
 _PENDING_DETAIL_WORKFLOW_KEY = "_cost_contract_pending_detail_workflow"
-_COST_SPLASH_KEY = "cost_contract_splash"
-_COST_SPLASH_AUTOLOAD_SCOPE_KEY = "_cost_contract_splash_autoload_scope"
-_COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY = "_cost_contract_splash_autoload_blocked_scope"
+_COST_SPLASH_KEY = "cost_contract_evidence_load"
+_COST_SPLASH_AUTOLOAD_SCOPE_KEY = "_cost_contract_evidence_load_autoload_scope"
+_COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY = "_cost_contract_evidence_load_autoload_blocked_scope"
 _ADVANCED_COST_TOOLS_VISIBLE_KEY = "_cost_contract_show_advanced_tools"
 _ADVANCED_COST_DETAIL_VISIBLE_KEY = "_cost_contract_show_advanced_detail_boards"
 _LAST_COST_WORKFLOW_KEY = "_cost_contract_last_applied_workflow"

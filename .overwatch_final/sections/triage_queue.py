@@ -11,8 +11,6 @@ import streamlit as st
 from utils.display_safety import clean_display_text
 from utils.primitives import safe_float, safe_int
 
-_clean_display_text = clean_display_text
-
 
 _SEVERITY_RANK = {
     "CRITICAL": 0,
@@ -56,12 +54,12 @@ def _queue_item(
     freshness: str,
 ) -> dict[str, str]:
     return {
-        "section": _clean_display_text(section),
+        "section": clean_display_text(section),
         "severity": _severity_text(severity),
-        "signal": _clean_display_text(signal),
-        "evidence": _clean_display_text(evidence),
-        "next_action": _clean_display_text(next_action),
-        "freshness": _clean_display_text(freshness),
+        "signal": clean_display_text(signal),
+        "evidence": clean_display_text(evidence),
+        "next_action": clean_display_text(next_action),
+        "freshness": clean_display_text(freshness),
     }
 
 

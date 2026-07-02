@@ -38,6 +38,10 @@ from utils.workflows import (
 
 WORKLOAD_QUERY_WORKFLOW = "Query Investigation"
 WORKLOAD_CONTENTION_WORKFLOW = "Performance & Contention"
+MODULE_OWNER = "Workload Operations"
+MODULE_WORKFLOW = "Query Investigation / Root-Cause Brief"
+EXPLICIT_ACTION_ONLY = True
+FIRST_PAINT_SAFE = True
 
 
 def _root_cause_score(

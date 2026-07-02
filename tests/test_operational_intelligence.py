@@ -132,7 +132,7 @@ class OperationalIntelligenceTests(unittest.TestCase):
             ROOT / ".overwatch_final" / "sections" / "workload_operations.py",
             ROOT / ".overwatch_final" / "sections" / "cost_contract.py",
             ROOT / ".overwatch_final" / "sections" / "cost_contract_loader.py",
-            ROOT / ".overwatch_final" / "sections" / "cost_contract_splash.py",
+            ROOT / ".overwatch_final" / "sections" / "cost_contract_evidence_load.py",
             ROOT / ".overwatch_final" / "sections" / "dba_control_room.py",
             ROOT / ".overwatch_final" / "sections" / "executive_landing.py",
         ]

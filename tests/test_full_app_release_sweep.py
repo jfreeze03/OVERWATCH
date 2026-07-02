@@ -333,6 +333,17 @@ def _passing_payload(root: Path) -> dict:
             "settings_failure_count": 0,
             "live_feature_failure_count": 0,
         },
+        "artifacts/launch_readiness/connection_policy_gate_results.json": {
+            **passed_gate,
+            "connection_policy_passed": True,
+            "fallback_render_passed": True,
+            "fallback_render_failure_count": 0,
+            "unknown_route_fail_closed": True,
+        },
+        "artifacts/launch_readiness/import_laziness_gate_results.json": {
+            **passed_gate,
+            "import_laziness_failure_count": 0,
+        },
         "artifacts/launch_readiness/performance_budget_gate_results.json": passed_gate,
         "artifacts/launch_readiness/user_stress_gate_results.json": passed_gate,
         "artifacts/launch_readiness/sql_cleanup_gate_results.json": passed_gate,
@@ -410,6 +421,35 @@ class FullAppReleaseSweepTests(unittest.TestCase):
 
         self.assertFalse(results["passed"])
         self.assertTrue(any(row["section"] == "Query Search" for row in results["failures"]))
+
+    def test_missing_import_laziness_gate_fails(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = _passing_payload(root)
+            payload.pop("artifacts/launch_readiness/import_laziness_gate_results.json")
+            results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT, root=root)
+
+        self.assertFalse(results["passed"])
+        self.assertGreater(results["import_laziness_failure_count"], 0)
+
+    def test_connection_policy_gate_failure_blocks_release_sweep(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = _passing_payload(root)
+            payload["artifacts/launch_readiness/connection_policy_gate_results.json"] = {
+                "passed": False,
+                "failure_count": 1,
+                "fallback_render_failure_count": 1,
+                "raw_sql_included": False,
+            }
+            results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT, root=root)
+
+        self.assertFalse(results["passed"])
+        self.assertEqual(results["fallback_render_failure_count"], 1)
 
     def test_raw_source_token_in_daily_surface_fails(self):
         from tools.contracts.full_app_release_sweep import build_full_app_release_sweep

@@ -1166,6 +1166,8 @@ def build_full_app_release_sweep(
         ("action_click_gauntlet", "action_click_gate_results"),
         ("export_download_gauntlet", "export_download_gate_results"),
         ("settings_live_feature_gauntlet", "settings_live_feature_gate_results"),
+        ("connection_policy_gate", "connection_policy_gate_results"),
+        ("import_laziness_gate", "import_laziness_gate_results"),
         ("performance_budget_gate", "performance_budget_gate_results"),
         ("user_stress_test", "user_stress_gate_results"),
         ("sql_cleanup_gate", "sql_cleanup_gate_results"),
@@ -1257,7 +1259,21 @@ def build_full_app_release_sweep(
     snowflake_cli_gate = _gate(payloads, "snowflake_cli_live_gate_results")
     snowflake_temp_gate = _gate(payloads, "snowflake_cli_temp_file_hygiene_gate_results")
     setup_migration_gate = _gate(payloads, "setup_migration_live_gate_results")
+    connection_policy_gate = _gate(payloads, "connection_policy_gate_results")
+    import_laziness_gate = _gate(payloads, "import_laziness_gate_results")
     cortex_live_gate = _gate(payloads, "cortex_token_efficiency_live_gate_results")
+    missing_connection_policy_gate = sum(
+        1
+        for row in gate_rows
+        if row.get("area") == "connection_policy_gate"
+        and str(row.get("failure_reason") or "") == "required release gate artifact missing"
+    )
+    missing_import_laziness_gate = sum(
+        1
+        for row in gate_rows
+        if row.get("area") == "import_laziness_gate"
+        and str(row.get("failure_reason") or "") == "required release gate artifact missing"
+    )
     first_paint_failure_count = sum(
         1
         for row in rows
@@ -1289,6 +1305,9 @@ def build_full_app_release_sweep(
         "export_failure_count": sum(_as_int(row.get("export_failure_count")) for row in rows),
         "settings_failure_count": _as_int(_gate(payloads, "settings_live_feature_gate_results").get("settings_failure_count")),
         "live_feature_failure_count": _as_int(_gate(payloads, "settings_live_feature_gate_results").get("live_feature_failure_count")),
+        "connection_policy_passed": bool(connection_policy_gate.get("passed")),
+        "fallback_render_failure_count": _as_int(connection_policy_gate.get("fallback_render_failure_count")) + missing_connection_policy_gate,
+        "import_laziness_failure_count": _as_int(import_laziness_gate.get("failure_count")) + missing_import_laziness_gate,
         "stress_failure_count": _as_int(_gate(payloads, "user_stress_gate_results").get("failure_count")),
         "sql_cleanup_failure_count": _as_int(_gate(payloads, "sql_cleanup_gate_results").get("failure_count")),
         "first_paint_failure_count": first_paint_failure_count,
@@ -1356,6 +1375,9 @@ def evaluate_full_app_release_sweep_gate(payload: object) -> dict[str, Any]:
         "export_failure_count": _as_int(results.get("export_failure_count")),
         "settings_failure_count": _as_int(results.get("settings_failure_count")),
         "live_feature_failure_count": _as_int(results.get("live_feature_failure_count")),
+        "connection_policy_passed": bool(results.get("connection_policy_passed")),
+        "fallback_render_failure_count": _as_int(results.get("fallback_render_failure_count")),
+        "import_laziness_failure_count": _as_int(results.get("import_laziness_failure_count")),
         "stress_failure_count": _as_int(results.get("stress_failure_count")),
         "sql_cleanup_failure_count": _as_int(results.get("sql_cleanup_failure_count")),
         "first_paint_failure_count": _as_int(results.get("first_paint_failure_count")),
@@ -1413,6 +1435,8 @@ def write_full_app_release_sweep_artifacts(
                 "artifacts/launch_readiness/action_click_gate_results.json",
                 "artifacts/launch_readiness/export_download_gate_results.json",
                 "artifacts/launch_readiness/settings_live_feature_gate_results.json",
+                "artifacts/launch_readiness/connection_policy_gate_results.json",
+                "artifacts/launch_readiness/import_laziness_gate_results.json",
                 "artifacts/launch_readiness/performance_budget_gate_results.json",
                 "artifacts/launch_readiness/user_stress_gate_results.json",
                 "artifacts/launch_readiness/sql_cleanup_gate_results.json",

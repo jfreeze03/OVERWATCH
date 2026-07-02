@@ -773,7 +773,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         intelligence_text = (APP_ROOT / "sections" / "cost_contract_intelligence.py").read_text(encoding="utf-8")
         workflow_text = (APP_ROOT / "sections" / "cost_contract_workflow.py").read_text(encoding="utf-8")
         overview_floor_text = (APP_ROOT / "sections" / "cost_contract_overview_floor.py").read_text(encoding="utf-8")
-        splash_text = (APP_ROOT / "sections" / "cost_contract_splash.py").read_text(encoding="utf-8")
+        splash_text = (APP_ROOT / "sections" / "cost_contract_evidence_load.py").read_text(encoding="utf-8")
         cost_contract_surface = (
             full_workspace_text
             + contract_text

@@ -64,11 +64,6 @@ from runtime_state import (
     set_state,
     sync_exceptions_only_mode,
 )
-from sections.decision_workspace_setup_health import (
-    SETUP_HEALTH_PANEL_OPEN_KEY,
-    open_decision_setup_health,
-    render_decision_setup_health_panel,
-)
 from theme import render_theme_picker
 from utils.cache import clear_all_cache
 from utils.company_filter import get_environment_label
@@ -88,6 +83,8 @@ SECTION_SUBTITLES = {
     "Cost & Contract": "Spend attribution, contract utilization, chargeback, savings, and action queue.",
     "Security Monitoring": "Login risk, privileged grants, public access, data sharing, and security alerts.",
 }
+
+SETUP_HEALTH_PANEL_OPEN_KEY = "_overwatch_show_decision_setup_health"
 
 
 @dataclass(frozen=True)
@@ -252,6 +249,18 @@ def render_admin_access_required(role: str) -> None:
     )
 
 
+def _open_decision_setup_health() -> None:
+    from sections.decision_workspace_setup_health import open_decision_setup_health
+
+    open_decision_setup_health()
+
+
+def _render_decision_setup_health_panel() -> None:
+    from sections.decision_workspace_setup_health import render_decision_setup_health_panel
+
+    render_decision_setup_health_panel(session=get_state(SF_SESSION))
+
+
 def render_section_transition_state(section: str) -> None:
     """Hide the previous section while the selected section hydrates."""
     safe_section = html.escape(normalize_nav_section(section))
@@ -412,10 +421,10 @@ def render_sidebar(
                     key="settings_open_setup_health",
                     type="secondary",
                     width="stretch",
-                    on_click=open_decision_setup_health,
+                    on_click=_open_decision_setup_health,
                 )
                 if bool(get_state(SETUP_HEALTH_PANEL_OPEN_KEY, False)):
-                    render_decision_setup_health_panel(session=get_state(SF_SESSION))
+                    _render_decision_setup_health_panel()
 
     return SidebarState(
         active_company=active_company,

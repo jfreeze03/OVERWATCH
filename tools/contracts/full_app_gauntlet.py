@@ -101,6 +101,8 @@ REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
     "artifacts/full_app_validation/query_budget_results.json",
     "artifacts/full_app_validation/query_budget_violation_results.json",
     "artifacts/full_app_validation/session_direct_sql_results.json",
+    "artifacts/full_app_validation/connection_policy_results.json",
+    "artifacts/full_app_validation/fallback_render_results.json",
     "artifacts/full_app_validation/summary_board_results.json",
     "artifacts/full_app_validation/summary_board_query_budget_results.json",
     "artifacts/full_app_validation/summary_board_error_inventory.json",

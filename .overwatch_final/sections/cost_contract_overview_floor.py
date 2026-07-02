@@ -39,7 +39,7 @@ from sections.cost_contract_panels import (
     _render_cost_source_health,
     _render_query_attribution_gap,
 )
-from sections.cost_contract_splash import (
+from sections.cost_contract_evidence_load import (
     _cost_splash_summary,
 )
 from sections.cost_contract_evidence import load_cost_evidence
@@ -59,7 +59,6 @@ from utils.section_guidance import defer_section_note, defer_source_note
 
 
 pd = lazy_pandas()
-_clean_display_text = clean_display_text
 
 credits_to_dollars = _lazy_util("credits_to_dollars")
 get_active_environment = _lazy_util("get_active_environment")
@@ -405,7 +404,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     for idx, (title, evidence, workflow) in enumerate(moves[:3]):
         with cols[idx]:
             render_escaped_bold_text(title)
-            st.caption(_clean_display_text(evidence))
+            st.caption(clean_display_text(evidence))
             if st.button(f"Open {workflow}", key=f"cost_contract_next_{idx}_{workflow}", width="stretch"):
                 set_state("cost_contract_workflow", workflow)
                 if workflow == "Cost Explorer":

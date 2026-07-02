@@ -10,17 +10,22 @@ APP_ROOT = ROOT / ".overwatch_final"
 class PrivateImportHygieneTests(unittest.TestCase):
     def test_public_display_sanitizer_replaces_shell_private_imports(self):
         offenders: list[str] = []
+        alias_offenders: list[str] = []
         for path in APP_ROOT.rglob("*.py"):
             if "__pycache__" in path.parts:
                 continue
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            text = path.read_text(encoding="utf-8-sig")
+            tree = ast.parse(text)
             for node in ast.walk(tree):
                 if not isinstance(node, ast.ImportFrom):
                     continue
                 if node.module == "sections.shell_helpers" and any(alias.name == "_clean_display_text" for alias in node.names):
                     offenders.append(str(path.relative_to(ROOT)).replace("\\", "/"))
+            if "_clean_display_text = clean_display_text" in text or "_clean_display_text(" in text:
+                alias_offenders.append(str(path.relative_to(ROOT)).replace("\\", "/"))
 
         self.assertEqual(offenders, [])
+        self.assertEqual(alias_offenders, [])
 
         display_safety = (APP_ROOT / "utils" / "display_safety.py").read_text(encoding="utf-8")
         self.assertIn("def clean_display_text", display_safety)

@@ -58,6 +58,18 @@ class DeleteFirstCleanupTests(unittest.TestCase):
             any("retired query_workbench" in failure["reason"] for failure in gate["failures"])
         )
 
+    def test_query_root_cause_module_is_governed_explicit_action(self):
+        from tools.contracts.delete_first_cleanup import build_delete_first_inventory
+
+        inventory = build_delete_first_inventory(ROOT)
+        rows = {row["path"]: row for row in inventory["rows"]}
+        row = rows[".overwatch_final/sections/query_investigation_root_cause.py"]
+
+        self.assertEqual(row["classification"], "keep_runtime")
+        self.assertEqual(row["owner"], "Workload Operations")
+        self.assertIn("explicit_action", row["runtime_path"])
+        self.assertTrue(row["daily_safe"])
+
 
 if __name__ == "__main__":
     unittest.main()

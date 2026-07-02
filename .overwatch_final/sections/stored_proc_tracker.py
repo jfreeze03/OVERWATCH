@@ -41,8 +41,6 @@ from utils import (
 from utils.workflows import render_load_status
 from utils.display_safety import clean_display_text
 
-_clean_display_text = clean_display_text
-
 
 PROCEDURE_SIGNAL_ROUTES = {
     "Orphan Procedure Candidate": (
@@ -74,7 +72,7 @@ _PROC_LONG_RUNTIME_SEC = 300.0
 
 def _plain_html(value: object) -> str:
     """Render generated procedure/advisor text literally inside HTML fragments."""
-    return html_escape(_clean_display_text(value), quote=False)
+    return html_escape(clean_display_text(value), quote=False)
 
 
 def _procedure_lookup(row: pd.Series | dict, *names: str, default: object = "") -> object:
@@ -922,7 +920,7 @@ def _render_procedure_analysis_detail(board: pd.DataFrame | None, *, key_prefix:
         ("Runtime", f"{safe_float(row.get('LATEST_RUNTIME_SEC')):,.1f}s"),
         ("Est. Cost", f"${safe_float(row.get('EST_TOTAL_COST_USD')):,.2f}"),
     ))
-    st.caption(_clean_display_text(row.get("OPTIMIZATION_ISSUE") or row.get("SIGNAL") or "Procedure telemetry signal."))
+    st.caption(clean_display_text(row.get("OPTIMIZATION_ISSUE") or row.get("SIGNAL") or "Procedure telemetry signal."))
     st.html(
         "<div style='line-height:1.45; margin:.35rem 0;'>"
         f"<strong>Next move:</strong> {_plain_html(row.get('SAFE_NEXT_ACTION') or 'Compare the latest CALL to baseline and inspect child-query telemetry.')}"
@@ -942,10 +940,10 @@ def _render_procedure_analysis_detail(board: pd.DataFrame | None, *, key_prefix:
     )
     guardrail = str(row.get("EXECUTION_GUARDRAIL") or row.get("DO_NOT_DO") or "").strip()
     if guardrail:
-        st.caption(f"Guardrail: {_clean_display_text(guardrail)}")
+        st.caption(f"Guardrail: {clean_display_text(guardrail)}")
     st.caption(
-        f"Route: {_clean_display_text(row.get('WORKFLOW_ROUTE') or 'Workload Operations > Stored procedures')} | "
-        f"Confidence: {_clean_display_text(row.get('CONFIDENCE') or 'Estimated')}"
+        f"Route: {clean_display_text(row.get('WORKFLOW_ROUTE') or 'Workload Operations > Stored procedures')} | "
+        f"Confidence: {clean_display_text(row.get('CONFIDENCE') or 'Estimated')}"
     )
     proc = str(row.get("PROCEDURE_CONTEXT") or row.get("PROCEDURE_NAME") or "").strip()
     if proc and st.button("Mark For Downstream Review", key=f"{key_prefix}_detail_target", width="stretch"):

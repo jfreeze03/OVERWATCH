@@ -17,28 +17,28 @@ class CostContractSplashMonitoringLoaderTests(unittest.TestCase):
         from sections import cost_contract
         from sections import cost_contract_loader
         from sections import cost_contract_monitoring
-        from sections import cost_contract_splash
+        from sections import cost_contract_evidence_load
 
-        self.assertIs(cost_contract._cost_splash_meta, cost_contract_splash._cost_splash_meta)
-        self.assertIs(cost_contract._empty_cost_splash, cost_contract_splash._empty_cost_splash)
-        self.assertIs(cost_contract._cached_cost_splash, cost_contract_splash._cached_cost_splash)
-        self.assertIs(cost_contract._ensure_cost_splash, cost_contract_splash._ensure_cost_splash)
-        self.assertIs(cost_contract._maybe_autoload_cost_splash, cost_contract_splash._maybe_autoload_cost_splash)
-        self.assertIs(cost_contract._cost_splash_summary, cost_contract_splash._cost_splash_summary)
-        self.assertIs(cost_contract._render_cost_splash, cost_contract_splash._render_cost_splash)
+        self.assertIs(cost_contract._cost_splash_meta, cost_contract_evidence_load._cost_splash_meta)
+        self.assertIs(cost_contract._empty_cost_splash, cost_contract_evidence_load._empty_cost_splash)
+        self.assertIs(cost_contract._cached_cost_splash, cost_contract_evidence_load._cached_cost_splash)
+        self.assertIs(cost_contract._ensure_cost_splash, cost_contract_evidence_load._ensure_cost_splash)
+        self.assertIs(cost_contract._maybe_autoload_cost_splash, cost_contract_evidence_load._maybe_autoload_cost_splash)
+        self.assertIs(cost_contract._cost_splash_summary, cost_contract_evidence_load._cost_splash_summary)
+        self.assertIs(cost_contract._render_cost_splash, cost_contract_evidence_load._render_cost_splash)
         self.assertIs(cost_contract._build_cost_monitoring_alert_rows, cost_contract_monitoring._build_cost_monitoring_alert_rows)
         self.assertIs(cost_contract._build_cost_incident_timeline, cost_contract_monitoring._build_cost_incident_timeline)
         self.assertIs(cost_contract._build_cost_monitoring_mart_operability, cost_contract_monitoring._build_cost_monitoring_mart_operability)
         self.assertIs(cost_contract._refresh_cost_detail_state, cost_contract_loader._refresh_cost_detail_state)
 
     def test_cost_splash_meta_empty_and_cache_behavior_stays_stable(self):
-        from sections import cost_contract_splash
+        from sections import cost_contract_evidence_load
         from sections.cost_contract_contracts import _COST_SPLASH_KEY
 
-        meta = cost_contract_splash._cost_splash_meta("ALFA", 7, 4.0)
+        meta = cost_contract_evidence_load._cost_splash_meta("ALFA", 7, 4.0)
         self.assertEqual(meta, {"company": "ALFA", "days": 7, "credit_price": 4.0})
 
-        empty = cost_contract_splash._empty_cost_splash("ALFA", 7, 4.0)
+        empty = cost_contract_evidence_load._empty_cost_splash("ALFA", 7, 4.0)
         self.assertFalse(empty["loaded"])
         self.assertEqual(empty["meta"], meta)
         self.assertEqual(empty["source"], "")
@@ -47,15 +47,15 @@ class CostContractSplashMonitoringLoaderTests(unittest.TestCase):
 
         cached = {"meta": meta, "loaded": True, "source": "Fast summary"}
         state = {_COST_SPLASH_KEY: cached}
-        with patch.object(cost_contract_splash.st, "session_state", state):
-            self.assertIs(cost_contract_splash._cached_cost_splash("ALFA", 7, 4.0), cached)
-            miss = cost_contract_splash._cached_cost_splash("Trexis", 7, 4.0)
+        with patch.object(cost_contract_evidence_load.st, "session_state", state):
+            self.assertIs(cost_contract_evidence_load._cached_cost_splash("ALFA", 7, 4.0), cached)
+            miss = cost_contract_evidence_load._cached_cost_splash("Trexis", 7, 4.0)
 
         self.assertFalse(miss["loaded"])
         self.assertEqual(miss["meta"]["company"], "Trexis")
 
     def test_navigation_autoload_request_keeps_cost_splash_on_demand(self):
-        from sections import cost_contract_splash
+        from sections import cost_contract_evidence_load
         from sections.cost_contract_contracts import (
             _COST_SPLASH_AUTOLOAD_SCOPE_KEY,
             _COST_SPLASH_KEY,
@@ -65,19 +65,19 @@ class CostContractSplashMonitoringLoaderTests(unittest.TestCase):
             "_overwatch_pending_autoload_section": "Cost & Contract",
             "_overwatch_pending_autoload_started_at": "2026-06-24T00:00:00",
         }
-        with patch.object(cost_contract_splash.st, "session_state", state), patch.object(
-            cost_contract_splash.st,
+        with patch.object(cost_contract_evidence_load.st, "session_state", state), patch.object(
+            cost_contract_evidence_load.st,
             "caption",
         ) as caption, patch.object(
-            cost_contract_splash,
+            cost_contract_evidence_load,
             "get_session_for_action",
             side_effect=AssertionError("Cost first paint must not request Snowflake"),
         ), patch.object(
-            cost_contract_splash,
+            cost_contract_evidence_load,
             "run_query_or_raise",
             side_effect=AssertionError("Cost first paint must not query Snowflake"),
         ):
-            splash = cost_contract_splash._maybe_autoload_cost_splash("ALFA", 7, 4.0)
+            splash = cost_contract_evidence_load._maybe_autoload_cost_splash("ALFA", 7, 4.0)
 
         self.assertFalse(splash["loaded"])
         self.assertNotIn(_COST_SPLASH_KEY, state)
@@ -91,7 +91,7 @@ class CostContractSplashMonitoringLoaderTests(unittest.TestCase):
         self.assertIn("without loading cost facts", caption.call_args.args[0])
 
     def test_cost_splash_summary_preserves_service_total_and_warehouse_basis(self):
-        from sections.cost_contract_splash import _cost_splash_summary
+        from sections.cost_contract_evidence_load import _cost_splash_summary
 
         service_splash = {
             "cockpit": pd.DataFrame([{

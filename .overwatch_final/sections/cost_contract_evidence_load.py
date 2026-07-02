@@ -1,4 +1,4 @@
-# sections/cost_contract_splash.py - Cost & Contract splash loading and summary helpers.
+# sections/cost_contract_evidence_load.py - Cost & Contract explicit evidence loading and summary helpers.
 from __future__ import annotations
 
 import streamlit as st

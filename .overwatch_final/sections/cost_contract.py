@@ -152,7 +152,7 @@ from sections.cost_contract_sql import (
     _cortex_daily_table,
     _warehouse_hourly_table,
 )
-from sections.cost_contract_splash import (
+from sections.cost_contract_evidence_load import (
     _cached_cost_splash,
     _cost_command_lanes,
     _cost_splash_meta,

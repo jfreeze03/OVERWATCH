@@ -28,8 +28,6 @@ from .types import (
 from .queue import (
     _priority_exceptions,
 )
-
-_clean_display_text = clean_display_text
 from .incidents import (
     _dba_runbook_route_templates,
 )
@@ -793,20 +791,20 @@ def _dba_morning_command_queue(brief: pd.DataFrame | None, max_rows: int = 3) ->
         focus = _dba_morning_focus_note(row)
         rows.append({
             "MORNING_RANK": safe_int(row.get("MORNING_RANK")),
-            "MORNING_DECISION": _clean_display_text(row.get("MORNING_DECISION", "")),
-            "TARGET": _clean_display_text(f"{route} / {workflow}" if workflow else route),
-            "ACTION": _clean_display_text(row.get("FIRST_MOVE", "")),
-            "SLA_CLOCK": _clean_display_text(row.get("SLA_CLOCK", "")),
+            "MORNING_DECISION": clean_display_text(row.get("MORNING_DECISION", "")),
+            "TARGET": clean_display_text(f"{route} / {workflow}" if workflow else route),
+            "ACTION": clean_display_text(row.get("FIRST_MOVE", "")),
+            "SLA_CLOCK": clean_display_text(row.get("SLA_CLOCK", "")),
             "FOCUS": focus or "No focused query/object",
-            "GATE": _clean_display_text(row.get("GO_NO_GO") or row.get("STOP_RULE", "")),
-            "APPROVAL_GATE": _clean_display_text(row.get("APPROVAL_GATE", "")),
-            "EVIDENCE_PACKAGE": _clean_display_text(row.get("EVIDENCE_PACKAGE", "")),
-            "VERIFY_NEXT": _clean_display_text(row.get("VERIFY_NEXT", "")),
-            "EXECUTION_BOUNDARY": _clean_display_text(row.get("EXECUTION_BOUNDARY", "")),
-            "ROUTE_TELEMETRY_STATE": _clean_display_text(
+            "GATE": clean_display_text(row.get("GO_NO_GO") or row.get("STOP_RULE", "")),
+            "APPROVAL_GATE": clean_display_text(row.get("APPROVAL_GATE", "")),
+            "EVIDENCE_PACKAGE": clean_display_text(row.get("EVIDENCE_PACKAGE", "")),
+            "VERIFY_NEXT": clean_display_text(row.get("VERIFY_NEXT", "")),
+            "EXECUTION_BOUNDARY": clean_display_text(row.get("EXECUTION_BOUNDARY", "")),
+            "ROUTE_TELEMETRY_STATE": clean_display_text(
                 row.get("ROUTE_TELEMETRY_STATE", row.get("OWNER_PROOF_STATE", ""))
             ),
-            "SOURCE_SIGNALS": _clean_display_text(row.get("SOURCE_SIGNALS", "")),
+            "SOURCE_SIGNALS": clean_display_text(row.get("SOURCE_SIGNALS", "")),
         })
     return pd.DataFrame(rows)
 
@@ -818,7 +816,7 @@ def _dba_morning_brief_detail_view(brief: pd.DataFrame | None) -> pd.DataFrame:
     brief_view = brief.copy()
     for column in list(brief_view.columns):
         if brief_view[column].dtype == object:
-            brief_view[column] = brief_view[column].map(_clean_display_text)
+            brief_view[column] = brief_view[column].map(clean_display_text)
     rename_pairs = (
         ("OWNER_PROOF_STATE", "ROUTE_TELEMETRY_STATE"),
         ("OWNER_ROUTE", "ESCALATION_ROUTE"),
@@ -850,23 +848,23 @@ def _build_dba_morning_brief_markdown(
         lines.append("- No morning brief rows were available.")
     else:
         for _, row in rows.sort_values("MORNING_RANK").iterrows():
-            workflow = _clean_display_text(row.get("WORKFLOW", "")).strip()
+            workflow = clean_display_text(row.get("WORKFLOW", "")).strip()
             workflow_note = f" / {workflow}" if workflow else ""
             focus_note = _dba_morning_focus_note(row)
             focus_sentence = f" Target signal: {focus_note}." if focus_note else ""
             lines.append(
-                f"- {safe_int(row.get('MORNING_RANK'))}. [{_clean_display_text(row.get('STATE', ''))}] "
-                f"{_clean_display_text(row.get('ROUTE', ''))}{workflow_note}: {_clean_display_text(row.get('FIRST_MOVE', ''))} "
-                f"Decision: {_clean_display_text(row.get('MORNING_DECISION', ''))}. "
-                f"SLA: {_clean_display_text(row.get('SLA_CLOCK', ''))}. "
-                f"Why: {_clean_display_text(row.get('WHY_NOW', ''))}. "
-                f"Gate: {_clean_display_text(row.get('GO_NO_GO', ''))}. "
-                f"Telemetry basis: {_clean_display_text(row.get('PROOF_REQUIRED', ''))}. "
-                f"Review gate: {_clean_display_text(row.get('APPROVAL_GATE', ''))}. "
-                f"Telemetry package: {_clean_display_text(row.get('EVIDENCE_PACKAGE', ''))}. "
-                f"Confirm next: {_clean_display_text(row.get('VERIFY_NEXT', ''))}. "
-                f"Boundary: {_clean_display_text(row.get('EXECUTION_BOUNDARY', ''))}. "
-                f"Stop: {_clean_display_text(row.get('STOP_RULE', ''))}."
+                f"- {safe_int(row.get('MORNING_RANK'))}. [{clean_display_text(row.get('STATE', ''))}] "
+                f"{clean_display_text(row.get('ROUTE', ''))}{workflow_note}: {clean_display_text(row.get('FIRST_MOVE', ''))} "
+                f"Decision: {clean_display_text(row.get('MORNING_DECISION', ''))}. "
+                f"SLA: {clean_display_text(row.get('SLA_CLOCK', ''))}. "
+                f"Why: {clean_display_text(row.get('WHY_NOW', ''))}. "
+                f"Gate: {clean_display_text(row.get('GO_NO_GO', ''))}. "
+                f"Telemetry basis: {clean_display_text(row.get('PROOF_REQUIRED', ''))}. "
+                f"Review gate: {clean_display_text(row.get('APPROVAL_GATE', ''))}. "
+                f"Telemetry package: {clean_display_text(row.get('EVIDENCE_PACKAGE', ''))}. "
+                f"Confirm next: {clean_display_text(row.get('VERIFY_NEXT', ''))}. "
+                f"Boundary: {clean_display_text(row.get('EXECUTION_BOUNDARY', ''))}. "
+                f"Stop: {clean_display_text(row.get('STOP_RULE', ''))}."
                 f"{focus_sentence}"
             )
     lines.extend([
@@ -1169,9 +1167,9 @@ def _build_dba_shift_handoff_markdown(
         for _, row in rows.iterrows():
             lines.append(
                 f"- [{row.get('STATE', '')}] {row.get('LANE', '')}: {row.get('EVIDENCE', '')}. "
-                f"Route: {_clean_display_text(row.get('OWNER_OR_ROUTE', ''))}. "
-                f"Next: {_clean_display_text(row.get('NEXT_ACTION', ''))}. "
-                f"Telemetry basis: {_clean_display_text(row.get('PROOF_REQUIRED', ''))}."
+                f"Route: {clean_display_text(row.get('OWNER_OR_ROUTE', ''))}. "
+                f"Next: {clean_display_text(row.get('NEXT_ACTION', ''))}. "
+                f"Telemetry basis: {clean_display_text(row.get('PROOF_REQUIRED', ''))}."
             )
     lines.extend([
         "",

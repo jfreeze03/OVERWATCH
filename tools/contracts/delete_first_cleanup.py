@@ -125,6 +125,19 @@ def _classify_python(root: Path, path: Path) -> dict[str, Any]:
                 replacement_if_deleted=".overwatch_final/section_dispatch.py current launch routes",
                 delete_plan="quarantine/remove after verifying no current route imports it",
             )
+        elif rel == ".overwatch_final/sections/query_investigation_root_cause.py":
+            row.update(
+                classification="keep_runtime",
+                owner="Workload Operations",
+                purpose="Explicit-action Query Investigation root-cause brief.",
+                user_visible_feature="Workload Operations / Query Investigation",
+                launch_value="loads bounded root-cause detail only after a Workload action",
+                runtime_path="explicit_action:workload_operations/query_investigation_root_cause",
+                admin_only=False,
+                daily_safe=True,
+                keep_reason="governed explicit-action Workload submodule",
+                replacement_if_deleted="Workload Operations Query Search bounded exact lookup",
+            )
         else:
             classification = "keep_admin_setup" if slug in {"setup_health", "settings"} else "keep_runtime"
             row.update(

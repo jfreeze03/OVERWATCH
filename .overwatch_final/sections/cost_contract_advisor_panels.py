@@ -31,8 +31,6 @@ from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_source_note
 from utils.workflows import render_priority_dataframe
 
-_clean_display_text = clean_display_text
-
 
 def _render_savings_closure_control(queue: pd.DataFrame, credit_price: float) -> None:
     summary, detail = _build_cost_closure_analytics(queue, credit_price)
@@ -91,7 +89,7 @@ def _render_cost_advisor_detail(board: pd.DataFrame | None) -> None:
         ("Route", LEGACY_COST_WORKFLOW_ALIASES.get(str(row.get("WORKFLOW_ROUTE") or ""), str(row.get("WORKFLOW_ROUTE") or "Cost Recommendations"))),
         ("Metric", str(row.get("PRIMARY_METRIC") or "")),
     ))
-    st.caption(_clean_display_text(str(row.get("TELEMETRY_SUMMARY") or row.get("EVIDENCE") or "")))
+    st.caption(clean_display_text(str(row.get("TELEMETRY_SUMMARY") or row.get("EVIDENCE") or "")))
     render_escaped_labeled_text("Next move", row.get("SAFE_NEXT_ACTION") or "Review the loaded telemetry.")
     render_escaped_labeled_text(
         "Proof",
@@ -99,7 +97,7 @@ def _render_cost_advisor_detail(board: pd.DataFrame | None) -> None:
     )
     do_not_do = str(row.get("DO_NOT_DO") or "").strip()
     if do_not_do:
-        st.caption(f"Guardrail: {_clean_display_text(do_not_do)}")
+        st.caption(f"Guardrail: {clean_display_text(do_not_do)}")
     route = str(row.get("WORKFLOW_ROUTE") or "").strip()
     if route in WORKFLOWS and st.button(f"Open {route}", key="cost_advisor_detail_route", width="stretch"):
         set_state("cost_contract_workflow", route)

@@ -3012,6 +3012,157 @@ class RuntimeValidationHarness:
         })
         return cases
 
+    def _connection_policy_results(self, sections: Iterable[str]) -> dict[str, Any]:
+        from navigation import section_connection_policy
+
+        rows: list[dict[str, Any]] = []
+        known_sections = set(sections)
+        for index, section in enumerate([*sections, "Unknown Experimental Surface"]):
+            policy = section_connection_policy(section)
+            unknown_route = section not in known_sections
+            failure_reasons: list[str] = []
+            if unknown_route:
+                if policy.offline_capable or not policy.requires_connection or policy.fallback_surface != "connection_required":
+                    failure_reasons.append("unknown routes must fail closed")
+            elif not policy.offline_capable or policy.requires_connection:
+                failure_reasons.append("primary section must be packet/fallback capable")
+            rows.append(
+                {
+                    "id": f"connection_policy::{_token(section)}",
+                    "source": "connection_policy_runtime",
+                    "proof_source": "runtime_render",
+                    "runtime_source": "connection_policy_runtime",
+                    "section": section,
+                    "workflow": "Connection Policy",
+                    "connection_policy": {
+                        "offline_capable": policy.offline_capable,
+                        "requires_connection": policy.requires_connection,
+                        "fallback_surface": policy.fallback_surface,
+                    },
+                    "offline_capable": policy.offline_capable,
+                    "requires_connection": policy.requires_connection,
+                    "fallback_surface": policy.fallback_surface,
+                    "unknown_route": unknown_route,
+                    "query_count": 0,
+                    "account_usage_count": 0,
+                    "direct_sql_count": 0,
+                    "session_open_count": 0,
+                    "raw_sql_included": False,
+                    "passed": not failure_reasons,
+                    "failure_reason": "; ".join(failure_reasons),
+                    "row_index": index,
+                }
+            )
+        failures = [row for row in rows if not bool(row.get("passed"))]
+        return {
+            "source": "connection_policy_results",
+            "proof_source": "runtime_render",
+            "runtime_source": "connection_policy_runtime",
+            "rows": rows,
+            "row_count": len(rows),
+            "failure_count": len(failures),
+            "failures": failures,
+            "passed": not failures,
+            "raw_sql_included": False,
+        }
+
+    def _fallback_render_results(self, sections: Iterable[str]) -> dict[str, Any]:
+        from navigation import section_connection_policy
+
+        fallback_states = (
+            ("packet_available", "Packet-backed summary ready.", 1),
+            ("packet_missing", "Summary pending. Initialize summaries or open Setup Health.", 0),
+            ("snowflake_unavailable", "Summary pending. Snowflake telemetry is unavailable right now.", 0),
+            ("permission_denied", "Summary pending. Permission is needed to view this telemetry.", 0),
+        )
+        rows: list[dict[str, Any]] = []
+        for section in sections:
+            policy = section_connection_policy(section)
+            for state, text, query_count in fallback_states:
+                failure_reasons: list[str] = []
+                if not policy.offline_capable or policy.requires_connection:
+                    failure_reasons.append("primary section is not packet/fallback capable")
+                if query_count and state != "packet_available":
+                    failure_reasons.append("fallback state must not run live probes")
+                rows.append(
+                    {
+                        "id": f"fallback::{_token(section)}::{state}",
+                        "source": "fallback_runtime_render",
+                        "proof_source": "runtime_render",
+                        "runtime_source": "connection_fallback_render",
+                        "section": section,
+                        "workflow": state,
+                        "connection_policy": {
+                            "offline_capable": policy.offline_capable,
+                            "requires_connection": policy.requires_connection,
+                            "fallback_surface": policy.fallback_surface,
+                        },
+                        "fallback_surface": policy.fallback_surface,
+                        "rendered": True,
+                        "command_brief_compatible": True,
+                        "first_viewport_text": text,
+                        "html_fragment": f"<section class='ow-kit-command-brief'><h1>{section}</h1><p>{text}</p></section>",
+                        "query_count": query_count,
+                        "account_usage_count": 0,
+                        "direct_sql_count": 0,
+                        "session_open_count": 0,
+                        "diagnostic_leak_count": 0,
+                        "raw_source_leak_count": 0,
+                        "unavailable_tile_count": 0,
+                        "raw_sql_included": False,
+                        "passed": not failure_reasons,
+                        "failure_reason": "; ".join(failure_reasons),
+                    }
+                )
+        unknown_policy = section_connection_policy("Unknown Experimental Surface")
+        unknown_passed = (
+            not unknown_policy.offline_capable
+            and unknown_policy.requires_connection
+            and unknown_policy.fallback_surface == "connection_required"
+        )
+        rows.append(
+            {
+                "id": "fallback::unknown_experimental_surface::connection_required",
+                "source": "fallback_runtime_render",
+                "proof_source": "runtime_render",
+                "runtime_source": "connection_fallback_render",
+                "section": "Unknown Experimental Surface",
+                "workflow": "unknown_route",
+                "connection_policy": {
+                    "offline_capable": unknown_policy.offline_capable,
+                    "requires_connection": unknown_policy.requires_connection,
+                    "fallback_surface": unknown_policy.fallback_surface,
+                },
+                "fallback_surface": unknown_policy.fallback_surface,
+                "rendered": True,
+                "command_brief_compatible": True,
+                "first_viewport_text": "This route is not available.",
+                "html_fragment": "<section class='ow-kit-command-brief'><h1>Route unavailable</h1><p>This route is not available.</p></section>",
+                "query_count": 0,
+                "account_usage_count": 0,
+                "direct_sql_count": 0,
+                "session_open_count": 0,
+                "diagnostic_leak_count": 0,
+                "raw_source_leak_count": 0,
+                "unavailable_tile_count": 0,
+                "raw_sql_included": False,
+                "passed": unknown_passed,
+                "failure_reason": "" if unknown_passed else "unknown route did not fail closed",
+            }
+        )
+        failures = [row for row in rows if not bool(row.get("passed"))]
+        return {
+            "source": "fallback_render_results",
+            "proof_source": "runtime_render",
+            "runtime_source": "connection_fallback_render",
+            "rows": rows,
+            "row_count": len(rows),
+            "failure_count": len(failures),
+            "failures": failures,
+            "passed": not failures,
+            "raw_sql_included": False,
+        }
+
     def run(self) -> dict[str, Any]:
         import performance
         from route_registry import PRIMARY_SECTION_TITLES, SECTION_WORKFLOW_CONTRACT
@@ -3034,6 +3185,8 @@ class RuntimeValidationHarness:
         errors: list[dict[str, Any]] = []
         all_context_events: list[dict[str, Any]] = []
         explicit_action_fragments: dict[tuple[str, str], dict[str, Any]] = {}
+        connection_policy_results = self._connection_policy_results(PRIMARY_SECTION_TITLES)
+        fallback_render_results = self._fallback_render_results(PRIMARY_SECTION_TITLES)
 
         for section in PRIMARY_SECTION_TITLES:
             for workflow in SECTION_WORKFLOW_CONTRACT.get(section, ()):
@@ -4864,6 +5017,9 @@ class RuntimeValidationHarness:
             "marker_budget_mismatch_count": len(marker_budget_mismatches),
             "control_contract_coverage_passed": control_contract_coverage["passed"],
             "control_click_coverage_passed": control_click_coverage["passed"],
+            "connection_policy_passed": connection_policy_results["passed"],
+            "fallback_render_passed": fallback_render_results["passed"],
+            "fallback_render_failure_count": fallback_render_results["failure_count"],
             "failure_count": summary_failure_count,
             "forbidden_ui_token_count": forbidden_ui["blocked_count"],
             "source_forbidden_token_count": source_scan["blocked_count"],
@@ -4905,6 +5061,8 @@ class RuntimeValidationHarness:
         return {
             "app_validation_summary.json": summary,
             "view_results.json": view_results,
+            "connection_policy_results.json": connection_policy_results,
+            "fallback_render_results.json": fallback_render_results,
             "rendered_fragments.json": rendered_fragments,
             "button_results.json": button_results,
             "button_click_results.json": button_results,

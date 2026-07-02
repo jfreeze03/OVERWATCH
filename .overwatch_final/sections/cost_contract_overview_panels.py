@@ -69,7 +69,7 @@ def _render_cost_splash_next_move(summary: dict) -> None:
             st.write("")
             if st.button(
                 "Open workflow",
-                key="cost_contract_splash_next_workflow",
+                key="cost_contract_evidence_load_next_workflow",
                 help=detail,
                 width="stretch",
             ):

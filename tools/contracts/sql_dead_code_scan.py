@@ -19,13 +19,7 @@ OLD_SURFACE_MARKERS = (
     "lane board",
 )
 
-RETAINED_OBSOLETE_FILES = {
-    ".overwatch_final/sections/cost_contract_splash.py": {
-        "owner": "Cost & Contract launch owner",
-        "reason": "Retained implementation helper while current Cost & Contract entry points migrate to packet-first panels.",
-        "review": "Review after launch once Cost Workbench evidence actions stabilize.",
-    }
-}
+RETAINED_OBSOLETE_FILES: dict[str, dict[str, str]] = {}
 
 
 def _now() -> str:

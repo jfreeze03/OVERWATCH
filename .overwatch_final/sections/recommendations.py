@@ -44,8 +44,6 @@ from utils.display_safety import clean_display_text
 from utils.recommendation_intelligence import build_automation_readiness_board, harden_recommendation
 from utils.workflows import clean_operator_display_text, render_load_status, render_priority_dataframe, render_workflow_selector
 
-_clean_display_text = clean_display_text
-
 
 RECOMMENDATION_PANES = (
     "Recommendations",
@@ -58,7 +56,7 @@ RECOMMENDATION_PANES = (
 
 def _plain_html(value: object) -> str:
     """Render generated object/action text literally inside small HTML fragments."""
-    return html_escape(_clean_display_text(value), quote=False)
+    return html_escape(clean_display_text(value), quote=False)
 
 
 def _active_company() -> str:
@@ -733,27 +731,27 @@ def _render_warehouse_advisor_detail(advisor: pd.DataFrame) -> None:
         ("Avg Queue", f"{safe_float(row.get('AVG_QUEUE_SEC')):,.1f}s"),
         ("Status", str(row.get("SAVINGS_STATUS") or "Needs Verification")),
     ))
-    st.caption(f"Action posture: {_clean_display_text(posture)}")
+    st.caption(f"Action posture: {clean_display_text(posture)}")
     st.markdown("**Recommendation**")
-    st.caption(_clean_display_text(row.get("RECOMMENDATION") or "Review warehouse telemetry."))
+    st.caption(clean_display_text(row.get("RECOMMENDATION") or "Review warehouse telemetry."))
     st.markdown("**Why this matters**")
-    st.caption(_clean_display_text(row.get("WHY") or "Loaded telemetry indicates the warehouse should be reviewed."))
+    st.caption(clean_display_text(row.get("WHY") or "Loaded telemetry indicates the warehouse should be reviewed."))
     st.markdown("**Safe next step**")
-    st.caption(_clean_display_text(row.get("SAFE_NEXT_STEP") or "Review before changing settings."))
+    st.caption(clean_display_text(row.get("SAFE_NEXT_STEP") or "Review before changing settings."))
     st.markdown("**Execution guardrail**")
-    st.caption(_clean_display_text(row.get("DO_NOT_EXECUTE_UNTIL") or "Do not execute until workload context and rollback evidence are reviewed."))
+    st.caption(clean_display_text(row.get("DO_NOT_EXECUTE_UNTIL") or "Do not execute until workload context and rollback evidence are reviewed."))
     st.markdown("**Validation**")
-    st.caption(_clean_display_text(row.get("VERIFY_NEXT") or "Compare credits and performance after a complete window."))
+    st.caption(clean_display_text(row.get("VERIFY_NEXT") or "Compare credits and performance after a complete window."))
     st.markdown("**Expected impact**")
-    st.caption(_clean_display_text(row.get("EXPECTED_VERIFICATION_IMPACT") or "Post-change telemetry should improve without worse performance or reliability."))
+    st.caption(clean_display_text(row.get("EXPECTED_VERIFICATION_IMPACT") or "Post-change telemetry should improve without worse performance or reliability."))
     assumption = str(row.get("SAVINGS_ASSUMPTION") or "").strip()
     if assumption:
         st.caption(
-            f"Savings type: {_clean_display_text(row.get('SAVINGS_TYPE') or 'No savings claimed')} | "
-            f"Basis: {_clean_display_text(assumption)} "
+            f"Savings type: {clean_display_text(row.get('SAVINGS_TYPE') or 'No savings claimed')} | "
+            f"Basis: {clean_display_text(assumption)} "
             f"Verification window: {safe_int(row.get('VERIFICATION_WINDOW_DAYS'), _warehouse_advisor_verification_window())} day(s)."
         )
-    st.caption(f"Execution path: {_clean_display_text(row.get('ADMIN_WORKFLOW') or 'DBA Control Room > Admin')}")
+    st.caption(f"Execution path: {clean_display_text(row.get('ADMIN_WORKFLOW') or 'DBA Control Room > Admin')}")
 
 
 def _render_warehouse_controls(session) -> None:
@@ -1092,7 +1090,7 @@ def _render_queue(session):
         f"<strong>{_plain_html(row.get('ENTITY_NAME', ''))}</strong> - {_plain_html(row.get('FINDING', ''))}"
         "</div>"
     )
-    st.caption(_clean_display_text(row.get("NEXT_ACTION", "Review the route and current telemetry before action.")))
+    st.caption(clean_display_text(row.get("NEXT_ACTION", "Review the route and current telemetry before action.")))
     render_shell_snapshot((
         ("Status", _row_text(row, "STATUS") or "New"),
         ("Severity", _row_text(row, "SEVERITY") or "Medium"),
@@ -1448,8 +1446,8 @@ def render():
             )
             top_rec = df_recs.iloc[0]
             st.warning(
-                f"Work first: {_clean_display_text(top_rec['Decision'])} for {_clean_display_text(top_rec['Entity'])}. "
-                f"{_clean_display_text(top_rec['Evidence Packet'])} Next: {_clean_display_text(top_rec['Safe Next Action'])}"
+                f"Work first: {clean_display_text(top_rec['Decision'])} for {clean_display_text(top_rec['Entity'])}. "
+                f"{clean_display_text(top_rec['Evidence Packet'])} Next: {clean_display_text(top_rec['Safe Next Action'])}"
             )
             source_notes = st.session_state.get("rec_recommendation_sources", [])
             if source_notes:
@@ -1482,10 +1480,10 @@ def render():
                 for _, rec in df_recs.iterrows():
                     render_escaped_bold_text(f"{rec['Severity']} - {rec['Decision']} - {rec['Entity']}")
                     st.caption(
-                        f"{_clean_display_text(rec['Evidence Packet'])} | Review: {_clean_display_text(rec.get('Review Gate', rec.get('Approval Gate', '')))} | "
-                        f"Boundary: {_clean_display_text(rec['Execution Boundary'])} | {_clean_display_text(rec['Do Not Do'])}"
+                        f"{clean_display_text(rec['Evidence Packet'])} | Review: {clean_display_text(rec.get('Review Gate', rec.get('Approval Gate', '')))} | "
+                        f"Boundary: {clean_display_text(rec['Execution Boundary'])} | {clean_display_text(rec['Do Not Do'])}"
                     )
-                    st.caption(f"Watch: {_clean_display_text(rec['Verify Next'])}")
+                    st.caption(f"Watch: {clean_display_text(rec['Verify Next'])}")
 
             if st.button("Save / refresh these findings in Action Queue", key="rec_save_queue", type="primary"):
                 try:

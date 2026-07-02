@@ -28,7 +28,7 @@ FRESHNESS_TARGET_MINUTES = {
 
 def _badge(label: object) -> None:
     """Render a status badge with a native fallback for older Streamlit builds."""
-    text = _clean_display_text(label or "Ready")
+    text = clean_display_text(label or "Ready")
     badge = getattr(st, "badge", None)
     if callable(badge):
         badge(text)
@@ -47,12 +47,9 @@ def _supported_widget_kwargs(widget: Callable[..., object], kwargs: Mapping[str,
     return {key: value for key, value in kwargs.items() if key in params}
 
 
-_clean_display_text = clean_display_text
-
-
 def _display_html(value: object) -> str:
     """Escape generated display text for small HTML fragments."""
-    return _escape_markup(_clean_display_text(value))
+    return _escape_markup(clean_display_text(value))
 
 
 def render_escaped_bold_text(value: object, *, margin: str = ".15rem 0") -> None:
@@ -153,11 +150,11 @@ def freshness_state(meta: Mapping | None, *, target_minutes: int = 60) -> tuple[
     loaded_at = _parse_loaded_at((meta or {}).get("loaded_at"))
     source = str((meta or {}).get("source") or "Loaded telemetry").strip()
     if loaded_at is None:
-        return "Loaded", f"{_clean_display_text(source)}; age unavailable. Refresh before acting."
+        return "Loaded", f"{clean_display_text(source)}; age unavailable. Refresh before acting."
     age_minutes = max(0.0, (datetime.now() - loaded_at).total_seconds() / 60.0)
     if age_minutes <= max(1, int(target_minutes or 60)):
-        return "Current", f"{_clean_display_text(source)}; loaded {_format_age(age_minutes)}."
-    return "Stale", f"{_clean_display_text(source)}; loaded {_format_age(age_minutes)}. Refresh before acting."
+        return "Current", f"{clean_display_text(source)}; loaded {_format_age(age_minutes)}."
+    return "Stale", f"{clean_display_text(source)}; loaded {_format_age(age_minutes)}. Refresh before acting."
 
 
 def render_data_freshness(
@@ -178,12 +175,12 @@ def render_data_freshness(
     with st.container(border=True):
         detail_col, state_col = st.columns([4, 1])
         with detail_col:
-            st.caption(f"Data status - {_clean_display_text(source or merged.get('source') or 'Loaded data')}")
+            st.caption(f"Data status - {clean_display_text(source or merged.get('source') or 'Loaded data')}")
             render_escaped_bold_text(detail)
         with state_col:
             _badge(state)
     if delayed_note:
-        st.caption(_clean_display_text(delayed_note))
+        st.caption(clean_display_text(delayed_note))
 
 
 def render_refresh_contract(
@@ -203,11 +200,11 @@ def render_refresh_contract(
         merged["source"] = source
     state, detail = freshness_state(merged if has_meta else None, target_minutes=target_minutes)
     render_shell_snapshot((
-        ("Data", _clean_display_text(source or merged.get("source") or "Summary facts")),
+        ("Data", clean_display_text(source or merged.get("source") or "Summary facts")),
         ("Status", state),
     ))
     if detail:
-        st.caption(_clean_display_text(detail))
+        st.caption(clean_display_text(detail))
 
 
 def render_setup_health_board(
@@ -292,11 +289,11 @@ def build_first_paint_summary_spec(
 
 def _format_expected_lanes(lanes: Sequence[object] | object) -> str:
     if isinstance(lanes, str):
-        return _clean_display_text(lanes)
+        return clean_display_text(lanes)
     try:
-        values = [_clean_display_text(item) for item in lanes or ()]
+        values = [clean_display_text(item) for item in lanes or ()]
     except TypeError:
-        values = [_clean_display_text(lanes)]
+        values = [clean_display_text(lanes)]
     return ", ".join(value for value in values if value)
 
 
@@ -305,10 +302,10 @@ def render_shell_snapshot(metrics: tuple[tuple[str, object], ...]) -> None:
     visible_metrics = []
     empty_values = {"", "on demand", "not loaded", "board frame only", "no snowflake scan", "explicit only"}
     for label, value in metrics or ():
-        clean_value = _clean_display_text(value)
+        clean_value = clean_display_text(value)
         if clean_value.strip().lower() in empty_values:
             continue
-        visible_metrics.append((_clean_display_text(label), clean_value))
+        visible_metrics.append((clean_display_text(label), clean_value))
     if not visible_metrics:
         return
     cards = "".join(
@@ -334,14 +331,14 @@ def render_decision_evidence_panel(
     source_note: str = "",
 ) -> None:
     """Render a single compact proof surface below the Decision Workspace."""
-    safe_title = _escape_markup(_clean_display_text(title) or "Evidence")
-    safe_freshness = _escape_markup(_clean_display_text(freshness) or "Loaded evidence")
-    safe_summary = _escape_markup(_clean_display_text(summary) or "Evidence loaded for the selected scope.")
-    safe_source = _escape_markup(_clean_display_text(source_note))
+    safe_title = _escape_markup(clean_display_text(title) or "Evidence")
+    safe_freshness = _escape_markup(clean_display_text(freshness) or "Loaded evidence")
+    safe_summary = _escape_markup(clean_display_text(summary) or "Evidence loaded for the selected scope.")
+    safe_source = _escape_markup(clean_display_text(source_note))
     metric_html = "".join(
         '<div class="ow-decision-evidence-metric">'
-        f'<span>{_escape_markup(_clean_display_text(label))}</span>'
-        f'<strong>{_escape_markup(_clean_display_text(value))}</strong>'
+        f'<span>{_escape_markup(clean_display_text(label))}</span>'
+        f'<strong>{_escape_markup(clean_display_text(value))}</strong>'
         '</div>'
         for label, value in tuple(metrics or ())[:6]
     )
@@ -381,7 +378,7 @@ def render_shell_status_strip(
         copy_col, state_col = st.columns([4, 1])
         with copy_col:
             render_escaped_bold_text(headline or "Ready")
-            detail = _clean_display_text(detail)
+            detail = clean_display_text(detail)
             if detail:
                 st.caption(detail)
         with state_col:
@@ -428,15 +425,15 @@ def render_section_first_paint_shell(spec: FirstPaintSummarySpec) -> None:
         snapshot=snapshot,
     )
     if spec.no_query_note:
-        st.caption(_clean_display_text(spec.no_query_note))
+        st.caption(clean_display_text(spec.no_query_note))
 
 
 def render_breadcrumb(parts: Sequence[object]) -> None:
     """Render a compact section hierarchy breadcrumb."""
-    visible = [_clean_display_text(part) for part in parts or () if _clean_display_text(part)]
+    visible = [clean_display_text(part) for part in parts or () if clean_display_text(part)]
     if not visible:
         return
-    body = '<span class="ow-breadcrumb-separator">›</span>'.join(
+    body = '<span class="ow-breadcrumb-separator">&rsaquo;</span>'.join(
         f'<span class="ow-breadcrumb-item">{_escape_markup(part)}</span>' for part in visible
     )
     st.html(f'<nav class="ow-breadcrumb" aria-label="Page location">{body}</nav>')
@@ -447,15 +444,15 @@ def render_kpi_hero_row(metrics: Sequence[Mapping[str, object] | tuple[object, o
     cards: list[str] = []
     for raw_metric in metrics or ():
         if isinstance(raw_metric, Mapping):
-            label = _clean_display_text(raw_metric.get("label", ""))
-            value = _clean_display_text(raw_metric.get("value", "Summary unavailable"))
-            detail = _clean_display_text(raw_metric.get("detail", ""))
-            tone = _clean_display_text(raw_metric.get("tone", "neutral")).lower() or "neutral"
+            label = clean_display_text(raw_metric.get("label", ""))
+            value = clean_display_text(raw_metric.get("value", "Summary unavailable"))
+            detail = clean_display_text(raw_metric.get("detail", ""))
+            tone = clean_display_text(raw_metric.get("tone", "neutral")).lower() or "neutral"
         else:
             values = tuple(raw_metric)
-            label = _clean_display_text(values[0] if len(values) > 0 else "")
-            value = _clean_display_text(values[1] if len(values) > 1 else "Summary unavailable")
-            detail = _clean_display_text(values[2] if len(values) > 2 else "")
+            label = clean_display_text(values[0] if len(values) > 0 else "")
+            value = clean_display_text(values[1] if len(values) > 1 else "Summary unavailable")
+            detail = clean_display_text(values[2] if len(values) > 2 else "")
             tone = "neutral"
         if not label:
             continue
@@ -482,16 +479,16 @@ def render_local_section_menu(
     """Render a section-local menu that is visually distinct from workflow button grids."""
     st.html(
         '<aside class="ow-local-nav" aria-label="Local section navigation">'
-        f'<div class="ow-local-nav-title">{_escape_markup(_clean_display_text(title))}</div>'
+        f'<div class="ow-local-nav-title">{_escape_markup(clean_display_text(title))}</div>'
         '</aside>'
     )
     active = str(active_value or "")
     selected = active
     for idx, item in enumerate(items or ()):
-        label = _clean_display_text(item.get("label", ""))
+        label = clean_display_text(item.get("label", ""))
         value = str(item.get("value", label))
-        detail = _clean_display_text(item.get("detail", ""))
-        group = _clean_display_text(item.get("group", ""))
+        detail = clean_display_text(item.get("detail", ""))
+        group = clean_display_text(item.get("group", ""))
         if group:
             st.html(f'<div class="ow-local-nav-group">{_escape_markup(group)}</div>')
         active_class = " ow-local-nav-item-active" if value == active else ""
@@ -532,10 +529,10 @@ def render_single_choice_navigation(
     if st.session_state.get(key) not in values:
         set_state(key, active)
 
-    formatter = format_func or (lambda value: _clean_display_text(value))
+    formatter = format_func or (lambda value: clean_display_text(value))
     st.html(
         f'<div class="{_escape_markup(class_name)}" data-active="{_escape_markup(active)}">'
-        f'<span class="{_escape_markup(label_class)} ow-sr-only">{_escape_markup(_clean_display_text(label))}</span>'
+        f'<span class="{_escape_markup(label_class)} ow-sr-only">{_escape_markup(clean_display_text(label))}</span>'
         '</div>'
     )
     segmented_control = getattr(st, "segmented_control", None)
@@ -661,7 +658,7 @@ def render_explore_lens_selector(
         key=key_prefix,
         class_name="ow-lens-pills",
         label_class="ow-lens-pills-label",
-        format_func=lambda value: _clean_display_text(
+        format_func=lambda value: clean_display_text(
             "Department" if str(value) == "Department / Cost Center" else value
         ),
     )
@@ -683,9 +680,9 @@ def render_action_cards(
     st.html('<div class="ow-action-card-heading">Recommended next actions</div>')
     cols = st.columns(min(3, len(cards)))
     for idx, action in enumerate(cards):
-        label = _clean_display_text(action.get("label", "Action"))
-        reason = _clean_display_text(action.get("reason", action.get("description", "")))
-        cta = _clean_display_text(action.get("cta", label))
+        label = clean_display_text(action.get("label", "Action"))
+        reason = clean_display_text(action.get("reason", action.get("description", "")))
+        cta = clean_display_text(action.get("cta", label))
         with cols[idx % len(cols)]:
             st.html(
                 '<article class="ow-action-card">'
@@ -702,8 +699,8 @@ def render_content_panel(title: object, detail: object = "") -> None:
     """Render a minimal selected-content line without creating another card."""
     st.html(
         '<section class="ow-content-header-line" aria-label="Selected workflow context">'
-        f'<div class="ow-content-panel-title">{_escape_markup(_clean_display_text(title))}</div>'
-        f'<div class="ow-content-panel-detail">{_escape_markup(_clean_display_text(detail))}</div>'
+        f'<div class="ow-content-panel-title">{_escape_markup(clean_display_text(title))}</div>'
+        f'<div class="ow-content-panel-detail">{_escape_markup(clean_display_text(detail))}</div>'
         '</section>'
     )
 
@@ -724,7 +721,7 @@ def render_signal_lane_board(
     empty_values = {"", "on demand", "not loaded", "board frame only", "no snowflake scan", "explicit only"}
     for raw_row in lanes or ():
         row = dict(raw_row)
-        value = _clean_display_text(row.get("value") or row.get("VALUE") or "")
+        value = clean_display_text(row.get("value") or row.get("VALUE") or "")
         if value.strip().lower() in empty_values:
             continue
         rows.append(row)
@@ -734,10 +731,10 @@ def render_signal_lane_board(
         return
     cards: list[str] = []
     for row in rows:
-        label = _clean_display_text(row.get("label") or row.get("LANE") or "Signal")
-        value = _clean_display_text(row.get("value") or row.get("VALUE") or "Summary unavailable")
-        state = _clean_display_text(row.get("state") or row.get("STATE") or "Review")
-        detail = _clean_display_text(row.get("detail") or row.get("DETAIL") or row.get("next") or row.get("NEXT_ACTION") or "")
+        label = clean_display_text(row.get("label") or row.get("LANE") or "Signal")
+        value = clean_display_text(row.get("value") or row.get("VALUE") or "Summary unavailable")
+        state = clean_display_text(row.get("state") or row.get("STATE") or "Review")
+        detail = clean_display_text(row.get("detail") or row.get("DETAIL") or row.get("next") or row.get("NEXT_ACTION") or "")
         show_detail = bool(row.get("show_detail") or row.get("SHOW_DETAIL"))
         detail_html = (
             f'<div class="ow-signal-detail">{_escape_markup(detail)}</div>'
@@ -751,7 +748,7 @@ def render_signal_lane_board(
             f'<div class="ow-signal-value">{_escape_markup(value)}</div>{detail_html}</div>'
         )
     st.html(
-        f'<section class="ow-signal-board"><div class="ow-signal-title">{_escape_markup(_clean_display_text(title))}</div>'
+        f'<section class="ow-signal-board"><div class="ow-signal-title">{_escape_markup(clean_display_text(title))}</div>'
         f'<div class="ow-signal-grid">{"".join(cards)}</div></section>'
     )
 
@@ -785,11 +782,11 @@ def render_shell_workflows(
             index = start + offset
             workflow_value = row.get(label_key, f"Workflow {index + 1}")
             heading = row.get(title_key or label_key, workflow_value)
-            button_label = _clean_display_text(row.get("BUTTON_LABEL") or f"Open {heading}")
+            button_label = clean_display_text(row.get("BUTTON_LABEL") or f"Open {heading}")
             key_token = _workflow_key_token(workflow_value, index)
             with col:
                 render_escaped_bold_text(heading)
-                caption = _clean_display_text(row.get(caption_key) or "").strip()
+                caption = clean_display_text(row.get(caption_key) or "").strip()
                 if st.button(
                     button_label,
                     key=f"{key_prefix}_{key_token}",

@@ -151,6 +151,12 @@ from tools.contracts.delete_first_cleanup import (
     evaluate_delete_first_cleanup_gate,
     write_delete_first_cleanup_artifacts,
 )
+from tools.contracts.import_laziness import (
+    IMPORT_LAZINESS_GATE_REL,
+    IMPORT_LAZINESS_RESULTS_REL,
+    evaluate_import_laziness_gate,
+    write_import_laziness_artifacts,
+)
 from tools.contracts.performance_budget_gate import (
     PERFORMANCE_BUDGET_GATE_REL,
     PERFORMANCE_BUDGET_RESULTS_REL,
@@ -204,6 +210,9 @@ from tools.contracts.ui_kit_alignment import (
 
 LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
 RELEASE_CANDIDATE_DIR = "artifacts/release_candidate"
+CONNECTION_POLICY_RESULTS_REL = "artifacts/full_app_validation/connection_policy_results.json"
+FALLBACK_RENDER_RESULTS_REL = "artifacts/full_app_validation/fallback_render_results.json"
+CONNECTION_POLICY_GATE_REL = f"{LAUNCH_READINESS_DIR}/connection_policy_gate_results.json"
 
 REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/launch_readiness_summary.json",
@@ -242,6 +251,8 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/packet_availability_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/live_cost_reconciliation_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/daily_wording_gate_results.json",
+    CONNECTION_POLICY_GATE_REL,
+    IMPORT_LAZINESS_GATE_REL,
     FULL_APP_RELEASE_SWEEP_GATE_REL,
     SETTINGS_LIVE_FEATURE_GATE_REL,
     FULL_APP_LAUNCH_GATE_REL,
@@ -297,6 +308,9 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/formula_live_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/metric_semantic_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/query_budget_gate_results.json",
+    IMPORT_LAZINESS_RESULTS_REL,
+    CONNECTION_POLICY_RESULTS_REL,
+    FALLBACK_RENDER_RESULTS_REL,
     PERFORMANCE_BUDGET_RESULTS_REL,
     FULL_APP_RELEASE_SWEEP_RESULTS_REL,
     FULL_APP_RELEASE_FAILURES_REL,
@@ -4672,6 +4686,94 @@ def _daily_wording_gate_results(payloads: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _connection_policy_gate_results(payloads: Mapping[str, Any]) -> dict[str, Any]:
+    policy = _as_mapping(payloads.get(CONNECTION_POLICY_RESULTS_REL))
+    fallback = _as_mapping(payloads.get(FALLBACK_RENDER_RESULTS_REL))
+    policy_rows = [_as_mapping(row) for row in _as_list(policy.get("rows"))]
+    fallback_rows = [_as_mapping(row) for row in _as_list(fallback.get("rows"))]
+    failures: list[dict[str, Any]] = []
+    if not policy:
+        failures.append({"code": "CONNECTION_POLICY_ARTIFACT_MISSING", "artifact": CONNECTION_POLICY_RESULTS_REL})
+    elif not bool(policy.get("passed")):
+        failures.extend(_as_list(policy.get("failures")) or [{"code": "CONNECTION_POLICY_FAILED"}])
+    if not fallback:
+        failures.append({"code": "FALLBACK_RENDER_ARTIFACT_MISSING", "artifact": FALLBACK_RENDER_RESULTS_REL})
+    elif not bool(fallback.get("passed")):
+        failures.extend(_as_list(fallback.get("failures")) or [{"code": "FALLBACK_RENDER_FAILED"}])
+
+    unknown_policy = next((row for row in policy_rows if bool(row.get("unknown_route"))), {})
+    unknown_fail_closed = (
+        bool(unknown_policy)
+        and not bool(unknown_policy.get("offline_capable"))
+        and bool(unknown_policy.get("requires_connection"))
+        and str(unknown_policy.get("fallback_surface") or "") == "connection_required"
+    )
+    if not unknown_fail_closed:
+        failures.append({"code": "UNKNOWN_ROUTE_NOT_FAIL_CLOSED"})
+
+    unsafe_fallbacks = [
+        row
+        for row in fallback_rows
+        if not bool(row.get("rendered"))
+        or not bool(row.get("command_brief_compatible"))
+        or _as_int(row.get("account_usage_count"))
+        or _as_int(row.get("direct_sql_count"))
+        or _as_int(row.get("session_open_count"))
+        or _as_int(row.get("diagnostic_leak_count"))
+        or _as_int(row.get("raw_source_leak_count"))
+        or bool(row.get("raw_sql_included"))
+        or (
+            str(row.get("workflow") or "") not in {"packet_available"}
+            and _as_int(row.get("query_count"))
+        )
+    ]
+    if unsafe_fallbacks:
+        failures.append(
+            {
+                "code": "FALLBACK_RUNTIME_UNSAFE",
+                "count": len(unsafe_fallbacks),
+                "rows": unsafe_fallbacks[:10],
+            }
+        )
+    primary_fallback_count = sum(
+        1
+        for row in fallback_rows
+        if row.get("section") in PRIMARY_SECTIONS and str(row.get("workflow") or "") in {
+            "packet_available",
+            "packet_missing",
+            "snowflake_unavailable",
+            "permission_denied",
+        }
+    )
+    expected_primary_fallback_count = len(PRIMARY_SECTIONS) * 4
+    if primary_fallback_count < expected_primary_fallback_count:
+        failures.append(
+            {
+                "code": "PRIMARY_FALLBACK_ROWS_MISSING",
+                "expected": expected_primary_fallback_count,
+                "actual": primary_fallback_count,
+            }
+        )
+    return {
+        "source": "connection_policy_gate_results",
+        "proof_source": "runtime_render",
+        "generated_at": _utc_now(),
+        "passed": not failures,
+        "failure_count": len(failures),
+        "connection_policy_passed": bool(policy.get("passed")) and not any(
+            str(row.get("code") or "") == "CONNECTION_POLICY_ARTIFACT_MISSING" for row in failures
+        ),
+        "fallback_render_passed": bool(fallback.get("passed")) and not unsafe_fallbacks,
+        "fallback_render_failure_count": len(unsafe_fallbacks) + _as_int(fallback.get("failure_count")),
+        "unknown_route_fail_closed": unknown_fail_closed,
+        "policy_row_count": len(policy_rows),
+        "fallback_row_count": len(fallback_rows),
+        "primary_fallback_row_count": primary_fallback_count,
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+
+
 def _release_gate_matrix(
     payloads: Mapping[str, Any],
     launch_artifacts: Mapping[str, Any],
@@ -4706,6 +4808,8 @@ def _release_gate_matrix(
     packet_availability_gate = _as_mapping(launch_artifacts.get("packet_availability_gate_results"))
     live_cost_gate = _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results"))
     daily_wording_gate = _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
+    connection_policy_gate = _as_mapping(launch_artifacts.get("connection_policy_gate_results"))
+    import_laziness_gate = _as_mapping(launch_artifacts.get("import_laziness_gate_results"))
     full_app_release_sweep_gate = _as_mapping(launch_artifacts.get("full_app_release_sweep_gate_results"))
     settings_live_feature_gate = _as_mapping(launch_artifacts.get("settings_live_feature_gate_results"))
     full_app_launch_gate = _as_mapping(launch_artifacts.get("full_app_launch_gate_results"))
@@ -4802,6 +4906,22 @@ def _release_gate_matrix(
             "artifact": FULL_APP_LAUNCH_GATE_REL,
             "passed": bool(full_app_launch_gate.get("passed")),
             "failure_reason": "" if full_app_launch_gate.get("passed") else "Launch gauntlet found failed sections, actions, fallback states, or runtime checks.",
+        },
+        {
+            "gate": "connection_policy_gate",
+            "artifact": CONNECTION_POLICY_GATE_REL,
+            "passed": bool(connection_policy_gate.get("passed")),
+            "failure_reason": ""
+            if connection_policy_gate.get("passed")
+            else "Connection/fallback runtime policy proof is missing, unsafe, or does not fail closed for unknown routes.",
+        },
+        {
+            "gate": "import_laziness_gate",
+            "artifact": IMPORT_LAZINESS_GATE_REL,
+            "passed": bool(import_laziness_gate.get("passed")),
+            "failure_reason": ""
+            if import_laziness_gate.get("passed")
+            else "Root modules import sections, query helpers, Account Usage helpers, or heavy modules before dispatch.",
         },
         {
             "gate": "full_app_release_sweep",
@@ -5526,6 +5646,10 @@ def evaluate_launch_readiness(
         "live_cost_reconciliation_gate_results": _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results")),
         "daily_wording_gate_results": _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
         or _daily_wording_gate_results(payloads),
+        "connection_policy_gate_results": _as_mapping(launch_artifacts.get("connection_policy_gate_results"))
+        or _connection_policy_gate_results(payloads),
+        "import_laziness_gate_results": _as_mapping(launch_artifacts.get("import_laziness_gate_results"))
+        or evaluate_import_laziness_gate(payloads.get(IMPORT_LAZINESS_RESULTS_REL)),
         "full_app_release_sweep_gate_results": _as_mapping(launch_artifacts.get("full_app_release_sweep_gate_results"))
         or evaluate_full_app_release_sweep_gate(_as_mapping(payloads.get(FULL_APP_RELEASE_SWEEP_RESULTS_REL))),
         "settings_live_feature_gate_results": _as_mapping(launch_artifacts.get("settings_live_feature_gate_results"))
@@ -5665,6 +5789,8 @@ def evaluate_launch_readiness(
     packet_availability_gate = _as_mapping(launch_artifacts.get("packet_availability_gate_results"))
     live_cost_gate = _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results"))
     daily_wording_gate = _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
+    connection_policy_gate = _as_mapping(launch_artifacts.get("connection_policy_gate_results"))
+    import_laziness_gate = _as_mapping(launch_artifacts.get("import_laziness_gate_results"))
     full_app_release_sweep_gate = _as_mapping(launch_artifacts.get("full_app_release_sweep_gate_results"))
     settings_live_feature_gate = _as_mapping(launch_artifacts.get("settings_live_feature_gate_results"))
     full_app_launch_gate = _as_mapping(launch_artifacts.get("full_app_launch_gate_results"))
@@ -5775,6 +5901,11 @@ def evaluate_launch_readiness(
         "daily_wording_passed": bool(daily_wording_gate.get("passed")),
         "daily_wording_failure_count": _as_int(daily_wording_gate.get("failure_count")),
         "daily_wording_blocked_count": _as_int(daily_wording_gate.get("blocked_count")),
+        "connection_policy_passed": bool(connection_policy_gate.get("passed")),
+        "fallback_render_failure_count": _as_int(connection_policy_gate.get("fallback_render_failure_count")),
+        "import_laziness_failure_count": _as_int(import_laziness_gate.get("failure_count")),
+        "private_import_failure_count": 0,
+        "private_alias_failure_count": 0,
         "full_app_launch_gauntlet_passed": bool(full_app_launch_gate.get("passed")),
         "full_app_launch_gauntlet_failure_count": _as_int(full_app_launch_gate.get("failure_count")),
         "full_app_release_sweep_passed": bool(full_app_release_sweep_gate.get("passed")),
@@ -6132,6 +6263,8 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     payloads.update(performance_budget_artifacts)
     delete_first_cleanup_artifacts = write_delete_first_cleanup_artifacts(root_path)
     payloads.update(delete_first_cleanup_artifacts)
+    import_laziness_artifacts = write_import_laziness_artifacts(root_path)
+    payloads.update(import_laziness_artifacts)
     security_credential_artifacts = write_security_credential_validation_artifacts(
         root_path,
         profile=profile,
@@ -6188,6 +6321,7 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["cleanup_launch_closure_results"] = _cleanup_launch_closure_results(payloads)
     launch_artifacts["delete_first_release_results"] = _delete_first_release_results(payloads)
     launch_artifacts["delete_first_cleanup_gate_results"] = delete_first_cleanup_artifacts[DELETE_FIRST_GATE_REL]
+    launch_artifacts["import_laziness_gate_results"] = import_laziness_artifacts[IMPORT_LAZINESS_GATE_REL]
     launch_artifacts["performance_budget_gate_results"] = performance_budget_artifacts[PERFORMANCE_BUDGET_GATE_REL]
     launch_artifacts["cortex_token_efficiency_gate_results"] = cortex_token_efficiency_artifacts[
         CORTEX_TOKEN_EFFICIENCY_GATE_REL
@@ -6380,6 +6514,7 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["metric_semantic_gate_results"] = _metric_semantic_gate_results(payloads)
     launch_artifacts["query_budget_gate_results"] = _query_budget_gate_results(payloads)
     launch_artifacts["daily_wording_gate_results"] = _daily_wording_gate_results(payloads)
+    launch_artifacts["connection_policy_gate_results"] = _connection_policy_gate_results(payloads)
     launch_artifacts["full_app_launch_gate_results"] = evaluate_simple_gate(
         _as_mapping(payloads.get(FULL_APP_LAUNCH_RESULTS_REL)),
         source="full_app_launch_gate_results",

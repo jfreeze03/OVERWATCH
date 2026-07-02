@@ -763,6 +763,19 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
         self.assertNotIn("CredWrite", sanitized)
         self.assertNotIn("The stub received bad data", sanitized)
 
+    def test_sanitizer_removes_snowflake_cli_warning_paths(self):
+        sanitized = sanitize_text(
+            r"C:\Users\jfree\AppData\Roaming\Python\Python312\site-packages\snowflake\cli\api\config.py:297: "
+            "UserWarning: Encoding mismatch detected.\n"
+            "  warnings.warn(\n"
+            "+- Error ---------------------------------------------------------------------+"
+        )
+
+        self.assertIn("Snowflake CLI warning redacted", sanitized)
+        self.assertNotIn("site-packages", sanitized)
+        self.assertNotIn("config.py", sanitized)
+        self.assertNotIn("warnings.warn", sanitized)
+
     def test_runbook_mentions_connection_test_artifacts_and_live_profile_policy(self):
         text = (ROOT / "docs" / "snowflake_cli_live_validation.md").read_text(encoding="utf-8")
         self.assertIn("snow connection test -c <connection>", text)

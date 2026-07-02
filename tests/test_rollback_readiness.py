@@ -30,6 +30,12 @@ class RollbackReadinessTests(unittest.TestCase):
         self.assertGreater(results["drop_target_count"], 0)
         self.assertEqual(results["broad_drop_count"], 0)
         self.assertTrue(results["destructive_mode_required"])
+        self.assertTrue(results["destructive_mode_marker_present"])
+        self.assertTrue(results["rollback_runbook_present"])
+        self.assertTrue(results["setup_rerun_documented"])
+        self.assertTrue(results["migration_ledger_rerun_documented"])
+        self.assertEqual(results["disallowed_drop_target_count"], 0)
+        self.assertEqual(results["allowed_drop_target_count"], results["drop_target_count"])
 
     def test_broad_drop_fails(self):
         from tools.contracts.rollback_readiness import build_rollback_readiness_results
@@ -52,6 +58,7 @@ DROP TABLE IF EXISTS MART_SECTION_COMMAND_BRIEF;
 
         self.assertFalse(results["passed"])
         self.assertGreater(results["broad_drop_count"], 0)
+        self.assertGreater(results["database_drop_count"], 0)
 
     def test_audit_drop_without_destructive_marker_fails(self):
         from tools.contracts.rollback_readiness import build_rollback_readiness_results

@@ -367,6 +367,15 @@ def _passing_payload(root: Path) -> dict:
             **passed_gate,
             "rollback_ready": True,
         },
+        "artifacts/launch_readiness/snowflake_object_drift_gate_results.json": {
+            **passed_gate,
+            "object_drift_passed": True,
+            "missing_required_object_count": 0,
+        },
+        "artifacts/launch_readiness/post_deploy_smoke_gate_results.json": {
+            **passed_gate,
+            "post_deploy_smoke_passed": True,
+        },
         "artifacts/launch_readiness/runtime_artifact_provenance_gate_results.json": passed_gate,
         "artifacts/launch_readiness/export_download_gate_results.json": passed_gate,
         "artifacts/launch_readiness/settings_live_feature_gate_results.json": {

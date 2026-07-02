@@ -1181,6 +1181,8 @@ def build_full_app_release_sweep(
         ("snowflake_cli_live_validation", "snowflake_cli_live_gate_results"),
         ("snowflake_cli_temp_file_hygiene", "snowflake_cli_temp_file_hygiene_gate_results"),
         ("setup_migration_live", "setup_migration_live_gate_results"),
+        ("snowflake_object_drift", "snowflake_object_drift_gate_results"),
+        ("post_deploy_smoke", "post_deploy_smoke_gate_results"),
         ("production_deployment_readiness", "production_deployment_readiness_gate_results"),
         ("production_deployment_manifest", "production_deployment_manifest_gate_results"),
         ("production_deployment_rehearsal", "production_deployment_rehearsal_gate_results"),
@@ -1266,6 +1268,9 @@ def build_full_app_release_sweep(
     setup_migration_gate = _gate(payloads, "setup_migration_live_gate_results")
     connection_policy_gate = _gate(payloads, "connection_policy_gate_results")
     app_entry_smoke_gate = _gate(payloads, "app_entry_smoke_gate_results")
+    post_deploy_smoke_gate = _gate(payloads, "post_deploy_smoke_gate_results")
+    object_drift_gate = _gate(payloads, "snowflake_object_drift_gate_results")
+    production_release_candidate_gate = _gate(payloads, "production_release_candidate_gate_results")
     production_deployment_gate = _gate(payloads, "production_deployment_readiness_gate_results")
     production_manifest_gate = _gate(payloads, "production_deployment_manifest_gate_results")
     production_rehearsal_gate = _gate(payloads, "production_deployment_rehearsal_gate_results")
@@ -1350,6 +1355,12 @@ def build_full_app_release_sweep(
         "app_entry_smoke_passed": bool(app_entry_smoke_gate.get("passed")),
         "app_entry_smoke_failure_count": _as_int(app_entry_smoke_gate.get("failure_count"))
         + missing_app_entry_smoke_gate,
+        "post_deploy_smoke_passed": bool(post_deploy_smoke_gate.get("passed")),
+        "post_deploy_smoke_failure_count": _as_int(post_deploy_smoke_gate.get("failure_count")),
+        "object_drift_passed": bool(object_drift_gate.get("passed")),
+        "object_drift_failure_count": _as_int(object_drift_gate.get("failure_count")),
+        "production_release_candidate_passed": bool(production_release_candidate_gate.get("passed")),
+        "production_release_candidate_failure_count": _as_int(production_release_candidate_gate.get("failure_count")),
         "production_deployment_readiness_passed": bool(production_deployment_gate.get("passed")),
         "production_deployment_readiness_failure_count": _as_int(production_deployment_gate.get("failure_count"))
         + missing_production_deployment_gate,
@@ -1366,7 +1377,9 @@ def build_full_app_release_sweep(
         and bool(production_manifest_gate.get("production_deployable", production_manifest_gate.get("passed")))
         and bool(production_rehearsal_gate.get("passed"))
         and bool(rollback_readiness_gate.get("rollback_ready", rollback_readiness_gate.get("passed")))
-        and bool(app_entry_smoke_gate.get("passed")),
+        and bool(app_entry_smoke_gate.get("passed"))
+        and bool(post_deploy_smoke_gate.get("passed", True))
+        and bool(object_drift_gate.get("passed", True)),
         "rollback_ready": bool(production_deployment_gate.get("rollback_ready"))
         and bool(rollback_readiness_gate.get("rollback_ready", rollback_readiness_gate.get("passed"))),
         "fallback_render_failure_count": _as_int(connection_policy_gate.get("fallback_render_failure_count")) + missing_connection_policy_gate,
@@ -1405,6 +1418,8 @@ def build_full_app_release_sweep(
         "setup_migration_live_passed": bool(
             snowflake_cli_gate.get("setup_migration_live_passed") or setup_migration_gate.get("passed")
         ),
+        "snowflake_object_drift_passed": bool(object_drift_gate.get("passed")),
+        "post_deploy_smoke_passed": bool(post_deploy_smoke_gate.get("passed")),
         "temp_sql_file_leftover_count": _as_int(
             snowflake_cli_gate.get("temp_sql_file_leftover_count", snowflake_temp_gate.get("temp_sql_file_leftover_count"))
         ),
@@ -1445,6 +1460,12 @@ def evaluate_full_app_release_sweep_gate(payload: object) -> dict[str, Any]:
         "connection_policy_passed": bool(results.get("connection_policy_passed")),
         "app_entry_smoke_passed": bool(results.get("app_entry_smoke_passed")),
         "app_entry_smoke_failure_count": _as_int(results.get("app_entry_smoke_failure_count")),
+        "post_deploy_smoke_passed": bool(results.get("post_deploy_smoke_passed")),
+        "post_deploy_smoke_failure_count": _as_int(results.get("post_deploy_smoke_failure_count")),
+        "object_drift_passed": bool(results.get("object_drift_passed")),
+        "object_drift_failure_count": _as_int(results.get("object_drift_failure_count")),
+        "production_release_candidate_passed": bool(results.get("production_release_candidate_passed")),
+        "production_release_candidate_failure_count": _as_int(results.get("production_release_candidate_failure_count")),
         "production_deployment_readiness_passed": bool(results.get("production_deployment_readiness_passed")),
         "production_deployment_readiness_failure_count": _as_int(
             results.get("production_deployment_readiness_failure_count")
@@ -1487,6 +1508,7 @@ def evaluate_full_app_release_sweep_gate(payload: object) -> dict[str, Any]:
         "snowflake_cli_temp_sql_path_leak_count": _as_int(results.get("snowflake_cli_temp_sql_path_leak_count")),
         "snowflake_cli_temp_file_hygiene_passed": bool(results.get("snowflake_cli_temp_file_hygiene_passed")),
         "setup_migration_live_passed": bool(results.get("setup_migration_live_passed")),
+        "snowflake_object_drift_passed": bool(results.get("snowflake_object_drift_passed")),
         "temp_sql_file_leftover_count": _as_int(results.get("temp_sql_file_leftover_count")),
         "user_id_daily_leak_count": _as_int(results.get("user_id_daily_leak_count")),
         "credential_id_daily_leak_count": _as_int(results.get("credential_id_daily_leak_count")),
@@ -1517,11 +1539,15 @@ def write_full_app_release_sweep_artifacts(
                 "artifacts/full_app_validation/user_stress_results.json",
                 "artifacts/full_app_validation/runtime_artifact_provenance_results.json",
                 "artifacts/full_app_validation/app_entry_smoke_results.json",
+                "artifacts/full_app_validation/post_deploy_smoke_results.json",
                 "artifacts/full_app_validation/production_deployment_readiness_results.json",
                 "artifacts/full_app_validation/rollback_readiness_results.json",
+                "artifacts/snowflake_validation/snowflake_object_drift_results.json",
                 "artifacts/snowflake_validation/production_deployment_rehearsal_results.json",
                 "artifacts/release_candidate/production_deployment_manifest.json",
                 "artifacts/launch_readiness/app_entry_smoke_gate_results.json",
+                "artifacts/launch_readiness/post_deploy_smoke_gate_results.json",
+                "artifacts/launch_readiness/snowflake_object_drift_gate_results.json",
                 "artifacts/launch_readiness/production_deployment_readiness_gate_results.json",
                 "artifacts/launch_readiness/production_deployment_manifest_gate_results.json",
                 "artifacts/launch_readiness/production_deployment_rehearsal_gate_results.json",

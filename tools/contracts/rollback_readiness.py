@@ -96,6 +96,18 @@ def _broad_drop_count(sql: str) -> int:
     )
 
 
+def _broad_drop_type_counts(sql: str) -> dict[str, int]:
+    uncommented = _strip_line_comments(sql)
+    specs = {
+        "database_drop_count": r"\bDROP\s+DATABASE\b",
+        "schema_drop_count": r"\bDROP\s+SCHEMA\b",
+        "warehouse_drop_count": r"\bDROP\s+WAREHOUSE\b",
+        "resource_monitor_drop_count": r"\bDROP\s+RESOURCE\s+MONITOR\b",
+        "role_drop_count": r"\bDROP\s+ROLE\b",
+    }
+    return {key: len(re.findall(pattern, uncommented, flags=re.IGNORECASE)) for key, pattern in specs.items()}
+
+
 def _producer_signature(row: Mapping[str, Any]) -> str:
     payload = json.dumps(
         {
@@ -148,12 +160,19 @@ def build_rollback_readiness_results(root: Path | str = ".") -> dict[str, Any]:
         for target in targets
         if any(marker in target["object_name"] for marker in PROTECTED_HISTORY_MARKERS)
     ]
+    permanent_audit_targets = [
+        target
+        for target in targets
+        if any(marker in target["object_name"] for marker in ("AUDIT", "HISTORY", "REMEDIATION", "ACK"))
+    ]
     destructive_marker_present = DESTRUCTIVE_MODE_MARKER in drop_sql
     scoped_targets = [
         target
         for target in targets
         if "." not in target["object_name"] or target["object_name"].startswith("DBA_MAINT_DB.OVERWATCH.")
     ]
+    disallowed_targets = [target for target in targets if target not in scoped_targets]
+    broad_counts = _broad_drop_type_counts(drop_sql)
     runbook_upper = runbook.upper()
 
     rows = [
@@ -168,14 +187,24 @@ def build_rollback_readiness_results(root: Path | str = ".") -> dict[str, Any]:
             check="drop_targets_inventory_present",
             passed=bool(targets),
             failure_reason="Drop SQL does not inventory any OVERWATCH object targets.",
-            details={"drop_target_count": len(targets)},
+            details={
+                "drop_target_count": len(targets),
+                "allowed_drop_target_count": len(scoped_targets),
+                "disallowed_drop_target_count": len(disallowed_targets),
+            },
             commit_sha=commit_sha,
         ),
         _row(
             check="drop_scope_overwatch_owned",
             passed=bool(targets) and len(scoped_targets) == len(targets) and broad_drop_count == 0,
             failure_reason="Drop SQL includes unscoped or container-level drops.",
-            details={"scoped_target_count": len(scoped_targets), "broad_drop_count": broad_drop_count},
+            details={
+                "scoped_target_count": len(scoped_targets),
+                "allowed_drop_target_count": len(scoped_targets),
+                "disallowed_drop_target_count": len(disallowed_targets),
+                "broad_drop_count": broad_drop_count,
+                **broad_counts,
+            },
             commit_sha=commit_sha,
         ),
         _row(
@@ -189,7 +218,11 @@ def build_rollback_readiness_results(root: Path | str = ".") -> dict[str, Any]:
             check="protected_history_requires_destructive_mode",
             passed=not protected_targets or destructive_marker_present,
             failure_reason="Audit/action-history drops are present without destructive-mode protection.",
-            details={"protected_history_target_count": len(protected_targets)},
+            details={
+                "protected_history_target_count": len(protected_targets),
+                "protected_history_drop_count": len(protected_targets),
+                "permanent_audit_table_drop_count": len(permanent_audit_targets),
+            },
             commit_sha=commit_sha,
         ),
         _row(
@@ -222,9 +255,18 @@ def build_rollback_readiness_results(root: Path | str = ".") -> dict[str, Any]:
         "drop_sql_sha256": _sha256_file(root_path, DROP_SQL_REL),
         "rollback_path": ROLLBACK_RUNBOOK_REL,
         "drop_target_count": len(targets),
+        "allowed_drop_target_count": len(scoped_targets),
+        "disallowed_drop_target_count": len(disallowed_targets),
         "protected_history_target_count": len(protected_targets),
+        "protected_history_drop_count": len(protected_targets),
+        "permanent_audit_table_drop_count": len(permanent_audit_targets),
         "broad_drop_count": broad_drop_count,
+        **broad_counts,
         "destructive_mode_required": destructive_marker_present,
+        "destructive_mode_marker_present": destructive_marker_present,
+        "rollback_runbook_present": bool(runbook),
+        "setup_rerun_documented": "IDEMPOTENT" in runbook_upper,
+        "migration_ledger_rerun_documented": "OVERWATCH_SCHEMA_MIGRATION" in runbook_upper,
         "rows": rows,
         "failures": failures,
         "raw_sql_included": False,
@@ -246,9 +288,22 @@ def evaluate_rollback_readiness_gate(payload: object) -> dict[str, Any]:
         "rollback_ready": not failures and bool(results.get("rollback_ready", results.get("passed"))),
         "failure_count": len(failures),
         "drop_target_count": int(results.get("drop_target_count") or 0),
+        "allowed_drop_target_count": int(results.get("allowed_drop_target_count") or 0),
+        "disallowed_drop_target_count": int(results.get("disallowed_drop_target_count") or 0),
         "protected_history_target_count": int(results.get("protected_history_target_count") or 0),
+        "protected_history_drop_count": int(results.get("protected_history_drop_count") or 0),
+        "permanent_audit_table_drop_count": int(results.get("permanent_audit_table_drop_count") or 0),
         "broad_drop_count": int(results.get("broad_drop_count") or 0),
+        "database_drop_count": int(results.get("database_drop_count") or 0),
+        "schema_drop_count": int(results.get("schema_drop_count") or 0),
+        "warehouse_drop_count": int(results.get("warehouse_drop_count") or 0),
+        "resource_monitor_drop_count": int(results.get("resource_monitor_drop_count") or 0),
+        "role_drop_count": int(results.get("role_drop_count") or 0),
         "destructive_mode_required": bool(results.get("destructive_mode_required")),
+        "destructive_mode_marker_present": bool(results.get("destructive_mode_marker_present")),
+        "rollback_runbook_present": bool(results.get("rollback_runbook_present")),
+        "setup_rerun_documented": bool(results.get("setup_rerun_documented")),
+        "migration_ledger_rerun_documented": bool(results.get("migration_ledger_rerun_documented")),
         "rollback_path": str(results.get("rollback_path") or ""),
         "failures": failures,
         "raw_sql_included": False,

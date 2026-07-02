@@ -128,6 +128,12 @@ from tools.contracts.app_entry_smoke import (
     evaluate_app_entry_smoke_gate,
     write_app_entry_smoke_artifacts,
 )
+from tools.contracts.post_deploy_smoke import (
+    POST_DEPLOY_SMOKE_GATE_REL,
+    POST_DEPLOY_SMOKE_RESULTS_REL,
+    evaluate_post_deploy_smoke_gate,
+    write_post_deploy_smoke_artifacts,
+)
 from tools.contracts.production_deployment_readiness import (
     PRODUCTION_DEPLOYMENT_READINESS_GATE_REL,
     PRODUCTION_DEPLOYMENT_READINESS_RESULTS_REL,
@@ -145,6 +151,12 @@ from tools.contracts.rollback_readiness import (
     ROLLBACK_READINESS_RESULTS_REL,
     evaluate_rollback_readiness_gate,
     write_rollback_readiness_artifacts,
+)
+from tools.contracts.snowflake_object_drift_validation import (
+    SNOWFLAKE_OBJECT_DRIFT_GATE_REL,
+    SNOWFLAKE_OBJECT_DRIFT_RESULTS_REL,
+    evaluate_snowflake_object_drift_gate,
+    write_snowflake_object_drift_validation_artifacts,
 )
 from tools.contracts.rendered_ui_leak_scan import (
     DAILY_WORDING_GATE_REL,
@@ -364,6 +376,8 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/ci_artifact_reality_results.json",
     f"{LAUNCH_READINESS_DIR}/release_candidate_ci_context.json",
     f"{LAUNCH_READINESS_DIR}/release_candidate_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/post_deploy_smoke_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/snowflake_object_drift_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/artifact_manifest.json",
     *(REQUIRED_CLI_ARTIFACTS - {CLI_RELEASE_REL}),
 }
@@ -377,6 +391,8 @@ REQUIRED_RELEASE_CANDIDATE_ARTIFACTS = {
     f"{RELEASE_CANDIDATE_DIR}/release_candidate_failures.json",
     f"{RELEASE_CANDIDATE_DIR}/release_gate_matrix.json",
     f"{RELEASE_CANDIDATE_DIR}/release_notes.json",
+    f"{POST_DEPLOY_SMOKE_RESULTS_REL}",
+    f"{SNOWFLAKE_OBJECT_DRIFT_RESULTS_REL}",
     PRODUCTION_DEPLOYMENT_MANIFEST_REL,
     CLI_RELEASE_REL,
 }
@@ -2764,6 +2780,10 @@ def _release_candidate_summary_bundle(
         "ci_artifact_reality_passed": bool(launch_summary.get("ci_artifact_reality_passed")),
         "app_entry_smoke_passed": bool(launch_summary.get("app_entry_smoke_passed")),
         "app_entry_smoke_failure_count": _as_int(launch_summary.get("app_entry_smoke_failure_count")),
+        "post_deploy_smoke_passed": bool(launch_summary.get("post_deploy_smoke_passed")),
+        "post_deploy_smoke_failure_count": _as_int(launch_summary.get("post_deploy_smoke_failure_count")),
+        "object_drift_passed": bool(launch_summary.get("object_drift_passed")),
+        "object_drift_failure_count": _as_int(launch_summary.get("object_drift_failure_count")),
         "production_deployment_readiness_passed": bool(
             launch_summary.get("production_deployment_readiness_passed")
         ),
@@ -4876,7 +4896,9 @@ def _release_gate_matrix(
     live_cost_gate = _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results"))
     daily_wording_gate = _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
     app_entry_smoke_gate = _as_mapping(launch_artifacts.get("app_entry_smoke_gate_results"))
+    post_deploy_smoke_gate = _as_mapping(launch_artifacts.get("post_deploy_smoke_gate_results"))
     connection_policy_gate = _as_mapping(launch_artifacts.get("connection_policy_gate_results"))
+    snowflake_object_drift_gate = _as_mapping(launch_artifacts.get("snowflake_object_drift_gate_results"))
     production_deployment_gate = _as_mapping(
         launch_artifacts.get("production_deployment_readiness_gate_results")
     )
@@ -5001,6 +5023,22 @@ def _release_gate_matrix(
             "failure_reason": ""
             if app_entry_smoke_gate.get("passed")
             else "App entrypoint lazy-import or Streamlit-style main execution proof failed.",
+        },
+        {
+            "gate": "post_deploy_smoke",
+            "artifact": POST_DEPLOY_SMOKE_GATE_REL,
+            "passed": bool(post_deploy_smoke_gate.get("passed")),
+            "failure_reason": ""
+            if post_deploy_smoke_gate.get("passed")
+            else "Post-deploy smoke proof is missing, has leaks, or lacks render/action/export closure.",
+        },
+        {
+            "gate": "snowflake_object_drift",
+            "artifact": SNOWFLAKE_OBJECT_DRIFT_GATE_REL,
+            "passed": bool(snowflake_object_drift_gate.get("passed")),
+            "failure_reason": ""
+            if snowflake_object_drift_gate.get("passed")
+            else "Snowflake object drift proof is missing or detected missing required objects.",
         },
         {
             "gate": "production_deployment_readiness",
@@ -5935,7 +5973,9 @@ def evaluate_launch_readiness(
     live_cost_gate = _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results"))
     daily_wording_gate = _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
     app_entry_smoke_gate = _as_mapping(launch_artifacts.get("app_entry_smoke_gate_results"))
+    post_deploy_smoke_gate = _as_mapping(launch_artifacts.get("post_deploy_smoke_gate_results"))
     connection_policy_gate = _as_mapping(launch_artifacts.get("connection_policy_gate_results"))
+    snowflake_object_drift_gate = _as_mapping(launch_artifacts.get("snowflake_object_drift_gate_results"))
     production_deployment_gate = _as_mapping(
         launch_artifacts.get("production_deployment_readiness_gate_results")
     )
@@ -6060,6 +6100,10 @@ def evaluate_launch_readiness(
         "daily_wording_blocked_count": _as_int(daily_wording_gate.get("blocked_count")),
         "app_entry_smoke_passed": bool(app_entry_smoke_gate.get("passed")),
         "app_entry_smoke_failure_count": _as_int(app_entry_smoke_gate.get("failure_count")),
+        "post_deploy_smoke_passed": bool(post_deploy_smoke_gate.get("passed")),
+        "post_deploy_smoke_failure_count": _as_int(post_deploy_smoke_gate.get("failure_count")),
+        "object_drift_passed": bool(snowflake_object_drift_gate.get("passed")),
+        "object_drift_failure_count": _as_int(snowflake_object_drift_gate.get("failure_count")),
         "production_deployment_readiness_passed": bool(production_deployment_gate.get("passed")),
         "production_deployment_readiness_failure_count": _as_int(
             production_deployment_gate.get("failure_count")
@@ -6077,7 +6121,9 @@ def evaluate_launch_readiness(
         and bool(production_deployment_gate.get("production_deployable", production_deployment_gate.get("passed")))
         and bool(production_manifest_gate.get("production_deployable", production_manifest_gate.get("passed")))
         and bool(production_rehearsal_gate.get("passed"))
-        and bool(rollback_readiness_gate.get("rollback_ready", rollback_readiness_gate.get("passed"))),
+        and bool(rollback_readiness_gate.get("rollback_ready", rollback_readiness_gate.get("passed")))
+        and bool(post_deploy_smoke_gate.get("passed"))
+        and bool(snowflake_object_drift_gate.get("passed")),
         "rollback_ready": bool(production_deployment_gate.get("rollback_ready"))
         and bool(rollback_readiness_gate.get("rollback_ready", rollback_readiness_gate.get("passed"))),
         "connection_policy_passed": bool(connection_policy_gate.get("passed")),
@@ -6661,6 +6707,14 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["production_deployment_rehearsal_gate_results"] = snowflake_cli_artifacts[
         CLI_PRODUCTION_REHEARSAL_GATE_REL
     ]
+    snowflake_object_drift_artifacts = write_snowflake_object_drift_validation_artifacts(
+        root_path,
+        profile=profile,
+    )
+    payloads.update(snowflake_object_drift_artifacts)
+    launch_artifacts["snowflake_object_drift_gate_results"] = snowflake_object_drift_artifacts[
+        SNOWFLAKE_OBJECT_DRIFT_GATE_REL
+    ]
     rollback_readiness_artifacts = write_rollback_readiness_artifacts(root_path)
     payloads.update(rollback_readiness_artifacts)
     launch_artifacts["rollback_readiness_gate_results"] = rollback_readiness_artifacts[
@@ -6833,6 +6887,27 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         "failures": _as_list(live_cost_reconciliation_payload.get("failures")),
         "raw_sql_included": False,
     }
+    preliminary_release_manifest, preliminary_release_hashes = _release_candidate_artifact_manifest(
+        root_path,
+        profile=profile,
+        commit_sha=_git_output("rev-parse", "HEAD"),
+    )
+    _write_json(root_path / RELEASE_CANDIDATE_DIR / "artifact_manifest.json", preliminary_release_manifest)
+    _write_json(root_path / RELEASE_CANDIDATE_DIR / "artifact_hashes.json", preliminary_release_hashes)
+    payloads[f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json"] = preliminary_release_manifest
+    payloads[f"{RELEASE_CANDIDATE_DIR}/artifact_hashes.json"] = preliminary_release_hashes
+    post_deploy_payloads = {
+        **payloads,
+        **{
+            f"{LAUNCH_READINESS_DIR}/{name}.json": artifact_payload
+            for name, artifact_payload in launch_artifacts.items()
+        },
+    }
+    post_deploy_smoke_artifacts = write_post_deploy_smoke_artifacts(root_path, post_deploy_payloads)
+    payloads.update(post_deploy_smoke_artifacts)
+    launch_artifacts["post_deploy_smoke_gate_results"] = post_deploy_smoke_artifacts[
+        POST_DEPLOY_SMOKE_GATE_REL
+    ]
     refreshed_full_app_payloads, _refreshed_missing = _load_payloads(
         root_path,
         REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS,

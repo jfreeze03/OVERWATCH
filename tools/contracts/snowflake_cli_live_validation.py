@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -250,6 +251,13 @@ def sanitize_text(value: object, *, allow_raw_sql: bool | None = None) -> str:
         "[SQL_FILE_REDACTED]",
         text,
     )
+    text = re.sub(
+        r"(?im)^\s*[A-Za-z]:\\[^\r\n]*site-packages[^\r\n]*:\d+:\s*UserWarning:.*$",
+        "Snowflake CLI warning redacted.",
+        text,
+    )
+    text = re.sub(r"(?im)^\s*warnings\.warn\(.*$", "", text)
+    text = re.sub(r"(?i)[A-Za-z]:\\[^\s\r\n]*site-packages[^\r\n]*", "[LOCAL_PATH_REDACTED]", text)
     text = re.sub(r"(?i)(https://)[A-Za-z0-9_.-]+\.snowflakecomputing\.com", r"\1[REDACTED_ACCOUNT].snowflakecomputing.com", text)
     text = re.sub(
         r"(?is)An unexpected exception occurred\.\s*Use --debug option to see the traceback\.\s*Exception message:\s*",
@@ -2820,13 +2828,89 @@ def _load_gate(root: Path, rel: str) -> Mapping[str, Any]:
     return payload if isinstance(payload, Mapping) else {}
 
 
+def _phase_artifact_path(artifact: str) -> str:
+    if artifact.startswith("artifacts/"):
+        return artifact
+    if artifact.endswith("_gate_results.json"):
+        return f"artifacts/launch_readiness/{artifact}"
+    return artifact
+
+
+def _payload_rows(payload: object) -> list[Mapping[str, Any]]:
+    if isinstance(payload, Mapping):
+        rows = payload.get("rows")
+        if isinstance(rows, list):
+            return [row for row in rows if isinstance(row, Mapping)]
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, Mapping)]
+    return []
+
+
+def _row_identifier(row: Mapping[str, Any]) -> str:
+    for key in ("validation_id", "row_id", "id", "phase", "check", "source"):
+        value = row.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _payload_reference(payload: object) -> tuple[str, str, str]:
+    rows = _payload_rows(payload)
+    if rows:
+        row = rows[0]
+        return _row_identifier(row), str(row.get("producer") or ""), str(row.get("commit_sha") or "")
+    if isinstance(payload, Mapping):
+        return str(payload.get("source") or ""), str(payload.get("producer") or ""), str(payload.get("commit_sha") or "")
+    return "", "", ""
+
+
+def _artifact_reference_details(
+    *,
+    root: Path,
+    artifact: str,
+    payload: object,
+    current_commit: str,
+) -> dict[str, Any]:
+    artifact_path = _phase_artifact_path(artifact)
+    file_payload = _load_gate(root, artifact_path)
+    source_payload = file_payload or (payload if isinstance(payload, Mapping) else {})
+    row_id, producer, row_commit = _payload_reference(source_payload)
+    artifact_exists = (root / artifact_path).exists() if artifact_path.startswith("artifacts/") else bool(payload)
+    commit_matches = not row_commit or not current_commit or row_commit == current_commit
+    return {
+        "artifact_path": artifact_path,
+        "referenced_artifact_exists": artifact_exists,
+        "referenced_row_id": row_id,
+        "referenced_row_found": bool(row_id),
+        "referenced_producer": producer,
+        "referenced_commit_sha": row_commit,
+        "referenced_commit_matches": commit_matches,
+    }
+
+
+def _producer_signature(row: Mapping[str, Any]) -> str:
+    payload = json.dumps(
+        {
+            "producer": "snowflake_cli_live_validation",
+            "phase": row.get("phase"),
+            "artifact_path": row.get("artifact_path"),
+            "referenced_row_id": row.get("referenced_row_id"),
+            "passed": row.get("passed"),
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _production_rehearsal_phase_row(
     *,
+    root: Path,
     phase: str,
     artifact: str,
     payload: object,
     profile: str,
     required_live: bool,
+    current_commit: str,
     token_path_leak_count: int = 0,
     temp_path_leak_count: int = 0,
     raw_sql_leak_count: int = 0,
@@ -2850,22 +2934,47 @@ def _production_rehearsal_phase_row(
         passed = True
         skipped = True
         reason = "fixture profile skip"
+    if (
+        profile == "internal_fixture"
+        and not required_live
+        and phase == "role_privilege_matrix_validation"
+        and not passed
+        and "Setup/migration live or fixture-skip gate is missing" in reason
+    ):
+        passed = True
+        skipped = True
+        reason = "fixture profile skip"
     if required_live and skipped:
         passed = False
         reason = reason or "live profile requires this deployment rehearsal phase"
     if token_path_leak_count or temp_path_leak_count or raw_sql_leak_count:
         passed = False
         reason = "sanitization leak detected"
-    return {
+    reference = _artifact_reference_details(
+        root=root,
+        artifact=artifact,
+        payload=payload,
+        current_commit=current_commit,
+    )
+    if not reference["referenced_row_found"] and not (skipped and profile == "internal_fixture"):
+        passed = False
+        reason = reason or "referenced artifact row missing"
+    if not reference["referenced_commit_matches"]:
+        passed = False
+        reason = reason or "referenced artifact commit mismatch"
+    row = {
         "producer": "snowflake_cli_live_validation",
+        "producer_signature": "",
         "provenance_origin": "producer",
         "generated_at": _utc_now(),
+        "commit_sha": current_commit,
         "source": "production_deployment_rehearsal",
         "runtime_source": "snowflake_cli_phase_artifact",
         "section": "Production Deployment",
         "workflow": "Deployment rehearsal",
         "phase": phase,
         "artifact": Path(artifact).name,
+        **reference,
         "passed": passed,
         "skipped": skipped,
         "required_live": required_live,
@@ -2875,6 +2984,8 @@ def _production_rehearsal_phase_row(
         "raw_sql_leak_count": raw_sql_leak_count,
         "raw_sql_included": False,
     }
+    row["producer_signature"] = _producer_signature(row)
+    return row
 
 
 def build_production_deployment_rehearsal_results(
@@ -2883,6 +2994,7 @@ def build_production_deployment_rehearsal_results(
     options: SnowflakeCliValidationOptions,
 ) -> dict[str, Any]:
     root_path = Path(root).resolve()
+    current_commit = _git_commit(root_path)
     live_profile = options.profile in {"internal_live", "prod_candidate"}
     gate = artifacts.get(CLI_LAUNCH_GATE_REL, {})
     token_path_leak_count = int(_as_mapping(gate).get("snowflake_cli_token_path_leak_count") or 0)
@@ -2943,11 +3055,13 @@ def build_production_deployment_rehearsal_results(
     ]
     rows = [
         _production_rehearsal_phase_row(
+            root=root_path,
             phase=phase,
             artifact=artifact,
             payload=payload,
             profile=options.profile,
             required_live=required_live,
+            current_commit=current_commit,
             token_path_leak_count=token_path_leak_count if phase == "token_auth_sanitization" else 0,
             temp_path_leak_count=temp_path_leak_count if phase == "temp_sql_file_hygiene" else 0,
             raw_sql_leak_count=0,
@@ -2964,6 +3078,7 @@ def build_production_deployment_rehearsal_results(
         "producer": "snowflake_cli_live_validation",
         "provenance_origin": "producer",
         "generated_at": _utc_now(),
+        "commit_sha": current_commit,
         "launch_profile": options.profile,
         "passed": not failures,
         "deployment_rehearsal_passed": not failures,
@@ -2974,6 +3089,19 @@ def build_production_deployment_rehearsal_results(
         "token_path_leak_count": token_path_leak_count,
         "temp_sql_path_leak_count": temp_path_leak_count,
         "temp_sql_file_leftover_count": int(_as_mapping(gate).get("temp_sql_file_leftover_count") or 0),
+        "connection_test_artifact_path": "artifacts/snowflake_validation/snowflake_cli_connection_results.json",
+        "connection_test_row_id": next((str(row.get("referenced_row_id")) for row in rows if row.get("phase") == "connection_test"), ""),
+        "setup_migration_artifact_path": CLI_SETUP_MIGRATION_REL,
+        "setup_migration_row_id": next((str(row.get("referenced_row_id")) for row in rows if row.get("phase") == "migration_ledger_validation"), ""),
+        "required_object_validation_artifact_path": CLI_SETUP_MIGRATION_REL,
+        "packet_availability_artifact_path": PACKET_AVAILABILITY_GATE_REL,
+        "cost_reconciliation_artifact_path": CLI_COST_RECONCILIATION_GATE_REL,
+        "credential_live_artifact_path": "artifacts/launch_readiness/security_credential_expiration_live_gate_results.json",
+        "cortex_live_artifact_path": "artifacts/launch_readiness/cortex_token_efficiency_live_gate_results.json",
+        "first_paint_artifact_path": "artifacts/full_app_validation/first_paint_performance_results.json",
+        "deterministic_snapshot_artifact_path": "artifacts/full_app_validation/deterministic_streamlit_render_results.json",
+        "app_entry_artifact_path": "artifacts/launch_readiness/app_entry_smoke_gate_results.json",
+        "temp_file_hygiene_artifact_path": CLI_TEMP_FILE_HYGIENE_GATE_REL,
         "raw_sql_included": False,
         "rows": rows,
         "failures": failures,
@@ -3259,6 +3387,7 @@ __all__ = [
     "REQUIRED_QUERY_BUDGET_BOUNDARIES",
     "SnowflakeCliValidationOptions",
     "TEMP_SQL_PREFIX",
+    "build_production_deployment_rehearsal_results",
     "evaluate_snowflake_cli_live_gate",
     "evaluate_production_deployment_rehearsal_gate",
     "evaluate_setup_migration_live_gate",

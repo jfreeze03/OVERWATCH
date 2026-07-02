@@ -145,6 +145,8 @@ def build_production_deployment_manifest(
     rollback_gate: Mapping[str, Any] = rollback_payload if isinstance(rollback_payload, Mapping) else {}
     production_payload = payloads.get("artifacts/launch_readiness/production_deployment_readiness_gate_results.json")
     production_gate: Mapping[str, Any] = production_payload if isinstance(production_payload, Mapping) else {}
+    rehearsal_payload = payloads.get("artifacts/launch_readiness/production_deployment_rehearsal_gate_results.json")
+    rehearsal_gate: Mapping[str, Any] = rehearsal_payload if isinstance(rehearsal_payload, Mapping) else {}
     app_entry_payload = payloads.get("artifacts/launch_readiness/app_entry_smoke_gate_results.json")
     app_entry_gate: Mapping[str, Any] = app_entry_payload if isinstance(app_entry_payload, Mapping) else {}
 
@@ -177,11 +179,22 @@ def build_production_deployment_manifest(
         "token_file_path_stored": False,
         "raw_sql_included": False,
         "artifact_manifest_path": f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json",
+        "artifact_hashes_path": f"{RELEASE_CANDIDATE_DIR}/artifact_hashes.json",
         "rollback_path": ROLLBACK_RUNBOOK_REL,
+        "rollback_readiness_artifact_path": ROLLBACK_READINESS_GATE_REL,
+        "deployment_rehearsal_artifact_path": "artifacts/snowflake_validation/production_deployment_rehearsal_results.json",
+        "deployment_rehearsal_gate_artifact_path": "artifacts/launch_readiness/production_deployment_rehearsal_gate_results.json",
         "rollback_ready": bool(rollback_gate.get("rollback_ready", rollback_gate.get("passed"))),
         "production_deployment_readiness_passed": bool(production_gate.get("passed", True))
         if production_gate
         else True,
+        "deployment_rehearsal_passed": bool(rehearsal_gate.get("passed", True))
+        if rehearsal_gate
+        else True,
+        "live_proof_status": "passed"
+        if rehearsal_gate and rehearsal_gate.get("passed")
+        else ("failed" if rehearsal_gate else "not_yet_recorded"),
+        "live_waiver_status": "not_required" if not rehearsal_gate else "not_waived",
         "app_entry_smoke_passed": bool(app_entry_gate.get("passed", True)) if app_entry_gate else True,
     }
 
@@ -204,8 +217,18 @@ def build_production_deployment_manifest(
         failures.append({"code": "PRODUCTION_MANIFEST_ROLLBACK_NOT_READY"})
     if not manifest["production_deployment_readiness_passed"]:
         failures.append({"code": "PRODUCTION_MANIFEST_READINESS_GATE_FAILED"})
+    if not manifest["deployment_rehearsal_passed"]:
+        failures.append({"code": "PRODUCTION_MANIFEST_REHEARSAL_GATE_FAILED"})
     if not manifest["app_entry_smoke_passed"]:
         failures.append({"code": "PRODUCTION_MANIFEST_APP_ENTRY_GATE_FAILED"})
+    for field in (
+        "deployment_rehearsal_artifact_path",
+        "deployment_rehearsal_gate_artifact_path",
+        "rollback_readiness_artifact_path",
+        "artifact_hashes_path",
+    ):
+        if not manifest.get(field):
+            failures.append({"code": "PRODUCTION_MANIFEST_REFERENCE_MISSING", "field": field})
 
     token_leak_count = _token_leak_count(manifest)
     raw_sql_leak_count = _raw_sql_body_leak_count(manifest)
@@ -260,6 +283,8 @@ def evaluate_production_deployment_manifest_gate(payload: object) -> dict[str, A
         "drop_sql_sha256_present": bool(manifest.get("drop_sql_sha256")),
         "required_migration_version_count": len(manifest.get("required_migration_versions") or []),
         "required_snowflake_object_count": len(manifest.get("required_snowflake_objects") or []),
+        "deployment_rehearsal_artifact_path": str(manifest.get("deployment_rehearsal_artifact_path") or ""),
+        "deployment_rehearsal_passed": bool(manifest.get("deployment_rehearsal_passed")),
         "failures": failures,
         "raw_sql_included": False,
     }

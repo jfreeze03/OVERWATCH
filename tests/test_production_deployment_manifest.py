@@ -27,6 +27,11 @@ class ProductionDeploymentManifestTests(unittest.TestCase):
             "artifacts/launch_readiness/app_entry_smoke_gate_results.json": {
                 "passed": True,
             },
+            "artifacts/launch_readiness/production_deployment_rehearsal_gate_results.json": {
+                "passed": True,
+                "deployment_rehearsal_passed": True,
+                "failure_count": 0,
+            },
         }
         manifest = build_production_deployment_manifest(ROOT, payloads)
         gate = evaluate_production_deployment_manifest_gate(manifest)
@@ -43,6 +48,12 @@ class ProductionDeploymentManifestTests(unittest.TestCase):
         self.assertFalse(manifest["raw_sql_included"])
         self.assertEqual(manifest["token_path_leak_count"], 0)
         self.assertEqual(manifest["raw_sql_body_leak_count"], 0)
+        self.assertTrue(manifest["deployment_rehearsal_passed"])
+        self.assertEqual(
+            manifest["deployment_rehearsal_artifact_path"],
+            "artifacts/snowflake_validation/production_deployment_rehearsal_results.json",
+        )
+        self.assertEqual(manifest["artifact_hashes_path"], "artifacts/release_candidate/artifact_hashes.json")
 
     def test_missing_rollback_gate_blocks_deployable_manifest(self):
         from tools.contracts.production_deployment_manifest import build_production_deployment_manifest
@@ -53,6 +64,36 @@ class ProductionDeploymentManifestTests(unittest.TestCase):
         self.assertFalse(manifest["production_deployable"])
         self.assertIn(
             "PRODUCTION_MANIFEST_ROLLBACK_NOT_READY",
+            {row["code"] for row in manifest["failures"]},
+        )
+
+    def test_failed_rehearsal_blocks_deployable_manifest(self):
+        from tools.contracts.production_deployment_manifest import build_production_deployment_manifest
+
+        payloads = {
+            "artifacts/launch_readiness/rollback_readiness_gate_results.json": {
+                "passed": True,
+                "rollback_ready": True,
+            },
+            "artifacts/launch_readiness/production_deployment_readiness_gate_results.json": {
+                "passed": True,
+                "production_deployable": True,
+            },
+            "artifacts/launch_readiness/app_entry_smoke_gate_results.json": {
+                "passed": True,
+            },
+            "artifacts/launch_readiness/production_deployment_rehearsal_gate_results.json": {
+                "passed": False,
+                "deployment_rehearsal_passed": False,
+                "failure_count": 1,
+            },
+        }
+        manifest = build_production_deployment_manifest(ROOT, payloads)
+
+        self.assertFalse(manifest["passed"], manifest)
+        self.assertFalse(manifest["production_deployable"])
+        self.assertIn(
+            "PRODUCTION_MANIFEST_REHEARSAL_GATE_FAILED",
             {row["code"] for row in manifest["failures"]},
         )
 

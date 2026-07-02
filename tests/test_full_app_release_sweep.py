@@ -321,6 +321,23 @@ def _passing_payload(root: Path) -> dict:
             "rows": first_paint_rows,
             "failure_count": 0,
         },
+        "artifacts/full_app_validation/cost_overview_no_autoload_results.json": {
+            "passed": True,
+            "failure_count": 0,
+            "cost_overview_autoload_violation_count": 0,
+            "rows": [
+                {
+                    **_producer_fields("Cost & Contract", "Cost Overview"),
+                    "id": "cost_overview_no_autoload::cost_contract::cost_overview",
+                    "rendered": True,
+                    "first_paint_row_exists": True,
+                    "autoload_violation_count": 0,
+                    "old_splash_wording_count": 0,
+                    "passed": True,
+                }
+            ],
+            "raw_sql_included": False,
+        },
         "artifacts/full_app_validation/action_click_results.json": {"passed": True, "rows": action_rows, "failure_count": 0},
         "artifacts/full_app_validation/button_click_results.json": action_rows,
         "artifacts/full_app_validation/export_results.json": export_rows,
@@ -343,8 +360,17 @@ def _passing_payload(root: Path) -> dict:
         "artifacts/launch_readiness/import_laziness_gate_results.json": {
             **passed_gate,
             "import_laziness_failure_count": 0,
+            "runtime_import_graph_failure_count": 0,
         },
-        "artifacts/launch_readiness/performance_budget_gate_results.json": passed_gate,
+        "artifacts/full_app_validation/runtime_import_graph_results.json": {
+            **passed_gate,
+            "runtime_import_graph_failure_count": 0,
+            "rows": [],
+        },
+        "artifacts/launch_readiness/performance_budget_gate_results.json": {
+            **passed_gate,
+            "cost_overview_autoload_violation_count": 0,
+        },
         "artifacts/launch_readiness/user_stress_gate_results.json": passed_gate,
         "artifacts/launch_readiness/sql_cleanup_gate_results.json": passed_gate,
         "artifacts/launch_readiness/delete_first_cleanup_gate_results.json": passed_gate,
@@ -450,6 +476,23 @@ class FullAppReleaseSweepTests(unittest.TestCase):
 
         self.assertFalse(results["passed"])
         self.assertEqual(results["fallback_render_failure_count"], 1)
+
+    def test_cost_overview_autoload_gate_blocks_release_sweep(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = _passing_payload(root)
+            payload["artifacts/launch_readiness/performance_budget_gate_results.json"] = {
+                "passed": False,
+                "failure_count": 1,
+                "cost_overview_autoload_violation_count": 1,
+                "raw_sql_included": False,
+            }
+            results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT, root=root)
+
+        self.assertFalse(results["passed"])
+        self.assertEqual(results["cost_overview_autoload_violation_count"], 1)
 
     def test_raw_source_token_in_daily_surface_fails(self):
         from tools.contracts.full_app_release_sweep import build_full_app_release_sweep

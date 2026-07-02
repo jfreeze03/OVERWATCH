@@ -83,6 +83,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             "artifacts/full_app_validation/forbidden_export_scan.json",
             "artifacts/full_app_validation/query_budget_results.json",
             "artifacts/full_app_validation/query_budget_violation_results.json",
+            "artifacts/full_app_validation/cost_overview_no_autoload_results.json",
             "artifacts/full_app_validation/session_direct_sql_results.json",
             "artifacts/full_app_validation/query_search_results.json",
             "artifacts/full_app_validation/evidence_loader_results.json",
@@ -115,6 +116,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         manifest = json.loads((ROOT / "artifacts/full_app_validation/artifact_manifest.json").read_text())
         connection_policy = json.loads((ROOT / "artifacts/full_app_validation/connection_policy_results.json").read_text())
         fallback_render = json.loads((ROOT / "artifacts/full_app_validation/fallback_render_results.json").read_text())
+        cost_no_autoload = json.loads((ROOT / "artifacts/full_app_validation/cost_overview_no_autoload_results.json").read_text())
 
         for rel in required:
             self._assert_runtime_proof_source(rel)
@@ -133,6 +135,8 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertTrue(summary["connection_policy_passed"])
         self.assertTrue(summary["fallback_render_passed"])
         self.assertEqual(summary["fallback_render_failure_count"], 0)
+        self.assertTrue(summary["cost_overview_no_autoload_passed"])
+        self.assertEqual(summary["cost_overview_autoload_violation_count"], 0)
         self.assertGreater(summary["button_count"], 0)
         self.assertGreater(summary["export_count"], 0)
         self.assertGreater(summary["live_feature_count"], 0)
@@ -140,6 +144,8 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertTrue(required.issubset(set(manifest["files"])))
         self.assertTrue(connection_policy["passed"], connection_policy)
         self.assertTrue(fallback_render["passed"], fallback_render)
+        self.assertTrue(cost_no_autoload["passed"], cost_no_autoload)
+        self.assertEqual(cost_no_autoload["cost_overview_autoload_violation_count"], 0, cost_no_autoload)
         self.assertGreaterEqual(connection_policy["row_count"], len(PRIMARY_SECTION_TITLES) + 1)
         self.assertGreaterEqual(fallback_render["row_count"], len(PRIMARY_SECTION_TITLES) * 4 + 1)
         unknown_policy = next(row for row in connection_policy["rows"] if row["section"] == "Unknown Experimental Surface")
@@ -151,6 +157,9 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             self.assertEqual(row["account_usage_count"], 0, row)
             self.assertEqual(row["diagnostic_leak_count"], 0, row)
             self.assertEqual(row["raw_source_leak_count"], 0, row)
+            self.assertEqual(row["unavailable_wall_count"], 0, row)
+            self.assertTrue(row["snapshot_path"], row)
+            self.assertTrue((ROOT / row["snapshot_path"]).exists(), row)
             if row["workflow"] != "packet_available":
                 self.assertEqual(row["query_count"], 0, row)
         generated_export_files = [

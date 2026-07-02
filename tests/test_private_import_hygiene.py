@@ -48,6 +48,31 @@ class PrivateImportHygieneTests(unittest.TestCase):
                         production_refs.append(rel)
         self.assertEqual(production_refs, [])
 
+    def test_private_cross_module_imports_do_not_escape_split_packages(self):
+        offenders: list[str] = []
+        for path in APP_ROOT.rglob("*.py"):
+            if "__pycache__" in path.parts:
+                continue
+            rel = str(path.relative_to(ROOT)).replace("\\", "/")
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                module = node.module or ""
+                for alias in node.names:
+                    if not alias.name.startswith("_") or alias.name.startswith("__"):
+                        continue
+                    section_split_import = rel.startswith(".overwatch_final/sections/") and module.startswith("sections.")
+                    local_relative_import = node.level > 0 and (
+                        rel.startswith(".overwatch_final/sections/")
+                        or rel.startswith(".overwatch_final/utils/")
+                    )
+                    if section_split_import or local_relative_import:
+                        continue
+                    offenders.append(f"{rel}:{node.lineno} imports {module}.{alias.name}")
+
+        self.assertEqual(offenders, [])
+
 
 if __name__ == "__main__":
     unittest.main()

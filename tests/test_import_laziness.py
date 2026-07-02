@@ -17,6 +17,21 @@ class ImportLazinessTests(unittest.TestCase):
         self.assertEqual(results["top_level_query_import_count"], 0)
         self.assertEqual(results["top_level_account_usage_import_count"], 0)
 
+    def test_current_root_modules_are_runtime_section_lazy(self):
+        from tools.contracts.import_laziness import build_runtime_import_graph_results
+
+        results = build_runtime_import_graph_results(ROOT)
+
+        self.assertTrue(results["passed"], results.get("failures"))
+        self.assertEqual(results["runtime_section_import_count"], 0)
+        self.assertEqual(results["runtime_query_import_count"], 0)
+        self.assertEqual(results["runtime_account_usage_import_count"], 0)
+        self.assertEqual(results["runtime_evidence_loader_import_count"], 0)
+        self.assertEqual(results["runtime_unallowed_pandas_import_count"], 0)
+        by_module = {row["module"]: row for row in results["rows"]}
+        self.assertIn("app", by_module)
+        self.assertEqual(by_module["app"]["imported_section_modules"], [])
+
     def test_top_level_section_import_fails(self):
         from tools.contracts.import_laziness import ROOT_MODULES, build_import_laziness_results
 
@@ -44,6 +59,17 @@ class ImportLazinessTests(unittest.TestCase):
 
         self.assertFalse(gate["passed"])
         self.assertEqual(gate["failure_count"], 1)
+
+    def test_missing_runtime_artifact_fails_when_runtime_expected(self):
+        from tools.contracts.import_laziness import evaluate_import_laziness_gate
+
+        gate = evaluate_import_laziness_gate(
+            {"passed": True, "module_count": 1, "failures": []},
+            {},
+        )
+
+        self.assertFalse(gate["passed"])
+        self.assertEqual(gate["runtime_import_graph_failure_count"], 1)
 
 
 if __name__ == "__main__":

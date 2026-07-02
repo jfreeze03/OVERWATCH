@@ -1262,6 +1262,7 @@ def build_full_app_release_sweep(
     connection_policy_gate = _gate(payloads, "connection_policy_gate_results")
     import_laziness_gate = _gate(payloads, "import_laziness_gate_results")
     cortex_live_gate = _gate(payloads, "cortex_token_efficiency_live_gate_results")
+    performance_budget_gate = _gate(payloads, "performance_budget_gate_results")
     missing_connection_policy_gate = sum(
         1
         for row in gate_rows
@@ -1308,9 +1309,13 @@ def build_full_app_release_sweep(
         "connection_policy_passed": bool(connection_policy_gate.get("passed")),
         "fallback_render_failure_count": _as_int(connection_policy_gate.get("fallback_render_failure_count")) + missing_connection_policy_gate,
         "import_laziness_failure_count": _as_int(import_laziness_gate.get("failure_count")) + missing_import_laziness_gate,
+        "runtime_import_graph_failure_count": _as_int(import_laziness_gate.get("runtime_import_graph_failure_count")),
         "stress_failure_count": _as_int(_gate(payloads, "user_stress_gate_results").get("failure_count")),
         "sql_cleanup_failure_count": _as_int(_gate(payloads, "sql_cleanup_gate_results").get("failure_count")),
         "first_paint_failure_count": first_paint_failure_count,
+        "cost_overview_autoload_violation_count": _as_int(
+            performance_budget_gate.get("cost_overview_autoload_violation_count")
+        ),
         "missing_first_paint_row_count": sum(1 for row in rows if bool(row.get("missing_first_paint_row"))),
         "missing_render_surface_count": sum(1 for row in rows if not row.get("rendered")),
         "producer_provenance_failure_count": sum(_as_int(row.get("producer_provenance_failure_count")) for row in rows),
@@ -1378,9 +1383,11 @@ def evaluate_full_app_release_sweep_gate(payload: object) -> dict[str, Any]:
         "connection_policy_passed": bool(results.get("connection_policy_passed")),
         "fallback_render_failure_count": _as_int(results.get("fallback_render_failure_count")),
         "import_laziness_failure_count": _as_int(results.get("import_laziness_failure_count")),
+        "runtime_import_graph_failure_count": _as_int(results.get("runtime_import_graph_failure_count")),
         "stress_failure_count": _as_int(results.get("stress_failure_count")),
         "sql_cleanup_failure_count": _as_int(results.get("sql_cleanup_failure_count")),
         "first_paint_failure_count": _as_int(results.get("first_paint_failure_count")),
+        "cost_overview_autoload_violation_count": _as_int(results.get("cost_overview_autoload_violation_count")),
         "missing_first_paint_row_count": _as_int(results.get("missing_first_paint_row_count")),
         "missing_render_surface_count": _as_int(results.get("missing_render_surface_count")),
         "producer_provenance_failure_count": _as_int(results.get("producer_provenance_failure_count")),
@@ -1437,6 +1444,8 @@ def write_full_app_release_sweep_artifacts(
                 "artifacts/launch_readiness/settings_live_feature_gate_results.json",
                 "artifacts/launch_readiness/connection_policy_gate_results.json",
                 "artifacts/launch_readiness/import_laziness_gate_results.json",
+                "artifacts/full_app_validation/runtime_import_graph_results.json",
+                "artifacts/full_app_validation/cost_overview_no_autoload_results.json",
                 "artifacts/launch_readiness/performance_budget_gate_results.json",
                 "artifacts/launch_readiness/user_stress_gate_results.json",
                 "artifacts/launch_readiness/sql_cleanup_gate_results.json",

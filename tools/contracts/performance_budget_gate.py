@@ -13,6 +13,7 @@ LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
 
 PERFORMANCE_BUDGET_RESULTS_REL = f"{FULL_APP_DIR}/performance_budget_results.json"
 PERFORMANCE_BUDGET_GATE_REL = f"{LAUNCH_READINESS_DIR}/performance_budget_gate_results.json"
+COST_OVERVIEW_NO_AUTOLOAD_RESULTS_REL = f"{FULL_APP_DIR}/cost_overview_no_autoload_results.json"
 
 PRIMARY_SECTIONS = (
     "Executive Landing",
@@ -228,6 +229,7 @@ def _evaluate_budget_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[dict[
 def evaluate_performance_budget_gate(
     first_paint_payload: Any = None,
     query_budget_payload: Any = None,
+    cost_overview_payload: Any = None,
     telemetry_rows: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     first_paint_rows, first_paint_failures = _evaluate_first_paint_rows(_rows(first_paint_payload))
@@ -235,7 +237,29 @@ def evaluate_performance_budget_gate(
     if telemetry_rows is not None:
         budget_rows.extend(dict(row) for row in telemetry_rows if isinstance(row, Mapping))
     budget_checks, budget_failures = _evaluate_budget_rows(budget_rows)
-    failures = first_paint_failures + budget_failures
+    cost_payload = cost_overview_payload if isinstance(cost_overview_payload, Mapping) else {}
+    cost_rows = _rows(cost_payload)
+    cost_failures: list[dict[str, Any]] = []
+    cost_violation_count = _as_int(cost_payload.get("cost_overview_autoload_violation_count"))
+    if cost_overview_payload is not None:
+        if not cost_payload:
+            cost_failures.append({
+                "section": "Cost & Contract",
+                "workflow": "Cost Overview",
+                "failure_reason": "missing Cost Overview no-autoload proof",
+            })
+        elif not bool(cost_payload.get("passed")):
+            cost_failures.extend(
+                {
+                    "section": str(row.get("section") or "Cost & Contract"),
+                    "workflow": str(row.get("workflow") or "Cost Overview"),
+                    "failure_reason": str(row.get("failure_reason") or "Cost Overview autoload proof failed"),
+                }
+                for row in (cost_rows or [{"section": "Cost & Contract", "workflow": "Cost Overview"}])
+            )
+            if not cost_violation_count:
+                cost_violation_count = max(1, len(cost_failures))
+    failures = first_paint_failures + budget_failures + cost_failures
     return {
         "source": "performance_budget_gate",
         "generated_at": _now(),
@@ -243,6 +267,8 @@ def evaluate_performance_budget_gate(
         "failure_count": len(failures),
         "first_paint_rows": first_paint_rows,
         "query_budget_rows": budget_checks,
+        "cost_overview_no_autoload_rows": cost_rows,
+        "cost_overview_autoload_violation_count": cost_violation_count,
         "failures": failures,
         "raw_sql_included": False,
     }
@@ -252,7 +278,8 @@ def write_performance_budget_gate_artifacts(root: Path | str = ".") -> dict[str,
     root_path = Path(root).resolve()
     first_paint = _load_json(root_path / f"{FULL_APP_DIR}/first_paint_performance_results.json")
     query_budget = _load_json(root_path / f"{FULL_APP_DIR}/query_budget_results.json")
-    gate = evaluate_performance_budget_gate(first_paint, query_budget)
+    cost_overview = _load_json(root_path / COST_OVERVIEW_NO_AUTOLOAD_RESULTS_REL)
+    gate = evaluate_performance_budget_gate(first_paint, query_budget, cost_overview)
     results = {
         "source": "performance_budget_results",
         "generated_at": _now(),
@@ -260,6 +287,8 @@ def write_performance_budget_gate_artifacts(root: Path | str = ".") -> dict[str,
         "failure_count": int(gate.get("failure_count") or 0),
         "first_paint_rows": gate.get("first_paint_rows", []),
         "query_budget_rows": gate.get("query_budget_rows", []),
+        "cost_overview_no_autoload_rows": gate.get("cost_overview_no_autoload_rows", []),
+        "cost_overview_autoload_violation_count": int(gate.get("cost_overview_autoload_violation_count") or 0),
         "raw_sql_included": False,
     }
     _write_json(root_path / PERFORMANCE_BUDGET_RESULTS_REL, results)
@@ -278,6 +307,7 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "COST_OVERVIEW_NO_AUTOLOAD_RESULTS_REL",
     "PERFORMANCE_BUDGET_GATE_REL",
     "PERFORMANCE_BUDGET_RESULTS_REL",
     "PRIMARY_SECTIONS",

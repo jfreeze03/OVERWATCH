@@ -168,6 +168,8 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertTrue(summary["connection_policy_passed"])
         self.assertEqual(summary["fallback_render_failure_count"], 0)
         self.assertEqual(summary["import_laziness_failure_count"], 0)
+        self.assertEqual(summary["runtime_import_graph_failure_count"], 0)
+        self.assertEqual(summary["cost_overview_autoload_violation_count"], 0)
         self.assertTrue(summary["settings_live_feature_gate_passed"])
         self.assertTrue(summary["render_provenance_reconciliation_passed"])
         self.assertEqual(summary["render_provenance_reconciliation_failure_count"], 0)

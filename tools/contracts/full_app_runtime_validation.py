@@ -3084,6 +3084,7 @@ class RuntimeValidationHarness:
                     failure_reasons.append("primary section is not packet/fallback capable")
                 if query_count and state != "packet_available":
                     failure_reasons.append("fallback state must not run live probes")
+                html_fragment = f"<section class='ow-kit-command-brief'><h1>{section}</h1><p>{text}</p></section>"
                 rows.append(
                     {
                         "id": f"fallback::{_token(section)}::{state}",
@@ -3101,7 +3102,10 @@ class RuntimeValidationHarness:
                         "rendered": True,
                         "command_brief_compatible": True,
                         "first_viewport_text": text,
-                        "html_fragment": f"<section class='ow-kit-command-brief'><h1>{section}</h1><p>{text}</p></section>",
+                        "html_fragment": html_fragment,
+                        "rendered_text": f"{section}\n{text}",
+                        "html_hash": hashlib.sha256(html_fragment.encode("utf-8")).hexdigest(),
+                        "snapshot_path": f"artifacts/decision_workspace_html_snapshots/fallback_{_token(section)}_{state}.html",
                         "query_count": query_count,
                         "account_usage_count": 0,
                         "direct_sql_count": 0,
@@ -3109,6 +3113,7 @@ class RuntimeValidationHarness:
                         "diagnostic_leak_count": 0,
                         "raw_source_leak_count": 0,
                         "unavailable_tile_count": 0,
+                        "unavailable_wall_count": 0,
                         "raw_sql_included": False,
                         "passed": not failure_reasons,
                         "failure_reason": "; ".join(failure_reasons),
@@ -3120,6 +3125,7 @@ class RuntimeValidationHarness:
             and unknown_policy.requires_connection
             and unknown_policy.fallback_surface == "connection_required"
         )
+        unknown_html = "<section class='ow-kit-command-brief'><h1>Route unavailable</h1><p>This route is not available.</p></section>"
         rows.append(
             {
                 "id": "fallback::unknown_experimental_surface::connection_required",
@@ -3137,7 +3143,10 @@ class RuntimeValidationHarness:
                 "rendered": True,
                 "command_brief_compatible": True,
                 "first_viewport_text": "This route is not available.",
-                "html_fragment": "<section class='ow-kit-command-brief'><h1>Route unavailable</h1><p>This route is not available.</p></section>",
+                "html_fragment": unknown_html,
+                "rendered_text": "Route unavailable\nThis route is not available.",
+                "html_hash": hashlib.sha256(unknown_html.encode("utf-8")).hexdigest(),
+                "snapshot_path": "artifacts/decision_workspace_html_snapshots/fallback_unknown_experimental_surface_connection_required.html",
                 "query_count": 0,
                 "account_usage_count": 0,
                 "direct_sql_count": 0,
@@ -3145,6 +3154,7 @@ class RuntimeValidationHarness:
                 "diagnostic_leak_count": 0,
                 "raw_source_leak_count": 0,
                 "unavailable_tile_count": 0,
+                "unavailable_wall_count": 0,
                 "raw_sql_included": False,
                 "passed": unknown_passed,
                 "failure_reason": "" if unknown_passed else "unknown route did not fail closed",
@@ -3157,6 +3167,95 @@ class RuntimeValidationHarness:
             "runtime_source": "connection_fallback_render",
             "rows": rows,
             "row_count": len(rows),
+            "failure_count": len(failures),
+            "failures": failures,
+            "passed": not failures,
+            "raw_sql_included": False,
+        }
+
+    def _cost_overview_no_autoload_results(
+        self,
+        view_results: Iterable[Mapping[str, Any]],
+        first_paint_performance_results: Iterable[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        view_row = next(
+            (
+                row for row in view_results
+                if row.get("section") == "Cost & Contract" and row.get("workflow") == "Cost Overview"
+            ),
+            {},
+        )
+        first_paint_row = next(
+            (
+                row for row in first_paint_performance_results
+                if row.get("section") == "Cost & Contract" and row.get("workflow") == "Cost Overview"
+            ),
+            {},
+        )
+        evidence_query_count = int(first_paint_row.get("evidence_query_count") or 0)
+        account_usage_count = int(first_paint_row.get("account_usage_count") or 0)
+        detail_query_count = int(first_paint_row.get("detail_query_count") or 0)
+        cost_workbench_query_count = int(first_paint_row.get("cost_workbench_query_count") or 0)
+        query_search_query_count = int(first_paint_row.get("query_search_query_count") or 0)
+        direct_sql_count = int(first_paint_row.get("direct_sql_count") or 0)
+        cold_packet_count = int(first_paint_row.get("cold_first_paint_packet_query_count") or 0)
+        warm_query_count = int(first_paint_row.get("warm_first_paint_query_count") or 0)
+        html = str(view_row.get("html_fragment") or view_row.get("rendered_text") or "")
+        old_splash_wording_count = len(re.findall(r"\bsplash\b", html, flags=re.IGNORECASE))
+        violation_count = sum(
+            1
+            for value in (
+                evidence_query_count,
+                account_usage_count,
+                detail_query_count,
+                cost_workbench_query_count,
+                query_search_query_count,
+                direct_sql_count,
+                warm_query_count,
+            )
+            if value
+        )
+        if cold_packet_count > 1:
+            violation_count += 1
+        if old_splash_wording_count:
+            violation_count += 1
+        evidence_module_imported = "sections.cost_contract_evidence_load" in sys.modules
+        row = {
+            "id": "cost_overview_no_autoload::cost_contract::cost_overview",
+            "source": "cost_overview_no_autoload_results",
+            "proof_source": "runtime_render",
+            "runtime_source": "actual_section_render",
+            "section": "Cost & Contract",
+            "workflow": "Cost Overview",
+            "rendered": bool(view_row),
+            "first_paint_row_exists": bool(first_paint_row),
+            "command_brief_count": int(view_row.get("command_brief_count") or 0),
+            "cold_first_paint_packet_query_count": cold_packet_count,
+            "warm_first_paint_query_count": warm_query_count,
+            "evidence_query_count": evidence_query_count,
+            "account_usage_count": account_usage_count,
+            "detail_query_count": detail_query_count,
+            "cost_workbench_query_count": cost_workbench_query_count,
+            "query_search_query_count": query_search_query_count,
+            "direct_sql_count": direct_sql_count,
+            "cost_evidence_load_module_imported": evidence_module_imported,
+            "cost_evidence_load_import_lazy_safe": (not evidence_module_imported) or violation_count == old_splash_wording_count,
+            "cost_evidence_loader_executed": evidence_query_count > 0,
+            "cost_workbench_autoloaded": cost_workbench_query_count > 0,
+            "old_splash_wording_count": old_splash_wording_count,
+            "autoload_violation_count": violation_count,
+            "passed": bool(view_row) and bool(first_paint_row) and violation_count == 0,
+            "failure_reason": "" if bool(view_row) and bool(first_paint_row) and violation_count == 0 else "Cost Overview first paint autoloaded evidence/workbench/detail or leaked old splash wording.",
+            "raw_sql_included": False,
+        }
+        failures = [] if row["passed"] else [row]
+        return {
+            "source": "cost_overview_no_autoload_results",
+            "proof_source": "runtime_render",
+            "runtime_source": "actual_section_render",
+            "rows": [row],
+            "row_count": 1,
+            "cost_overview_autoload_violation_count": violation_count,
             "failure_count": len(failures),
             "failures": failures,
             "passed": not failures,
@@ -4395,6 +4494,10 @@ class RuntimeValidationHarness:
             "recommendation": "Keep production UI record-only and route fixes through launch-readiness query budget failures.",
             "raw_sql_included": False,
         }
+        cost_overview_no_autoload_results = self._cost_overview_no_autoload_results(
+            view_results,
+            first_paint_performance_results,
+        )
         session_direct_sql_results = {
             "source": "runtime_telemetry_events",
             "proof_source": "runtime_click",
@@ -4939,6 +5042,12 @@ class RuntimeValidationHarness:
         add_hard_gate_failure("control_contract_coverage", not bool(control_contract_coverage["passed"]), "Rendered controls are missing keys, contracts, labels, or duplicate-key cleanup.", None)
         add_hard_gate_failure("control_click_coverage", not bool(control_click_coverage["passed"]), "Rendered action controls were not clicked or explicitly skipped with a current reason.", None)
         add_hard_gate_failure("query_budget", not bool(query_budget_results["passed"]), "Query-budget context validation failed.", len(_safe_list(query_budget_results.get("failed_contexts", []))))
+        add_hard_gate_failure(
+            "cost_overview_no_autoload",
+            not bool(cost_overview_no_autoload_results["passed"]),
+            "Cost Overview first paint autoloaded evidence/workbench/detail or leaked old splash wording.",
+            _safe_int(cost_overview_no_autoload_results.get("failure_count")),
+        )
         add_hard_gate_failure("session_direct_sql", not bool(session_direct_sql_results["passed"]), "Session/direct-SQL runtime validation failed.", _safe_int(session_direct_sql_results.get("marker_budget_mismatch_count")))
         add_hard_gate_failure("route_query_leaks", bool(route_query_leaks), "Route actions opened sessions, ran queries, or emitted direct SQL.", len(route_query_leaks))
         add_hard_gate_failure("first_paint_query_leaks", bool(first_paint_query_leaks), "First paint did more than the current packet lookup.", len(first_paint_query_leaks))
@@ -4958,6 +5067,7 @@ class RuntimeValidationHarness:
         cleanup_gate_passed = cleanup_unknown_sql_object_count == 0 and cleanup_dead_route_count == 0 and stale_artifact_count == 0
         performance_gate_passed = (
             bool(query_budget_results["passed"])
+            and bool(cost_overview_no_autoload_results["passed"])
             and bool(session_direct_sql_results["passed"])
             and not route_query_leaks
             and not first_paint_query_leaks
@@ -5025,6 +5135,10 @@ class RuntimeValidationHarness:
             "source_forbidden_token_count": source_scan["blocked_count"],
             "unhandled_exception_count": len(unhandled_exceptions),
             "query_budget_passed": query_budget_results["passed"],
+            "cost_overview_no_autoload_passed": cost_overview_no_autoload_results["passed"],
+            "cost_overview_autoload_violation_count": _safe_int(
+                cost_overview_no_autoload_results.get("cost_overview_autoload_violation_count")
+            ),
             "session_direct_sql_passed": session_direct_sql_results["passed"],
             "hard_gate_passed": hard_gate_passed,
             "hard_gate_failures": hard_gate_failures,
@@ -5102,6 +5216,7 @@ class RuntimeValidationHarness:
             "forbidden_export_scan.json": export_scan,
             "query_budget_results.json": query_budget_results,
             "query_budget_violation_results.json": query_budget_violation_results,
+            "cost_overview_no_autoload_results.json": cost_overview_no_autoload_results,
             "session_direct_sql_results.json": session_direct_sql_results,
             "query_search_results.json": query_search_results,
             "evidence_loader_results.json": evidence_results,
@@ -5544,9 +5659,26 @@ def write_full_app_validation_artifacts(root: Path | str = ".") -> dict[str, Any
     payloads = RuntimeValidationHarness(root_path).run()
     generated_export_payloads = list(payloads.pop("__generated_export_payloads__", []))
     payloads = _stamp_runtime_payloads(payloads, root=root_path)
+    snapshot_dir = root_path / "artifacts" / "decision_workspace_html_snapshots"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    for snapshot in snapshot_dir.glob("fallback_*.html"):
+        snapshot.unlink()
     generated_dir = output_dir / "generated_exports"
     generated_dir.mkdir(parents=True, exist_ok=True)
     generated_files: dict[str, str] = {}
+    fallback_payload = payloads.get("fallback_render_results.json")
+    fallback_rows = fallback_payload.get("rows", []) if isinstance(fallback_payload, Mapping) else []
+    for row in fallback_rows:
+        if not isinstance(row, Mapping):
+            continue
+        relative_snapshot = str(row.get("snapshot_path") or "")
+        html_fragment = str(row.get("html_fragment") or "")
+        if not relative_snapshot.startswith("artifacts/decision_workspace_html_snapshots/") or not html_fragment:
+            continue
+        snapshot_path = root_path / relative_snapshot
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_path.write_text(html_fragment, encoding="utf-8")
+        generated_files[relative_snapshot] = html_fragment
     for payload in generated_export_payloads:
         relative = str(payload.get("relative_path") or "")
         content = str(payload.get("content") or "")

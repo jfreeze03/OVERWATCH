@@ -129,6 +129,54 @@ class PerformanceBudgetGateTests(unittest.TestCase):
         reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
         self.assertIn("boundary", reasons)
 
+    def test_cost_overview_autoload_artifact_blocks_performance_gate(self):
+        from tools.contracts.performance_budget_gate import PRIMARY_SECTIONS, evaluate_performance_budget_gate
+
+        first_paint = {
+            "rows": [
+                {
+                    "section": section,
+                    "workflow": "Cost Overview" if section == "Cost & Contract" else "Overview",
+                    "product_boundary": "first_paint_packet",
+                    "execution_boundary": "decision_packet",
+                    "cold_first_paint_packet_query_count": 1,
+                    "warm_first_paint_query_count": 0,
+                    "non_packet_first_paint_event_count": 0,
+                    "evidence_query_count": 0,
+                    "account_usage_count": 0,
+                    "detail_query_count": 0,
+                    "cost_workbench_query_count": 0,
+                    "query_search_query_count": 0,
+                    "direct_sql_count": 0,
+                    "session_open_count": 0,
+                    "elapsed_ms": 10,
+                    "passed": True,
+                }
+                for section in PRIMARY_SECTIONS
+            ]
+        }
+
+        gate = evaluate_performance_budget_gate(
+            first_paint,
+            {"rows": []},
+            {
+                "passed": False,
+                "cost_overview_autoload_violation_count": 1,
+                "rows": [
+                    {
+                        "section": "Cost & Contract",
+                        "workflow": "Cost Overview",
+                        "failure_reason": "Cost Overview first paint autoloaded evidence/workbench/detail.",
+                    }
+                ],
+            },
+        )
+
+        self.assertFalse(gate["passed"])
+        self.assertEqual(gate["cost_overview_autoload_violation_count"], 1)
+        reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
+        self.assertIn("Cost Overview", reasons)
+
 
 if __name__ == "__main__":
     unittest.main()

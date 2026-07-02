@@ -154,6 +154,7 @@ from tools.contracts.delete_first_cleanup import (
 from tools.contracts.import_laziness import (
     IMPORT_LAZINESS_GATE_REL,
     IMPORT_LAZINESS_RESULTS_REL,
+    RUNTIME_IMPORT_GRAPH_RESULTS_REL,
     evaluate_import_laziness_gate,
     write_import_laziness_artifacts,
 )
@@ -4812,6 +4813,7 @@ def _release_gate_matrix(
     import_laziness_gate = _as_mapping(launch_artifacts.get("import_laziness_gate_results"))
     full_app_release_sweep_gate = _as_mapping(launch_artifacts.get("full_app_release_sweep_gate_results"))
     settings_live_feature_gate = _as_mapping(launch_artifacts.get("settings_live_feature_gate_results"))
+    performance_budget_gate = _as_mapping(launch_artifacts.get("performance_budget_gate_results"))
     full_app_launch_gate = _as_mapping(launch_artifacts.get("full_app_launch_gate_results"))
     deterministic_render_gate = _as_mapping(launch_artifacts.get("deterministic_render_gate_results"))
     browser_smoke_gate = _as_mapping(launch_artifacts.get("browser_smoke_gate_results"))
@@ -5649,7 +5651,10 @@ def evaluate_launch_readiness(
         "connection_policy_gate_results": _as_mapping(launch_artifacts.get("connection_policy_gate_results"))
         or _connection_policy_gate_results(payloads),
         "import_laziness_gate_results": _as_mapping(launch_artifacts.get("import_laziness_gate_results"))
-        or evaluate_import_laziness_gate(payloads.get(IMPORT_LAZINESS_RESULTS_REL)),
+        or evaluate_import_laziness_gate(
+            payloads.get(IMPORT_LAZINESS_RESULTS_REL),
+            payloads.get(RUNTIME_IMPORT_GRAPH_RESULTS_REL),
+        ),
         "full_app_release_sweep_gate_results": _as_mapping(launch_artifacts.get("full_app_release_sweep_gate_results"))
         or evaluate_full_app_release_sweep_gate(_as_mapping(payloads.get(FULL_APP_RELEASE_SWEEP_RESULTS_REL))),
         "settings_live_feature_gate_results": _as_mapping(launch_artifacts.get("settings_live_feature_gate_results"))
@@ -5721,6 +5726,7 @@ def evaluate_launch_readiness(
         or evaluate_performance_budget_gate(
             _as_mapping(payloads.get(FIRST_PAINT_PERFORMANCE_REL)),
             _as_mapping(payloads.get("artifacts/full_app_validation/query_budget_results.json")),
+            _as_mapping(payloads.get("artifacts/full_app_validation/cost_overview_no_autoload_results.json")),
         ),
         "user_stress_gate_results": _as_mapping(launch_artifacts.get("user_stress_gate_results"))
         or evaluate_user_stress_gate(payloads.get(USER_STRESS_RESULTS_REL)),
@@ -5793,6 +5799,7 @@ def evaluate_launch_readiness(
     import_laziness_gate = _as_mapping(launch_artifacts.get("import_laziness_gate_results"))
     full_app_release_sweep_gate = _as_mapping(launch_artifacts.get("full_app_release_sweep_gate_results"))
     settings_live_feature_gate = _as_mapping(launch_artifacts.get("settings_live_feature_gate_results"))
+    performance_budget_gate = _as_mapping(launch_artifacts.get("performance_budget_gate_results"))
     full_app_launch_gate = _as_mapping(launch_artifacts.get("full_app_launch_gate_results"))
     deterministic_render_gate = _as_mapping(launch_artifacts.get("deterministic_render_gate_results"))
     browser_smoke_gate = _as_mapping(launch_artifacts.get("browser_smoke_gate_results"))
@@ -5904,6 +5911,7 @@ def evaluate_launch_readiness(
         "connection_policy_passed": bool(connection_policy_gate.get("passed")),
         "fallback_render_failure_count": _as_int(connection_policy_gate.get("fallback_render_failure_count")),
         "import_laziness_failure_count": _as_int(import_laziness_gate.get("failure_count")),
+        "runtime_import_graph_failure_count": _as_int(import_laziness_gate.get("runtime_import_graph_failure_count")),
         "private_import_failure_count": 0,
         "private_alias_failure_count": 0,
         "full_app_launch_gauntlet_passed": bool(full_app_launch_gate.get("passed")),
@@ -5952,6 +5960,10 @@ def evaluate_launch_readiness(
         "first_paint_failure_count": max(
             _as_int(first_paint_gate.get("failure_count")),
             _as_int(full_app_release_sweep_gate.get("first_paint_failure_count")),
+        ),
+        "cost_overview_autoload_violation_count": max(
+            _as_int(performance_budget_gate.get("cost_overview_autoload_violation_count")),
+            _as_int(full_app_release_sweep_gate.get("cost_overview_autoload_violation_count")),
         ),
         "credential_first_paint_violation_count": _security_first_paint_violation_count(payloads),
         "packet_fallback_ui_passed": bool(packet_fallback_gate.get("passed")),

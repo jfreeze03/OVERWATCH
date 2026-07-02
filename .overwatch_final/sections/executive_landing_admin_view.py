@@ -77,7 +77,7 @@ def _render_executive_admin_advanced(
     st.markdown("**Executive Admin / Advanced**")
     st.caption(
         "Scorecard formulas, value ledger, telemetry trust detail, production readiness, "
-        "proofing/evidence grids, and advanced validation live here instead of the default front door."
+        "telemetry grids, and advanced validation live here instead of the default front door."
     )
     load = False
     if not isinstance(snapshot, dict):

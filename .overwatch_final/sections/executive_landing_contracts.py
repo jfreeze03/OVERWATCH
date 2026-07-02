@@ -31,7 +31,7 @@ EXECUTIVE_LANDING_WORKFLOW_DETAILS = {
     EXECUTIVE_SECURITY_RISK_WORKFLOW: "Security exposure, access, and governance blockers.",
     EXECUTIVE_CHANGE_SUMMARY_WORKFLOW: "Change drift, release movement, and migration risk.",
     EXECUTIVE_ACTIONS_WORKFLOW: "Owner actions and closure posture for leaders.",
-    EXECUTIVE_ADMIN_WORKFLOW: "Advanced scorecards, evidence, and administrative proof.",
+    EXECUTIVE_ADMIN_WORKFLOW: "Advanced scorecards, evidence, and administrative telemetry.",
 }
 EXECUTIVE_LANDING_LEGACY_WORKFLOW_ALIASES = dict(WORKFLOW_ALIASES_BY_SECTION["Executive Landing"])
 

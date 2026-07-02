@@ -343,6 +343,16 @@ def _passing_payload(root: Path) -> dict:
         "artifacts/full_app_validation/export_results.json": export_rows,
         "artifacts/full_app_validation/case_payload_results.json": case_rows,
         "artifacts/launch_readiness/action_click_gate_results.json": passed_gate,
+        "artifacts/launch_readiness/app_entry_smoke_gate_results.json": {
+            **passed_gate,
+            "app_entry_smoke_passed": True,
+        },
+        "artifacts/launch_readiness/production_deployment_readiness_gate_results.json": {
+            **passed_gate,
+            "production_deployment_readiness_passed": True,
+            "production_deployable": True,
+            "rollback_ready": True,
+        },
         "artifacts/launch_readiness/runtime_artifact_provenance_gate_results.json": passed_gate,
         "artifacts/launch_readiness/export_download_gate_results.json": passed_gate,
         "artifacts/launch_readiness/settings_live_feature_gate_results.json": {
@@ -459,6 +469,35 @@ class FullAppReleaseSweepTests(unittest.TestCase):
 
         self.assertFalse(results["passed"])
         self.assertGreater(results["import_laziness_failure_count"], 0)
+
+    def test_missing_app_entry_smoke_gate_fails(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = _passing_payload(root)
+            payload.pop("artifacts/launch_readiness/app_entry_smoke_gate_results.json")
+            results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT, root=root)
+
+        self.assertFalse(results["passed"])
+        self.assertGreater(results["app_entry_smoke_failure_count"], 0)
+
+    def test_production_deployment_readiness_gate_failure_blocks_sweep(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = _passing_payload(root)
+            payload["artifacts/launch_readiness/production_deployment_readiness_gate_results.json"] = {
+                "passed": False,
+                "production_deployable": False,
+                "failure_count": 1,
+                "raw_sql_included": False,
+            }
+            results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT, root=root)
+
+        self.assertFalse(results["passed"])
+        self.assertEqual(results["production_deployment_readiness_failure_count"], 1)
 
     def test_connection_policy_gate_failure_blocks_release_sweep(self):
         from tools.contracts.full_app_release_sweep import build_full_app_release_sweep

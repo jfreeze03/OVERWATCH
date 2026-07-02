@@ -117,6 +117,18 @@ from tools.contracts.full_app_release_sweep import (
     evaluate_full_app_release_sweep_gate,
     write_full_app_release_sweep_artifacts,
 )
+from tools.contracts.app_entry_smoke import (
+    APP_ENTRY_SMOKE_GATE_REL,
+    APP_ENTRY_SMOKE_RESULTS_REL,
+    evaluate_app_entry_smoke_gate,
+    write_app_entry_smoke_artifacts,
+)
+from tools.contracts.production_deployment_readiness import (
+    PRODUCTION_DEPLOYMENT_READINESS_GATE_REL,
+    PRODUCTION_DEPLOYMENT_READINESS_RESULTS_REL,
+    evaluate_production_deployment_readiness_gate,
+    write_production_deployment_readiness_artifacts,
+)
 from tools.contracts.rendered_ui_leak_scan import (
     DAILY_WORDING_GATE_REL,
     RENDERED_UI_LEAK_GATE_REL,
@@ -252,7 +264,11 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/packet_availability_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/live_cost_reconciliation_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/daily_wording_gate_results.json",
+    APP_ENTRY_SMOKE_GATE_REL,
+    APP_ENTRY_SMOKE_RESULTS_REL,
     CONNECTION_POLICY_GATE_REL,
+    PRODUCTION_DEPLOYMENT_READINESS_GATE_REL,
+    PRODUCTION_DEPLOYMENT_READINESS_RESULTS_REL,
     IMPORT_LAZINESS_GATE_REL,
     FULL_APP_RELEASE_SWEEP_GATE_REL,
     SETTINGS_LIVE_FEATURE_GATE_REL,
@@ -2717,12 +2733,22 @@ def _release_candidate_summary_bundle(
         "uploaded_artifact_names": uploaded_names,
         "ci_metadata_source": ci_metadata_source,
         "all_passed": all_passed,
+        "production_deployable": all_passed and bool(launch_summary.get("production_deployable")),
         "hard_gate_failure_count": len(hard_failures),
         "warning_count": warning_count,
         "waiver_count": waiver_count,
         "artifact_count": _as_int(reconciliation.get("artifact_count")),
         "artifact_hash_count": _as_int(reconciliation.get("hash_count")),
         "ci_artifact_reality_passed": bool(launch_summary.get("ci_artifact_reality_passed")),
+        "app_entry_smoke_passed": bool(launch_summary.get("app_entry_smoke_passed")),
+        "app_entry_smoke_failure_count": _as_int(launch_summary.get("app_entry_smoke_failure_count")),
+        "production_deployment_readiness_passed": bool(
+            launch_summary.get("production_deployment_readiness_passed")
+        ),
+        "production_deployment_readiness_failure_count": _as_int(
+            launch_summary.get("production_deployment_readiness_failure_count")
+        ),
+        "rollback_ready": bool(launch_summary.get("rollback_ready")),
         "full_app_gauntlet_passed": bool(launch_summary.get("gauntlet_passed")),
         "full_app_launch_gauntlet_passed": bool(launch_summary.get("full_app_launch_gauntlet_passed")),
         "render_provenance_reconciliation_passed": bool(
@@ -2854,6 +2880,10 @@ def _release_candidate_summary_bundle(
         "deployment_readiness_passed": _gate_passed(matrix_rows, "deployment_readiness"),
         "docs_readiness_passed": _gate_passed(matrix_rows, "docs_readiness"),
         "raw_sql_leak_count": _as_int(reconciliation.get("raw_sql_or_secret_count")) or _as_int(launch_summary.get("raw_sql_leak_count")),
+        "source_leak_count": _as_int(launch_summary.get("source_leak_count")),
+        "exact_action_match_failure_count": _as_int(launch_summary.get("exact_action_match_failure_count")),
+        "export_parse_failure_count": _as_int(launch_summary.get("export_parse_failure_count")),
+        "token_path_leak_count": _as_int(launch_summary.get("token_path_leak_count")),
         "forbidden_daily_token_count": _as_int(launch_summary.get("forbidden_daily_token_count")),
         "stale_artifact_count": _as_int(launch_summary.get("stale_artifact_count")),
         "unknown_sql_object_count": _as_int(launch_summary.get("cleanup_unknown_sql_object_count")),
@@ -4809,7 +4839,11 @@ def _release_gate_matrix(
     packet_availability_gate = _as_mapping(launch_artifacts.get("packet_availability_gate_results"))
     live_cost_gate = _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results"))
     daily_wording_gate = _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
+    app_entry_smoke_gate = _as_mapping(launch_artifacts.get("app_entry_smoke_gate_results"))
     connection_policy_gate = _as_mapping(launch_artifacts.get("connection_policy_gate_results"))
+    production_deployment_gate = _as_mapping(
+        launch_artifacts.get("production_deployment_readiness_gate_results")
+    )
     import_laziness_gate = _as_mapping(launch_artifacts.get("import_laziness_gate_results"))
     full_app_release_sweep_gate = _as_mapping(launch_artifacts.get("full_app_release_sweep_gate_results"))
     settings_live_feature_gate = _as_mapping(launch_artifacts.get("settings_live_feature_gate_results"))
@@ -4916,6 +4950,22 @@ def _release_gate_matrix(
             "failure_reason": ""
             if connection_policy_gate.get("passed")
             else "Connection/fallback runtime policy proof is missing, unsafe, or does not fail closed for unknown routes.",
+        },
+        {
+            "gate": "app_entry_smoke",
+            "artifact": APP_ENTRY_SMOKE_GATE_REL,
+            "passed": bool(app_entry_smoke_gate.get("passed")),
+            "failure_reason": ""
+            if app_entry_smoke_gate.get("passed")
+            else "App entrypoint lazy-import or Streamlit-style main execution proof failed.",
+        },
+        {
+            "gate": "production_deployment_readiness",
+            "artifact": PRODUCTION_DEPLOYMENT_READINESS_GATE_REL,
+            "passed": bool(production_deployment_gate.get("passed")),
+            "failure_reason": ""
+            if production_deployment_gate.get("passed")
+            else "Production role, privilege, secret, setup, token hygiene, or rollback readiness proof failed.",
         },
         {
             "gate": "import_laziness_gate",
@@ -5648,8 +5698,16 @@ def evaluate_launch_readiness(
         "live_cost_reconciliation_gate_results": _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results")),
         "daily_wording_gate_results": _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
         or _daily_wording_gate_results(payloads),
+        "app_entry_smoke_gate_results": _as_mapping(launch_artifacts.get("app_entry_smoke_gate_results"))
+        or evaluate_app_entry_smoke_gate(payloads.get(APP_ENTRY_SMOKE_RESULTS_REL)),
         "connection_policy_gate_results": _as_mapping(launch_artifacts.get("connection_policy_gate_results"))
         or _connection_policy_gate_results(payloads),
+        "production_deployment_readiness_gate_results": _as_mapping(
+            launch_artifacts.get("production_deployment_readiness_gate_results")
+        )
+        or evaluate_production_deployment_readiness_gate(
+            payloads.get(PRODUCTION_DEPLOYMENT_READINESS_RESULTS_REL)
+        ),
         "import_laziness_gate_results": _as_mapping(launch_artifacts.get("import_laziness_gate_results"))
         or evaluate_import_laziness_gate(
             payloads.get(IMPORT_LAZINESS_RESULTS_REL),
@@ -5795,7 +5853,11 @@ def evaluate_launch_readiness(
     packet_availability_gate = _as_mapping(launch_artifacts.get("packet_availability_gate_results"))
     live_cost_gate = _as_mapping(launch_artifacts.get("live_cost_reconciliation_gate_results"))
     daily_wording_gate = _as_mapping(launch_artifacts.get("daily_wording_gate_results"))
+    app_entry_smoke_gate = _as_mapping(launch_artifacts.get("app_entry_smoke_gate_results"))
     connection_policy_gate = _as_mapping(launch_artifacts.get("connection_policy_gate_results"))
+    production_deployment_gate = _as_mapping(
+        launch_artifacts.get("production_deployment_readiness_gate_results")
+    )
     import_laziness_gate = _as_mapping(launch_artifacts.get("import_laziness_gate_results"))
     full_app_release_sweep_gate = _as_mapping(launch_artifacts.get("full_app_release_sweep_gate_results"))
     settings_live_feature_gate = _as_mapping(launch_artifacts.get("settings_live_feature_gate_results"))
@@ -5908,6 +5970,16 @@ def evaluate_launch_readiness(
         "daily_wording_passed": bool(daily_wording_gate.get("passed")),
         "daily_wording_failure_count": _as_int(daily_wording_gate.get("failure_count")),
         "daily_wording_blocked_count": _as_int(daily_wording_gate.get("blocked_count")),
+        "app_entry_smoke_passed": bool(app_entry_smoke_gate.get("passed")),
+        "app_entry_smoke_failure_count": _as_int(app_entry_smoke_gate.get("failure_count")),
+        "production_deployment_readiness_passed": bool(production_deployment_gate.get("passed")),
+        "production_deployment_readiness_failure_count": _as_int(
+            production_deployment_gate.get("failure_count")
+        ),
+        "production_deployable": passed
+        and bool(app_entry_smoke_gate.get("passed"))
+        and bool(production_deployment_gate.get("production_deployable", production_deployment_gate.get("passed"))),
+        "rollback_ready": bool(production_deployment_gate.get("rollback_ready")),
         "connection_policy_passed": bool(connection_policy_gate.get("passed")),
         "fallback_render_failure_count": _as_int(connection_policy_gate.get("fallback_render_failure_count")),
         "import_laziness_failure_count": _as_int(import_laziness_gate.get("failure_count")),
@@ -6150,6 +6222,10 @@ def evaluate_launch_readiness(
         "snowflake_cli_token_auth_used": bool(snowflake_cli_gate.get("snowflake_cli_token_auth_used")),
         "snowflake_cli_token_file_supplied": bool(snowflake_cli_gate.get("snowflake_cli_token_file_supplied")),
         "snowflake_cli_token_path_leak_count": _as_int(snowflake_cli_gate.get("snowflake_cli_token_path_leak_count")),
+        "token_path_leak_count": max(
+            _as_int(snowflake_cli_gate.get("snowflake_cli_token_path_leak_count")),
+            _as_int(production_deployment_gate.get("token_path_leak_count")),
+        ),
         "snowflake_cli_temp_sql_path_leak_count": _as_int(snowflake_cli_gate.get("snowflake_cli_temp_sql_path_leak_count")),
         "snowflake_cli_temp_file_hygiene_passed": bool(
             snowflake_cli_gate.get("temp_file_hygiene_passed", snowflake_cli_temp_hygiene_gate.get("passed"))
@@ -6174,6 +6250,15 @@ def evaluate_launch_readiness(
         "workload_formula_semantics_failure_count": _as_int(workload_formula_gate.get("failure_count")),
         "query_budget_gate_passed": bool(query_budget_gate.get("passed")),
         "query_budget_gate_failure_count": _as_int(query_budget_gate.get("failure_count")),
+        "source_leak_count": max(
+            _as_int(source_leak_gate.get("source_leak_count")),
+            _as_int(rendered_ui_leak_gate.get("raw_source_token_count")),
+            _as_int(full_app_release_sweep_gate.get("raw_source_leak_count")),
+        ),
+        "exact_action_match_failure_count": _as_int(action_click_gate.get("exact_action_match_failure_count"))
+        or _as_int(action_click_gate.get("failure_count")),
+        "export_parse_failure_count": _as_int(export_download_gate.get("export_parse_failure_count"))
+        or _as_int(export_download_gate.get("failure_count")),
         "browser_or_snapshot_passed": _gate_passed(matrix, "browser_or_rendered_snapshot"),
         "missing_artifacts": _as_list(artifact_review.get("missing_required_gauntlet_artifacts")),
         "stale_artifacts": _as_list(artifact_review.get("stale_artifacts")),
@@ -6277,6 +6362,8 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     payloads.update(delete_first_cleanup_artifacts)
     import_laziness_artifacts = write_import_laziness_artifacts(root_path)
     payloads.update(import_laziness_artifacts)
+    app_entry_smoke_artifacts = write_app_entry_smoke_artifacts(root_path)
+    payloads.update(app_entry_smoke_artifacts)
     security_credential_artifacts = write_security_credential_validation_artifacts(
         root_path,
         profile=profile,
@@ -6333,6 +6420,7 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["cleanup_launch_closure_results"] = _cleanup_launch_closure_results(payloads)
     launch_artifacts["delete_first_release_results"] = _delete_first_release_results(payloads)
     launch_artifacts["delete_first_cleanup_gate_results"] = delete_first_cleanup_artifacts[DELETE_FIRST_GATE_REL]
+    launch_artifacts["app_entry_smoke_gate_results"] = app_entry_smoke_artifacts[APP_ENTRY_SMOKE_GATE_REL]
     launch_artifacts["import_laziness_gate_results"] = import_laziness_artifacts[IMPORT_LAZINESS_GATE_REL]
     launch_artifacts["performance_budget_gate_results"] = performance_budget_artifacts[PERFORMANCE_BUDGET_GATE_REL]
     launch_artifacts["cortex_token_efficiency_gate_results"] = cortex_token_efficiency_artifacts[
@@ -6466,6 +6554,11 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     ]
     launch_artifacts["setup_migration_live_gate_results"] = snowflake_cli_artifacts[
         CLI_SETUP_MIGRATION_GATE_REL
+    ]
+    production_deployment_artifacts = write_production_deployment_readiness_artifacts(root_path, payloads)
+    payloads.update(production_deployment_artifacts)
+    launch_artifacts["production_deployment_readiness_gate_results"] = production_deployment_artifacts[
+        PRODUCTION_DEPLOYMENT_READINESS_GATE_REL
     ]
     formula_end_to_end_artifacts = write_formula_end_to_end_artifacts(root_path)
     payloads.update(formula_end_to_end_artifacts)

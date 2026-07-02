@@ -104,8 +104,13 @@ def safe_source_label(value: object, *, source_key: object = "", admin_only: boo
     return DAILY_SOURCE_LABELS[source_family_for_display(text, source_key=source_key)]
 
 
-def scrub_daily_text(value: object, *, admin_only: bool = False) -> str:
-    """Replace implementation/source names with daily-safe labels."""
+def scrub_raw_internal_text(value: object, *, admin_only: bool = False) -> str:
+    """Replace implementation/source names with daily-safe labels.
+
+    This is the always-on safety layer for daily UI/default exports. It only
+    maps raw source objects, SQL fragments, and restricted identifiers. It does
+    not rewrite normal business copy such as "Owner" or "Evidence".
+    """
 
     text = str(value or "")
     if admin_only or not text:
@@ -124,131 +129,158 @@ def scrub_daily_text(value: object, *, admin_only: bool = False) -> str:
     return text
 
 
+def scrub_daily_text(value: object, *, admin_only: bool = False) -> str:
+    """Backward-compatible alias for the raw/internal daily scrubber."""
+
+    return scrub_raw_internal_text(value, admin_only=admin_only)
+
+
+_DISPLAY_COPY_REPLACEMENTS = {
+    "Not loaded": "Summary unavailable",
+    "Awaiting mart": "Awaiting data",
+    "MART_EXECUTIVE_OBSERVABILITY": "fast summary facts",
+    "MART_DBA_CONTROL_ROOM": "DBA summary facts",
+    "FACT_COST_DAILY": "cost facts",
+    "FACT_CORTEX_DAILY": "AI spend facts",
+    "snowflake/OVERWATCH_MART_SETUP.sql": "Snowflake status",
+    "`snowflake/OVERWATCH_MART_SETUP.sql`": "Snowflake status",
+    "setup SQL": "reviewed status",
+    "Setup SQL": "reviewed status",
+    "SQL Contracts": "Status",
+    "SQL Contract": "Status",
+    "Mart Contract": "Data Health",
+    "mart contract": "data health",
+    "DDL generation": "missing-object review",
+    "generated DDL": "missing-object review",
+    "generate missing DDL": "review missing objects",
+    "missing-object DDL": "missing-object review",
+    "DDL": "object change",
+    "DBA release reviewer": "DBA change reviewer",
+    "Release gate": "Operational status",
+    "release gate": "operational status",
+    "release remediation": "change remediation",
+    "Approval Required": "Review",
+    "Approval Needed": "Review",
+    "Verification Required": "Telemetry pending",
+    "Verification Needed": "Telemetry pending",
+    "verification required": "telemetry pending",
+    "verification needed": "telemetry pending",
+    "approval required": "review pending",
+    "approval needed": "review pending",
+    "approval proof": "telemetry",
+    "Approval proof": "Telemetry",
+    "verification proof": "telemetry",
+    "Verification proof": "Telemetry",
+    "Proof": "Telemetry",
+    "proof": "telemetry",
+    "Proof Required": "Telemetry Basis",
+    "proof required": "telemetry basis",
+    "Proof query": "Telemetry query",
+    "proof query": "telemetry query",
+    "ACCOUNT_USAGE": "account history",
+}
+
+_OPERATOR_COPY_REPLACEMENTS = {
+    "approval evidence": "telemetry",
+    "Approval evidence": "Telemetry",
+    "verification evidence": "telemetry",
+    "Verification evidence": "Telemetry",
+    "Closure Evidence": "Closure Status",
+    "closure evidence": "closure status",
+    "Evidence Blocked": "Telemetry Pending",
+    "evidence blocked": "telemetry pending",
+    "Evidence Missing": "Data Missing",
+    "evidence missing": "data missing",
+    "Proof": "Telemetry",
+    "proof": "telemetry",
+    "approval,": "review,",
+    "approval and": "review and",
+    "after approval": "after review",
+    "before approval": "before review",
+    "approved changes": "reviewed changes",
+    "approved readiness": "reviewed status",
+    "approved task": "reviewed task",
+    "approved Workload": "reviewed Workload",
+    "approved DBA": "reviewed DBA",
+    "approved safe actions": "reviewed safe actions",
+    "IAM / Security Owner": "IAM / Security Route",
+    "Security Owner / Data Stewardship Lead": "Security / Data Stewardship Route",
+    "Security Owner / Data Stewardship": "Security / Data Stewardship Route",
+    "Security Owner / DBA Lead": "Security / DBA Route",
+    "DBA Lead / Security Owner": "DBA / Security Route",
+    "Data Owner / Security Owner": "Data / Security Route",
+    "Data Owner / DBA Lead": "Data Route / DBA Lead",
+    "DBA / Data Owner": "DBA / Data Route",
+    "DBA Change Owner": "DBA Change Route",
+    "Security Owner": "Security Route",
+    "Data Owner": "Data Route",
+    "Platform Owner": "Platform Route",
+    "OVERWATCH Platform Owner": "OVERWATCH Platform Route",
+    "BI Platform Owner": "BI Platform Route",
+    "Development Platform Owner": "Development Platform Route",
+    "Governance": "Monitoring",
+    "governance": "monitoring",
+    "Owner actions": "Routed actions",
+    "Owner Route": "Escalation Route",
+    "Owner route": "Escalation route",
+    "owner route": "escalation route",
+    "owner-routed": "route-backed",
+    "owning workflow": "drilldown workflow",
+    "owning admin workflow": "guarded admin workflow",
+    "Needs Owner": "Needs route",
+    "Owners": "Routes",
+    "Owner": "Route",
+    "owner": "route",
+    "Source basis": "Basis",
+    "Source Health": "Data Health",
+    "source health": "data health",
+    "source status": "data status",
+    "source evidence": "data telemetry",
+    "source proof": "input basis",
+    "Data Readiness": "Data Health",
+    "data readiness": "data health",
+    "Readiness": "Status",
+    "readiness": "status",
+    "Architecture Review": "Monitoring Review",
+    "architecture review": "monitoring review",
+    "Architecture": "Monitoring",
+    "architecture": "monitoring",
+    "Closure proof": "Closure status",
+    "closure proof": "closure status",
+    "Evidence": "Telemetry",
+    "evidence": "telemetry",
+    "source-specific": "input-specific",
+    "source surfaces": "data inputs",
+    "source(s)": "input(s)",
+    "sources": "inputs",
+    "Sources": "Inputs",
+}
+
+
 def clean_display_text(value: object) -> str:
-    """Return generated UI text after mapping implementation language to operator-safe copy."""
+    """Return generated UI text after blocking raw internals.
+
+    This function intentionally avoids broad business-copy rewrites. Labels
+    like "Load Security Evidence" and "Owner" remain understandable while raw
+    source objects and SQL/procedure identifiers are still scrubbed.
+    """
 
     text = str(value or "").strip()
     if not text:
         return ""
-    replacements = {
-        "Not loaded": "Summary unavailable",
-        "Awaiting mart": "Awaiting data",
-        "MART_EXECUTIVE_OBSERVABILITY": "fast summary facts",
-        "MART_DBA_CONTROL_ROOM": "DBA summary facts",
-        "FACT_COST_DAILY": "cost facts",
-        "FACT_CORTEX_DAILY": "AI spend facts",
-        "snowflake/OVERWATCH_MART_SETUP.sql": "Snowflake status",
-        "`snowflake/OVERWATCH_MART_SETUP.sql`": "Snowflake status",
-        "setup SQL": "reviewed status",
-        "Setup SQL": "reviewed status",
-        "SQL Contracts": "Status",
-        "SQL Contract": "Status",
-        "Mart Contract": "Data Health",
-        "mart contract": "data health",
-        "DDL generation": "missing-object review",
-        "generated DDL": "missing-object review",
-        "generate missing DDL": "review missing objects",
-        "missing-object DDL": "missing-object review",
-        "DDL": "object change",
-        "DBA release reviewer": "DBA change reviewer",
-        "Release gate": "Operational status",
-        "release gate": "operational status",
-        "release remediation": "change remediation",
-        "Approval Required": "Review",
-        "Approval Needed": "Review",
-        "Verification Required": "Telemetry pending",
-        "Verification Needed": "Telemetry pending",
-        "verification required": "telemetry pending",
-        "verification needed": "telemetry pending",
-        "approval required": "review pending",
-        "approval needed": "review pending",
-        "approval proof": "telemetry",
-        "Approval proof": "Telemetry",
-        "approval evidence": "telemetry",
-        "Approval evidence": "Telemetry",
-        "verification proof": "telemetry",
-        "Verification proof": "Telemetry",
-        "verification evidence": "telemetry",
-        "Verification evidence": "Telemetry",
-        "Closure Evidence": "Closure Status",
-        "closure evidence": "closure status",
-        "Evidence Blocked": "Telemetry Pending",
-        "evidence blocked": "telemetry pending",
-        "Evidence Missing": "Data Missing",
-        "evidence missing": "data missing",
-        "Proof Required": "Telemetry Basis",
-        "proof required": "telemetry basis",
-        "Proof": "Telemetry",
-        "proof": "telemetry",
-        "approval,": "review,",
-        "approval and": "review and",
-        "after approval": "after review",
-        "before approval": "before review",
-        "approved changes": "reviewed changes",
-        "approved readiness": "reviewed status",
-        "approved task": "reviewed task",
-        "approved Workload": "reviewed Workload",
-        "approved DBA": "reviewed DBA",
-        "approved safe actions": "reviewed safe actions",
-        "IAM / Security Owner": "IAM / Security Route",
-        "Security Owner / Data Stewardship Lead": "Security / Data Stewardship Route",
-        "Security Owner / Data Stewardship": "Security / Data Stewardship Route",
-        "Security Owner / DBA Lead": "Security / DBA Route",
-        "DBA Lead / Security Owner": "DBA / Security Route",
-        "Data Owner / Security Owner": "Data / Security Route",
-        "Data Owner / DBA Lead": "Data Route / DBA Lead",
-        "DBA / Data Owner": "DBA / Data Route",
-        "DBA Change Owner": "DBA Change Route",
-        "Security Owner": "Security Route",
-        "Data Owner": "Data Route",
-        "Platform Owner": "Platform Route",
-        "OVERWATCH Platform Owner": "OVERWATCH Platform Route",
-        "BI Platform Owner": "BI Platform Route",
-        "Development Platform Owner": "Development Platform Route",
-        "Governance": "Monitoring",
-        "governance": "monitoring",
-        "Owner actions": "Routed actions",
-        "Owner Route": "Escalation Route",
-        "Owner route": "Escalation route",
-        "owner route": "escalation route",
-        "owner-routed": "route-backed",
-        "owning workflow": "drilldown workflow",
-        "owning admin workflow": "guarded admin workflow",
-        "Needs Owner": "Needs route",
-        "Owners": "Routes",
-        "Owner": "Route",
-        "owner": "route",
-        "Source basis": "Basis",
-        "Source Health": "Data Health",
-        "source health": "data health",
-        "source status": "data status",
-        "source evidence": "data telemetry",
-        "source proof": "input basis",
-        "Data Readiness": "Data Health",
-        "data readiness": "data health",
-        "Readiness": "Status",
-        "readiness": "status",
-        "Architecture Review": "Monitoring Review",
-        "architecture review": "monitoring review",
-        "Architecture": "Monitoring",
-        "architecture": "monitoring",
-        "Closure proof": "Closure status",
-        "closure proof": "closure status",
-        "Proof query": "Telemetry query",
-        "proof query": "telemetry query",
-        "Evidence": "Telemetry",
-        "evidence": "telemetry",
-        "source-specific": "input-specific",
-        "source surfaces": "data inputs",
-        "source(s)": "input(s)",
-        "sources": "inputs",
-        "Sources": "Inputs",
-        "ACCOUNT_USAGE": "account history",
-    }
-    for old, new in replacements.items():
+    for old, new in _DISPLAY_COPY_REPLACEMENTS.items():
         text = text.replace(old, new)
     text = _INTERNAL_OBJECT_PATTERN.sub("managed Snowflake object", text)
-    return scrub_daily_text(text)
+    return scrub_raw_internal_text(text)
+
+
+def clean_operator_copy(value: object) -> str:
+    """Apply optional opinionated operator-copy normalization."""
+
+    text = clean_display_text(value)
+    for old, new in _OPERATOR_COPY_REPLACEMENTS.items():
+        text = text.replace(old, new)
+    return scrub_raw_internal_text(text)
 
 
 def safe_source_footer_items(
@@ -271,10 +303,12 @@ def safe_source_footer_items(
 __all__ = [
     "DAILY_SOURCE_LABELS",
     "RAW_SOURCE_TOKEN_PATTERN",
+    "clean_operator_copy",
     "clean_display_text",
     "contains_raw_source_token",
     "safe_source_footer_items",
     "safe_source_label",
     "scrub_daily_text",
+    "scrub_raw_internal_text",
     "source_family_for_display",
 ]

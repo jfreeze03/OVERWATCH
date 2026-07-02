@@ -165,6 +165,12 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(summary["query_budget_gate_failure_count"], 0)
         self.assertTrue(summary["full_app_release_sweep_passed"])
         self.assertEqual(summary["full_app_release_sweep_failure_count"], 0)
+        self.assertTrue(summary["app_entry_smoke_passed"])
+        self.assertEqual(summary["app_entry_smoke_failure_count"], 0)
+        self.assertTrue(summary["production_deployment_readiness_passed"])
+        self.assertEqual(summary["production_deployment_readiness_failure_count"], 0)
+        self.assertTrue(summary["production_deployable"])
+        self.assertTrue(summary["rollback_ready"])
         self.assertTrue(summary["connection_policy_passed"])
         self.assertEqual(summary["fallback_render_failure_count"], 0)
         self.assertEqual(summary["import_laziness_failure_count"], 0)
@@ -184,7 +190,9 @@ class LaunchReadinessTests(unittest.TestCase):
             "profile_gate_failures",
             "raw_invariants",
             "full_app_gauntlet",
+            "app_entry_smoke",
             "full_app_release_sweep",
+            "production_deployment_readiness",
             "settings_live_feature_gauntlet",
             "summary_board_first_paint",
             "billing_reconciliation",
@@ -319,6 +327,7 @@ class LaunchReadinessTests(unittest.TestCase):
         notes = self._read_json("artifacts/release_candidate/release_notes.json")
 
         self.assertTrue(summary["all_passed"], summary)
+        self.assertTrue(summary["production_deployable"], summary)
         self.assertEqual(summary["hard_gate_failure_count"], 0, summary)
         for field in (
             "commit_sha",
@@ -341,6 +350,10 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(reconciliation["raw_sql_or_secret_count"], 0)
         self.assertEqual(reconciliation["commit_mismatch_count"], 0)
         self.assertEqual(summary["raw_sql_leak_count"], 0)
+        self.assertEqual(summary["source_leak_count"], 0)
+        self.assertEqual(summary["exact_action_match_failure_count"], 0)
+        self.assertEqual(summary["export_parse_failure_count"], 0)
+        self.assertEqual(summary["token_path_leak_count"], 0)
         self.assertEqual(summary["forbidden_daily_token_count"], 0)
         self.assertEqual(summary["stale_artifact_count"], 0)
         self.assertEqual(summary["unknown_sql_object_count"], 0)
@@ -359,6 +372,9 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertTrue(summary["snowflake_cli_live_validation_skipped"])
         self.assertFalse(summary["snowflake_cli_live_validation_required"])
         self.assertTrue(summary["setup_migration_live_passed"])
+        self.assertTrue(summary["app_entry_smoke_passed"])
+        self.assertTrue(summary["production_deployment_readiness_passed"])
+        self.assertTrue(summary["rollback_ready"])
         self.assertTrue(summary["render_provenance_reconciliation_passed"])
         self.assertEqual(summary["render_provenance_reconciliation_failure_count"], 0)
         self.assertTrue(summary["credential_expiration_gate_passed"])
@@ -1268,6 +1284,20 @@ class LaunchReadinessTests(unittest.TestCase):
                 "deploy",
                 lambda payloads, launch: launch["deployment_readiness_results"].update({"passed": False}),
                 "deployment_readiness",
+            ),
+            (
+                "app entry smoke",
+                lambda payloads, launch: launch["app_entry_smoke_gate_results"].update(
+                    {"passed": False, "failure_count": 1}
+                ),
+                "app_entry_smoke",
+            ),
+            (
+                "production deployment readiness",
+                lambda payloads, launch: launch["production_deployment_readiness_gate_results"].update(
+                    {"passed": False, "production_deployable": False, "failure_count": 1}
+                ),
+                "production_deployment_readiness",
             ),
             (
                 "sql value",

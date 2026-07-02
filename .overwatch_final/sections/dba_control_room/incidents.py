@@ -8,7 +8,7 @@ from sections.shell_helpers import (
     render_shell_snapshot,
     render_shell_status_strip,
 )
-from utils.display_safety import clean_display_text
+from utils.display_safety import clean_display_text, clean_operator_copy
 from utils.primitives import (
     safe_float,
     safe_int,
@@ -824,7 +824,7 @@ def _build_dba_escalation_packet_markdown(
             why_now = clean_display_text(row.get("WHY_NOW", ""))
             first_move = clean_display_text(row.get("FIRST_MOVE", ""))
             gate = clean_display_text(row.get("GO_NO_GO", ""))
-            telemetry_basis = clean_display_text(row.get("PROOF_REQUIRED", ""))
+            telemetry_basis = clean_operator_copy(row.get("PROOF_REQUIRED", ""))
             lines.append(
                 f"- {row.get('ESCALATION_ID', '')} [{row.get('ESCALATION_LEVEL', '')}] "
                 f"{route} -> {owner_route}. "
@@ -1151,7 +1151,7 @@ def _build_dba_incident_markdown(
             telemetry = clean_display_text(row.get("EVIDENCE", ""))
             containment = clean_display_text(row.get("CONTAINMENT_ACTION", ""))
             sla_target = clean_display_text(row.get("SLA_TARGET", ""))
-            telemetry_basis = clean_display_text(row.get("PROOF_REQUIRED", ""))
+            telemetry_basis = clean_operator_copy(row.get("PROOF_REQUIRED", ""))
             lines.append(
                 f"- {row.get('INCIDENT_ID', '')} [{row.get('SEVERITY', '')} / {row.get('STATUS', '')}] "
                 f"{incident_type} on {affected_routes}: {signals}. "

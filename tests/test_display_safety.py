@@ -50,6 +50,36 @@ class DisplaySafetyTests(unittest.TestCase):
         )
         self.assertEqual(labels, ("Evidence cache", "Refresh-backed"))
 
+    def test_clean_display_text_preserves_business_operator_labels(self):
+        from utils.display_safety import clean_display_text
+
+        self.assertEqual(clean_display_text("Load Security Evidence"), "Load Security Evidence")
+        self.assertEqual(clean_display_text("Owner"), "Owner")
+        self.assertEqual(clean_display_text("Owner route"), "Owner route")
+
+    def test_operator_copy_normalizer_is_explicit(self):
+        from utils.display_safety import clean_display_text, clean_operator_copy
+
+        self.assertEqual(clean_display_text("Owner Evidence"), "Owner Evidence")
+        self.assertEqual(clean_operator_copy("Owner Evidence"), "Route Telemetry")
+
+    def test_raw_internal_scrubber_still_blocks_default_daily_identifiers(self):
+        from utils.display_safety import clean_display_text, contains_raw_source_token, scrub_raw_internal_text
+
+        raw = "Loaded from MART_COST_DAILY with USER_ID"
+        self.assertTrue(contains_raw_source_token(raw))
+        cleaned = scrub_raw_internal_text(raw)
+        self.assertNotIn("MART_COST_DAILY", cleaned)
+        self.assertNotIn("USER_ID", cleaned)
+        self.assertNotIn("MART_COST_DAILY", clean_display_text(raw))
+
+    def test_clean_display_text_scrubs_release_proof_wording(self):
+        from utils.display_safety import clean_display_text
+
+        cleaned = clean_display_text("Approval proof required before rollout.")
+        self.assertNotIn("proof", cleaned.lower())
+        self.assertIn("telemetry", cleaned.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

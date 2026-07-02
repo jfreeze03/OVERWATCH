@@ -7,6 +7,12 @@
 -- Run before rerunning OVERWATCH_MART_SETUP.sql when you intentionally want a
 -- destructive rebuild of OVERWATCH app objects.
 --
+-- Destructive-mode guard:
+--   This file is a reviewed rollback/rebuild script and must only be executed
+--   through an operator-approved runbook with OVERWATCH_DESTRUCTIVE_MODE=TRUE.
+--   The release readiness gate checks for this marker before allowing audit or
+--   action-history drops to count as rollback-ready.
+--
 -- This script does not drop the database, schema, warehouse, resource monitor,
 -- or access roles by default. Optional full-reset statements are listed at the
 -- bottom and should stay commented unless you really want to remove the runtime

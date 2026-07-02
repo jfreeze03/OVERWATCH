@@ -169,6 +169,12 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(summary["app_entry_smoke_failure_count"], 0)
         self.assertTrue(summary["production_deployment_readiness_passed"])
         self.assertEqual(summary["production_deployment_readiness_failure_count"], 0)
+        self.assertTrue(summary["production_deployment_manifest_passed"])
+        self.assertEqual(summary["production_deployment_manifest_failure_count"], 0)
+        self.assertTrue(summary["deployment_rehearsal_passed"])
+        self.assertEqual(summary["deployment_rehearsal_failure_count"], 0)
+        self.assertTrue(summary["rollback_readiness_passed"])
+        self.assertEqual(summary["rollback_readiness_failure_count"], 0)
         self.assertTrue(summary["production_deployable"])
         self.assertTrue(summary["rollback_ready"])
         self.assertTrue(summary["connection_policy_passed"])
@@ -193,6 +199,9 @@ class LaunchReadinessTests(unittest.TestCase):
             "app_entry_smoke",
             "full_app_release_sweep",
             "production_deployment_readiness",
+            "production_deployment_manifest",
+            "production_deployment_rehearsal",
+            "rollback_readiness",
             "settings_live_feature_gauntlet",
             "summary_board_first_paint",
             "billing_reconciliation",
@@ -374,6 +383,9 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertTrue(summary["setup_migration_live_passed"])
         self.assertTrue(summary["app_entry_smoke_passed"])
         self.assertTrue(summary["production_deployment_readiness_passed"])
+        self.assertTrue(summary["production_deployment_manifest_passed"])
+        self.assertTrue(summary["deployment_rehearsal_passed"])
+        self.assertTrue(summary["rollback_readiness_passed"])
         self.assertTrue(summary["rollback_ready"])
         self.assertTrue(summary["render_provenance_reconciliation_passed"])
         self.assertEqual(summary["render_provenance_reconciliation_failure_count"], 0)
@@ -1298,6 +1310,27 @@ class LaunchReadinessTests(unittest.TestCase):
                     {"passed": False, "production_deployable": False, "failure_count": 1}
                 ),
                 "production_deployment_readiness",
+            ),
+            (
+                "production deployment manifest",
+                lambda payloads, launch: launch["production_deployment_manifest_gate_results"].update(
+                    {"passed": False, "production_deployable": False, "failure_count": 1}
+                ),
+                "production_deployment_manifest",
+            ),
+            (
+                "production deployment rehearsal",
+                lambda payloads, launch: launch["production_deployment_rehearsal_gate_results"].update(
+                    {"passed": False, "failure_count": 1}
+                ),
+                "production_deployment_rehearsal",
+            ),
+            (
+                "rollback readiness",
+                lambda payloads, launch: launch["rollback_readiness_gate_results"].update(
+                    {"passed": False, "rollback_ready": False, "failure_count": 1}
+                ),
+                "rollback_readiness",
             ),
             (
                 "sql value",

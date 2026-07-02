@@ -59,6 +59,8 @@ from tools.contracts.snowflake_cli_live_validation import (
     CLI_LAUNCH_GATE_REL,
     CLI_MANIFEST_RECONCILIATION_REL,
     CLI_PACKET_VALUE_REL,
+    CLI_PRODUCTION_REHEARSAL_GATE_REL,
+    CLI_PRODUCTION_REHEARSAL_REL,
     CLI_QUERY_BUDGET_REL,
     CLI_RELEASE_REL,
     CLI_SETUP_MIGRATION_GATE_REL,
@@ -66,7 +68,10 @@ from tools.contracts.snowflake_cli_live_validation import (
     CLI_SETUP_REL,
     CLI_TEMP_FILE_HYGIENE_GATE_REL,
     REQUIRED_CLI_ARTIFACTS,
+    build_production_deployment_rehearsal_results,
+    evaluate_production_deployment_rehearsal_gate,
     evaluate_snowflake_cli_live_gate,
+    options_from_env as snowflake_cli_options_from_env,
     write_snowflake_cli_live_validation_artifacts,
 )
 from tools.contracts.packet_availability_live_validation import (
@@ -128,6 +133,18 @@ from tools.contracts.production_deployment_readiness import (
     PRODUCTION_DEPLOYMENT_READINESS_RESULTS_REL,
     evaluate_production_deployment_readiness_gate,
     write_production_deployment_readiness_artifacts,
+)
+from tools.contracts.production_deployment_manifest import (
+    PRODUCTION_DEPLOYMENT_MANIFEST_GATE_REL,
+    PRODUCTION_DEPLOYMENT_MANIFEST_REL,
+    evaluate_production_deployment_manifest_gate,
+    write_production_deployment_manifest_artifacts,
+)
+from tools.contracts.rollback_readiness import (
+    ROLLBACK_READINESS_GATE_REL,
+    ROLLBACK_READINESS_RESULTS_REL,
+    evaluate_rollback_readiness_gate,
+    write_rollback_readiness_artifacts,
 )
 from tools.contracts.rendered_ui_leak_scan import (
     DAILY_WORDING_GATE_REL,
@@ -267,6 +284,10 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     APP_ENTRY_SMOKE_GATE_REL,
     APP_ENTRY_SMOKE_RESULTS_REL,
     CONNECTION_POLICY_GATE_REL,
+    PRODUCTION_DEPLOYMENT_MANIFEST_GATE_REL,
+    PRODUCTION_DEPLOYMENT_MANIFEST_REL,
+    ROLLBACK_READINESS_GATE_REL,
+    ROLLBACK_READINESS_RESULTS_REL,
     PRODUCTION_DEPLOYMENT_READINESS_GATE_REL,
     PRODUCTION_DEPLOYMENT_READINESS_RESULTS_REL,
     IMPORT_LAZINESS_GATE_REL,
@@ -356,6 +377,7 @@ REQUIRED_RELEASE_CANDIDATE_ARTIFACTS = {
     f"{RELEASE_CANDIDATE_DIR}/release_candidate_failures.json",
     f"{RELEASE_CANDIDATE_DIR}/release_gate_matrix.json",
     f"{RELEASE_CANDIDATE_DIR}/release_notes.json",
+    PRODUCTION_DEPLOYMENT_MANIFEST_REL,
     CLI_RELEASE_REL,
 }
 
@@ -2748,6 +2770,20 @@ def _release_candidate_summary_bundle(
         "production_deployment_readiness_failure_count": _as_int(
             launch_summary.get("production_deployment_readiness_failure_count")
         ),
+        "production_deployment_manifest_passed": bool(
+            launch_summary.get("production_deployment_manifest_passed")
+        ),
+        "production_deployment_manifest_failure_count": _as_int(
+            launch_summary.get("production_deployment_manifest_failure_count")
+        ),
+        "deployment_rehearsal_passed": bool(launch_summary.get("deployment_rehearsal_passed")),
+        "deployment_rehearsal_failure_count": _as_int(
+            launch_summary.get("deployment_rehearsal_failure_count")
+        ),
+        "rollback_readiness_passed": bool(launch_summary.get("rollback_readiness_passed")),
+        "rollback_readiness_failure_count": _as_int(
+            launch_summary.get("rollback_readiness_failure_count")
+        ),
         "rollback_ready": bool(launch_summary.get("rollback_ready")),
         "full_app_gauntlet_passed": bool(launch_summary.get("gauntlet_passed")),
         "full_app_launch_gauntlet_passed": bool(launch_summary.get("full_app_launch_gauntlet_passed")),
@@ -4844,6 +4880,13 @@ def _release_gate_matrix(
     production_deployment_gate = _as_mapping(
         launch_artifacts.get("production_deployment_readiness_gate_results")
     )
+    production_manifest_gate = _as_mapping(
+        launch_artifacts.get("production_deployment_manifest_gate_results")
+    )
+    production_rehearsal_gate = _as_mapping(
+        launch_artifacts.get("production_deployment_rehearsal_gate_results")
+    )
+    rollback_readiness_gate = _as_mapping(launch_artifacts.get("rollback_readiness_gate_results"))
     import_laziness_gate = _as_mapping(launch_artifacts.get("import_laziness_gate_results"))
     full_app_release_sweep_gate = _as_mapping(launch_artifacts.get("full_app_release_sweep_gate_results"))
     settings_live_feature_gate = _as_mapping(launch_artifacts.get("settings_live_feature_gate_results"))
@@ -4966,6 +5009,30 @@ def _release_gate_matrix(
             "failure_reason": ""
             if production_deployment_gate.get("passed")
             else "Production role, privilege, secret, setup, token hygiene, or rollback readiness proof failed.",
+        },
+        {
+            "gate": "production_deployment_manifest",
+            "artifact": PRODUCTION_DEPLOYMENT_MANIFEST_GATE_REL,
+            "passed": bool(production_manifest_gate.get("passed")),
+            "failure_reason": ""
+            if production_manifest_gate.get("passed")
+            else "Production deployment manifest is missing, unsafe, or not deployable.",
+        },
+        {
+            "gate": "production_deployment_rehearsal",
+            "artifact": CLI_PRODUCTION_REHEARSAL_GATE_REL,
+            "passed": bool(production_rehearsal_gate.get("passed")),
+            "failure_reason": ""
+            if production_rehearsal_gate.get("passed")
+            else "Token-backed production deployment rehearsal is missing, skipped without policy, or failed.",
+        },
+        {
+            "gate": "rollback_readiness",
+            "artifact": ROLLBACK_READINESS_GATE_REL,
+            "passed": bool(rollback_readiness_gate.get("passed")),
+            "failure_reason": ""
+            if rollback_readiness_gate.get("passed")
+            else "Rollback/drop safety proof is missing or unsafe.",
         },
         {
             "gate": "import_laziness_gate",
@@ -5708,6 +5775,20 @@ def evaluate_launch_readiness(
         or evaluate_production_deployment_readiness_gate(
             payloads.get(PRODUCTION_DEPLOYMENT_READINESS_RESULTS_REL)
         ),
+        "production_deployment_rehearsal_gate_results": _as_mapping(
+            launch_artifacts.get("production_deployment_rehearsal_gate_results")
+        )
+        or evaluate_production_deployment_rehearsal_gate(
+            payloads.get(CLI_PRODUCTION_REHEARSAL_REL)
+        ),
+        "rollback_readiness_gate_results": _as_mapping(launch_artifacts.get("rollback_readiness_gate_results"))
+        or evaluate_rollback_readiness_gate(payloads.get(ROLLBACK_READINESS_RESULTS_REL)),
+        "production_deployment_manifest_gate_results": _as_mapping(
+            launch_artifacts.get("production_deployment_manifest_gate_results")
+        )
+        or evaluate_production_deployment_manifest_gate(
+            payloads.get(PRODUCTION_DEPLOYMENT_MANIFEST_REL)
+        ),
         "import_laziness_gate_results": _as_mapping(launch_artifacts.get("import_laziness_gate_results"))
         or evaluate_import_laziness_gate(
             payloads.get(IMPORT_LAZINESS_RESULTS_REL),
@@ -5858,6 +5939,13 @@ def evaluate_launch_readiness(
     production_deployment_gate = _as_mapping(
         launch_artifacts.get("production_deployment_readiness_gate_results")
     )
+    production_manifest_gate = _as_mapping(
+        launch_artifacts.get("production_deployment_manifest_gate_results")
+    )
+    production_rehearsal_gate = _as_mapping(
+        launch_artifacts.get("production_deployment_rehearsal_gate_results")
+    )
+    rollback_readiness_gate = _as_mapping(launch_artifacts.get("rollback_readiness_gate_results"))
     import_laziness_gate = _as_mapping(launch_artifacts.get("import_laziness_gate_results"))
     full_app_release_sweep_gate = _as_mapping(launch_artifacts.get("full_app_release_sweep_gate_results"))
     settings_live_feature_gate = _as_mapping(launch_artifacts.get("settings_live_feature_gate_results"))
@@ -5976,10 +6064,22 @@ def evaluate_launch_readiness(
         "production_deployment_readiness_failure_count": _as_int(
             production_deployment_gate.get("failure_count")
         ),
+        "production_deployment_manifest_passed": bool(production_manifest_gate.get("passed")),
+        "production_deployment_manifest_failure_count": _as_int(
+            production_manifest_gate.get("failure_count")
+        ),
+        "deployment_rehearsal_passed": bool(production_rehearsal_gate.get("passed")),
+        "deployment_rehearsal_failure_count": _as_int(production_rehearsal_gate.get("failure_count")),
+        "rollback_readiness_passed": bool(rollback_readiness_gate.get("passed")),
+        "rollback_readiness_failure_count": _as_int(rollback_readiness_gate.get("failure_count")),
         "production_deployable": passed
         and bool(app_entry_smoke_gate.get("passed"))
-        and bool(production_deployment_gate.get("production_deployable", production_deployment_gate.get("passed"))),
-        "rollback_ready": bool(production_deployment_gate.get("rollback_ready")),
+        and bool(production_deployment_gate.get("production_deployable", production_deployment_gate.get("passed")))
+        and bool(production_manifest_gate.get("production_deployable", production_manifest_gate.get("passed")))
+        and bool(production_rehearsal_gate.get("passed"))
+        and bool(rollback_readiness_gate.get("rollback_ready", rollback_readiness_gate.get("passed"))),
+        "rollback_ready": bool(production_deployment_gate.get("rollback_ready"))
+        and bool(rollback_readiness_gate.get("rollback_ready", rollback_readiness_gate.get("passed"))),
         "connection_policy_passed": bool(connection_policy_gate.get("passed")),
         "fallback_render_failure_count": _as_int(connection_policy_gate.get("fallback_render_failure_count")),
         "import_laziness_failure_count": _as_int(import_laziness_gate.get("failure_count")),
@@ -6543,6 +6643,9 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         "formula_value_passed": bool(snowflake_cli_gate.get("formula_value_passed")),
         "query_budget_passed": bool(snowflake_cli_gate.get("query_budget_passed")),
         "manifest_reconciliation_passed": bool(snowflake_cli_gate.get("manifest_reconciliation_passed")),
+        "production_deployment_rehearsal_passed": bool(
+            snowflake_cli_artifacts.get(CLI_PRODUCTION_REHEARSAL_GATE_REL, {}).get("passed")
+        ),
         "raw_sql_included": False,
     }
     for rel, payload in snowflake_cli_artifacts.items():
@@ -6555,10 +6658,44 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["setup_migration_live_gate_results"] = snowflake_cli_artifacts[
         CLI_SETUP_MIGRATION_GATE_REL
     ]
+    launch_artifacts["production_deployment_rehearsal_gate_results"] = snowflake_cli_artifacts[
+        CLI_PRODUCTION_REHEARSAL_GATE_REL
+    ]
+    rollback_readiness_artifacts = write_rollback_readiness_artifacts(root_path)
+    payloads.update(rollback_readiness_artifacts)
+    launch_artifacts["rollback_readiness_gate_results"] = rollback_readiness_artifacts[
+        ROLLBACK_READINESS_GATE_REL
+    ]
     production_deployment_artifacts = write_production_deployment_readiness_artifacts(root_path, payloads)
     payloads.update(production_deployment_artifacts)
     launch_artifacts["production_deployment_readiness_gate_results"] = production_deployment_artifacts[
         PRODUCTION_DEPLOYMENT_READINESS_GATE_REL
+    ]
+    snowflake_cli_options = snowflake_cli_options_from_env()
+    snowflake_cli_artifacts[CLI_PRODUCTION_REHEARSAL_REL] = build_production_deployment_rehearsal_results(
+        root_path,
+        snowflake_cli_artifacts,
+        snowflake_cli_options,
+    )
+    snowflake_cli_artifacts[CLI_PRODUCTION_REHEARSAL_GATE_REL] = evaluate_production_deployment_rehearsal_gate(
+        snowflake_cli_artifacts[CLI_PRODUCTION_REHEARSAL_REL]
+    )
+    for rel in (CLI_PRODUCTION_REHEARSAL_REL, CLI_PRODUCTION_REHEARSAL_GATE_REL):
+        _write_json(root_path / rel, snowflake_cli_artifacts[rel])
+        payloads[rel] = snowflake_cli_artifacts[rel]
+    launch_artifacts["production_deployment_rehearsal_gate_results"] = snowflake_cli_artifacts[
+        CLI_PRODUCTION_REHEARSAL_GATE_REL
+    ]
+    if isinstance(snowflake_cli_artifacts.get(CLI_RELEASE_REL), dict):
+        snowflake_cli_artifacts[CLI_RELEASE_REL]["production_deployment_rehearsal_passed"] = bool(
+            snowflake_cli_artifacts[CLI_PRODUCTION_REHEARSAL_GATE_REL].get("passed")
+        )
+        _write_json(root_path / CLI_RELEASE_REL, snowflake_cli_artifacts[CLI_RELEASE_REL])
+        payloads[CLI_RELEASE_REL] = snowflake_cli_artifacts[CLI_RELEASE_REL]
+    production_manifest_artifacts = write_production_deployment_manifest_artifacts(root_path, payloads)
+    payloads.update(production_manifest_artifacts)
+    launch_artifacts["production_deployment_manifest_gate_results"] = production_manifest_artifacts[
+        PRODUCTION_DEPLOYMENT_MANIFEST_GATE_REL
     ]
     formula_end_to_end_artifacts = write_formula_end_to_end_artifacts(root_path)
     payloads.update(formula_end_to_end_artifacts)

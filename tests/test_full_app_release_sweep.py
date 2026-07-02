@@ -353,6 +353,20 @@ def _passing_payload(root: Path) -> dict:
             "production_deployable": True,
             "rollback_ready": True,
         },
+        "artifacts/launch_readiness/production_deployment_manifest_gate_results.json": {
+            **passed_gate,
+            "production_deployment_manifest_passed": True,
+            "production_deployable": True,
+            "rollback_ready": True,
+        },
+        "artifacts/launch_readiness/production_deployment_rehearsal_gate_results.json": {
+            **passed_gate,
+            "deployment_rehearsal_passed": True,
+        },
+        "artifacts/launch_readiness/rollback_readiness_gate_results.json": {
+            **passed_gate,
+            "rollback_ready": True,
+        },
         "artifacts/launch_readiness/runtime_artifact_provenance_gate_results.json": passed_gate,
         "artifacts/launch_readiness/export_download_gate_results.json": passed_gate,
         "artifacts/launch_readiness/settings_live_feature_gate_results.json": {
@@ -498,6 +512,51 @@ class FullAppReleaseSweepTests(unittest.TestCase):
 
         self.assertFalse(results["passed"])
         self.assertEqual(results["production_deployment_readiness_failure_count"], 1)
+
+    def test_missing_production_deployment_manifest_gate_blocks_sweep(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = _passing_payload(root)
+            payload.pop("artifacts/launch_readiness/production_deployment_manifest_gate_results.json")
+            results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT, root=root)
+
+        self.assertFalse(results["passed"])
+        self.assertGreater(results["production_deployment_manifest_failure_count"], 0)
+
+    def test_deployment_rehearsal_gate_failure_blocks_sweep(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = _passing_payload(root)
+            payload["artifacts/launch_readiness/production_deployment_rehearsal_gate_results.json"] = {
+                "passed": False,
+                "failure_count": 1,
+                "raw_sql_included": False,
+            }
+            results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT, root=root)
+
+        self.assertFalse(results["passed"])
+        self.assertEqual(results["deployment_rehearsal_failure_count"], 1)
+
+    def test_rollback_readiness_gate_failure_blocks_sweep(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = _passing_payload(root)
+            payload["artifacts/launch_readiness/rollback_readiness_gate_results.json"] = {
+                "passed": False,
+                "rollback_ready": False,
+                "failure_count": 1,
+                "raw_sql_included": False,
+            }
+            results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT, root=root)
+
+        self.assertFalse(results["passed"])
+        self.assertEqual(results["rollback_readiness_failure_count"], 1)
 
     def test_connection_policy_gate_failure_blocks_release_sweep(self):
         from tools.contracts.full_app_release_sweep import build_full_app_release_sweep

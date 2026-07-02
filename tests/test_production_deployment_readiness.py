@@ -38,7 +38,15 @@ class ProductionDeploymentReadinessTests(unittest.TestCase):
         self.assertTrue(gate["passed"], gate)
         self.assertTrue(gate["production_deployable"], gate)
         self.assertTrue(gate["rollback_ready"], gate)
+        self.assertTrue(gate["deployment_role_ready"], gate)
+        self.assertTrue(gate["runtime_role_ready"], gate)
+        self.assertTrue(gate["privilege_matrix_passed"], gate)
+        self.assertTrue(gate["secret_inventory_passed"], gate)
+        self.assertTrue(gate["token_auth_ready"], gate)
+        self.assertEqual(gate["notification_integration_status"], "ready")
+        self.assertEqual(gate["alert_recipient_governance_status"], "ready")
         self.assertEqual(gate["token_path_leak_count"], 0)
+        self.assertEqual(gate["raw_secret_leak_count"], 0)
 
     def test_missing_role_and_secret_docs_fail(self):
         from tools.contracts.production_deployment_readiness import build_production_deployment_readiness_results

@@ -1182,6 +1182,9 @@ def build_full_app_release_sweep(
         ("snowflake_cli_temp_file_hygiene", "snowflake_cli_temp_file_hygiene_gate_results"),
         ("setup_migration_live", "setup_migration_live_gate_results"),
         ("production_deployment_readiness", "production_deployment_readiness_gate_results"),
+        ("production_deployment_manifest", "production_deployment_manifest_gate_results"),
+        ("production_deployment_rehearsal", "production_deployment_rehearsal_gate_results"),
+        ("rollback_readiness", "rollback_readiness_gate_results"),
     )
     gate_rows: list[dict[str, Any]] = []
     for area, key in gate_checks:
@@ -1264,6 +1267,9 @@ def build_full_app_release_sweep(
     connection_policy_gate = _gate(payloads, "connection_policy_gate_results")
     app_entry_smoke_gate = _gate(payloads, "app_entry_smoke_gate_results")
     production_deployment_gate = _gate(payloads, "production_deployment_readiness_gate_results")
+    production_manifest_gate = _gate(payloads, "production_deployment_manifest_gate_results")
+    production_rehearsal_gate = _gate(payloads, "production_deployment_rehearsal_gate_results")
+    rollback_readiness_gate = _gate(payloads, "rollback_readiness_gate_results")
     import_laziness_gate = _gate(payloads, "import_laziness_gate_results")
     cortex_live_gate = _gate(payloads, "cortex_token_efficiency_live_gate_results")
     performance_budget_gate = _gate(payloads, "performance_budget_gate_results")
@@ -1289,6 +1295,24 @@ def build_full_app_release_sweep(
         1
         for row in gate_rows
         if row.get("area") == "production_deployment_readiness"
+        and str(row.get("failure_reason") or "") == "required release gate artifact missing"
+    )
+    missing_production_manifest_gate = sum(
+        1
+        for row in gate_rows
+        if row.get("area") == "production_deployment_manifest"
+        and str(row.get("failure_reason") or "") == "required release gate artifact missing"
+    )
+    missing_production_rehearsal_gate = sum(
+        1
+        for row in gate_rows
+        if row.get("area") == "production_deployment_rehearsal"
+        and str(row.get("failure_reason") or "") == "required release gate artifact missing"
+    )
+    missing_rollback_readiness_gate = sum(
+        1
+        for row in gate_rows
+        if row.get("area") == "rollback_readiness"
         and str(row.get("failure_reason") or "") == "required release gate artifact missing"
     )
     first_paint_failure_count = sum(
@@ -1329,9 +1353,22 @@ def build_full_app_release_sweep(
         "production_deployment_readiness_passed": bool(production_deployment_gate.get("passed")),
         "production_deployment_readiness_failure_count": _as_int(production_deployment_gate.get("failure_count"))
         + missing_production_deployment_gate,
+        "production_deployment_manifest_passed": bool(production_manifest_gate.get("passed")),
+        "production_deployment_manifest_failure_count": _as_int(production_manifest_gate.get("failure_count"))
+        + missing_production_manifest_gate,
+        "deployment_rehearsal_passed": bool(production_rehearsal_gate.get("passed")),
+        "deployment_rehearsal_failure_count": _as_int(production_rehearsal_gate.get("failure_count"))
+        + missing_production_rehearsal_gate,
+        "rollback_readiness_passed": bool(rollback_readiness_gate.get("passed")),
+        "rollback_readiness_failure_count": _as_int(rollback_readiness_gate.get("failure_count"))
+        + missing_rollback_readiness_gate,
         "production_deployable": bool(production_deployment_gate.get("production_deployable"))
+        and bool(production_manifest_gate.get("production_deployable", production_manifest_gate.get("passed")))
+        and bool(production_rehearsal_gate.get("passed"))
+        and bool(rollback_readiness_gate.get("rollback_ready", rollback_readiness_gate.get("passed")))
         and bool(app_entry_smoke_gate.get("passed")),
-        "rollback_ready": bool(production_deployment_gate.get("rollback_ready")),
+        "rollback_ready": bool(production_deployment_gate.get("rollback_ready"))
+        and bool(rollback_readiness_gate.get("rollback_ready", rollback_readiness_gate.get("passed"))),
         "fallback_render_failure_count": _as_int(connection_policy_gate.get("fallback_render_failure_count")) + missing_connection_policy_gate,
         "import_laziness_failure_count": _as_int(import_laziness_gate.get("failure_count")) + missing_import_laziness_gate,
         "runtime_import_graph_failure_count": _as_int(import_laziness_gate.get("runtime_import_graph_failure_count")),
@@ -1412,6 +1449,14 @@ def evaluate_full_app_release_sweep_gate(payload: object) -> dict[str, Any]:
         "production_deployment_readiness_failure_count": _as_int(
             results.get("production_deployment_readiness_failure_count")
         ),
+        "production_deployment_manifest_passed": bool(results.get("production_deployment_manifest_passed")),
+        "production_deployment_manifest_failure_count": _as_int(
+            results.get("production_deployment_manifest_failure_count")
+        ),
+        "deployment_rehearsal_passed": bool(results.get("deployment_rehearsal_passed")),
+        "deployment_rehearsal_failure_count": _as_int(results.get("deployment_rehearsal_failure_count")),
+        "rollback_readiness_passed": bool(results.get("rollback_readiness_passed")),
+        "rollback_readiness_failure_count": _as_int(results.get("rollback_readiness_failure_count")),
         "production_deployable": bool(results.get("production_deployable")),
         "rollback_ready": bool(results.get("rollback_ready")),
         "fallback_render_failure_count": _as_int(results.get("fallback_render_failure_count")),
@@ -1473,8 +1518,14 @@ def write_full_app_release_sweep_artifacts(
                 "artifacts/full_app_validation/runtime_artifact_provenance_results.json",
                 "artifacts/full_app_validation/app_entry_smoke_results.json",
                 "artifacts/full_app_validation/production_deployment_readiness_results.json",
+                "artifacts/full_app_validation/rollback_readiness_results.json",
+                "artifacts/snowflake_validation/production_deployment_rehearsal_results.json",
+                "artifacts/release_candidate/production_deployment_manifest.json",
                 "artifacts/launch_readiness/app_entry_smoke_gate_results.json",
                 "artifacts/launch_readiness/production_deployment_readiness_gate_results.json",
+                "artifacts/launch_readiness/production_deployment_manifest_gate_results.json",
+                "artifacts/launch_readiness/production_deployment_rehearsal_gate_results.json",
+                "artifacts/launch_readiness/rollback_readiness_gate_results.json",
                 "artifacts/launch_readiness/runtime_artifact_provenance_gate_results.json",
                 "artifacts/launch_readiness/action_click_gate_results.json",
                 "artifacts/launch_readiness/export_download_gate_results.json",

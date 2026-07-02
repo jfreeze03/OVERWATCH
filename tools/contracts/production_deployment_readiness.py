@@ -31,6 +31,7 @@ PRODUCTION_DEPLOYMENT_READINESS_GATE_REL = (
 PRODUCER = "production_deployment_readiness"
 APPROVED_ALERT_EMAIL = "jdees@alfains.com"
 TARGET_ROLES = ("OVERWATCH_VIEWER", "OVERWATCH_OPERATOR", "OVERWATCH_ADMIN")
+ADMIN_ACCESS_ROLES = ("SNOW_ACCOUNTADMINS", "SNOW_SYSADMINS")
 REQUIRED_ENV_VARS = (
     "OVERWATCH_SNOWFLAKE_CLI_CONNECTION",
     "OVERWATCH_LAUNCH_PROFILE",
@@ -254,7 +255,7 @@ def build_production_deployment_readiness_results(
         )
     )
 
-    for role in TARGET_ROLES:
+    for role in (*TARGET_ROLES, *ADMIN_ACCESS_ROLES):
         rows.append(
             _make_row(
                 check=f"role_documented::{role}",
@@ -401,6 +402,35 @@ def build_production_deployment_readiness_results(
     )
 
     failures = [row for row in rows if not bool(row.get("passed"))]
+    deployment_role_ready = all(
+        bool(row.get("passed"))
+        for row in rows
+        if str(row.get("check") or "").startswith("role_documented::SNOW_")
+    )
+    runtime_role_ready = all(
+        bool(row.get("passed"))
+        for row in rows
+        if str(row.get("check") or "").startswith("role_documented::OVERWATCH_")
+    )
+    privilege_matrix_passed = all(
+        bool(row.get("passed"))
+        for row in rows
+        if str(row.get("check") or "").startswith("privilege_documented::")
+    )
+    secret_inventory_passed = all(
+        bool(row.get("passed"))
+        for row in rows
+        if str(row.get("check") or "").startswith("secret_env_documented::")
+    )
+    token_auth_ready = any(row.get("check") == "token_auth_supported" and row.get("passed") for row in rows)
+    notification_ready = any(
+        row.get("check") == "privilege_documented::notification_integration" and row.get("passed")
+        for row in rows
+    )
+    alert_recipient_ready = any(
+        row.get("check") == "alert_email_default_governed" and row.get("passed")
+        for row in rows
+    )
     results = {
         "source": "production_deployment_readiness_results",
         "producer": PRODUCER,
@@ -411,7 +441,16 @@ def build_production_deployment_readiness_results(
         "production_deployable": not failures,
         "rollback_ready": any(row.get("check") == "rollback_drop_ready" and row.get("passed") for row in rows),
         "failure_count": len(failures),
-        "role_count": len(TARGET_ROLES),
+        "deployment_role_ready": deployment_role_ready,
+        "runtime_role_ready": runtime_role_ready,
+        "privilege_matrix_passed": privilege_matrix_passed,
+        "secret_inventory_passed": secret_inventory_passed,
+        "token_auth_ready": token_auth_ready,
+        "notification_integration_status": "ready" if notification_ready else "missing",
+        "alert_recipient_governance_status": "ready" if alert_recipient_ready else "missing",
+        "sanitized_error_count": 0,
+        "raw_secret_leak_count": token_leak_count,
+        "role_count": len(TARGET_ROLES) + len(ADMIN_ACCESS_ROLES),
         "privilege_mapping_count": len(REQUIRED_PRIVILEGE_DOCS),
         "secret_env_var_count": len(REQUIRED_ENV_VARS),
         "token_path_leak_count": token_leak_count,
@@ -449,6 +488,15 @@ def evaluate_production_deployment_readiness_gate(payload: object) -> dict[str, 
         "production_deployment_readiness_passed": not failures and bool(results.get("passed")),
         "rollback_ready": bool(results.get("rollback_ready")),
         "failure_count": len(failures),
+        "deployment_role_ready": bool(results.get("deployment_role_ready")),
+        "runtime_role_ready": bool(results.get("runtime_role_ready")),
+        "privilege_matrix_passed": bool(results.get("privilege_matrix_passed")),
+        "secret_inventory_passed": bool(results.get("secret_inventory_passed")),
+        "token_auth_ready": bool(results.get("token_auth_ready")),
+        "notification_integration_status": str(results.get("notification_integration_status") or ""),
+        "alert_recipient_governance_status": str(results.get("alert_recipient_governance_status") or ""),
+        "sanitized_error_count": int(results.get("sanitized_error_count") or 0),
+        "raw_secret_leak_count": int(results.get("raw_secret_leak_count") or 0),
         "role_count": int(results.get("role_count") or 0),
         "privilege_mapping_count": int(results.get("privilege_mapping_count") or 0),
         "secret_env_var_count": int(results.get("secret_env_var_count") or 0),

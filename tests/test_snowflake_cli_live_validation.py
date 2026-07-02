@@ -23,6 +23,8 @@ from tools.contracts.snowflake_cli_live_validation import (
     CLI_MANIFEST_RECONCILIATION_REL,
     CLI_PACKET_VALUE_REL,
     CLI_COST_RECONCILIATION_REL,
+    CLI_PRODUCTION_REHEARSAL_GATE_REL,
+    CLI_PRODUCTION_REHEARSAL_REL,
     CLI_QUERY_BUDGET_REL,
     CLI_SETUP_MIGRATION_GATE_REL,
     CLI_SETUP_MIGRATION_REL,
@@ -32,6 +34,7 @@ from tools.contracts.snowflake_cli_live_validation import (
     REQUIRED_QUERY_BUDGET_BOUNDARIES,
     SnowflakeCliValidationOptions,
     TEMP_SQL_PREFIX,
+    build_production_deployment_rehearsal_results,
     evaluate_snowflake_cli_live_gate,
     evaluate_temp_file_hygiene_gate,
     run_snowflake_cli_live_validation,
@@ -361,6 +364,12 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
             self.assertTrue((root / CLI_SETUP_MIGRATION_GATE_REL).exists())
             self.assertTrue((root / CLI_QUERY_BUDGET_REL).exists())
             self.assertTrue((root / CLI_MANIFEST_RECONCILIATION_REL).exists())
+            self.assertTrue((root / CLI_PRODUCTION_REHEARSAL_REL).exists())
+            self.assertTrue((root / CLI_PRODUCTION_REHEARSAL_GATE_REL).exists())
+            self.assertTrue(
+                artifacts[CLI_PRODUCTION_REHEARSAL_GATE_REL]["passed"],
+                artifacts[CLI_PRODUCTION_REHEARSAL_GATE_REL],
+            )
 
     def test_internal_live_without_connection_fails_without_waiver_and_passes_with_valid_waiver(self):
         with _root_with_validation_sql() as temp:
@@ -600,7 +609,75 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
         self.assertTrue(artifacts[CLI_LAUNCH_GATE_REL]["packet_availability_passed"], artifacts[CLI_LAUNCH_GATE_REL])
         self.assertTrue(artifacts[CLI_LAUNCH_GATE_REL]["setup_migration_live_passed"], artifacts[CLI_LAUNCH_GATE_REL])
         self.assertTrue(artifacts[CLI_LAUNCH_GATE_REL]["cost_reconciliation_passed"], artifacts[CLI_LAUNCH_GATE_REL])
+        self.assertFalse(
+            artifacts[CLI_PRODUCTION_REHEARSAL_GATE_REL]["passed"],
+            artifacts[CLI_PRODUCTION_REHEARSAL_GATE_REL],
+        )
+        self.assertGreater(
+            artifacts[CLI_PRODUCTION_REHEARSAL_GATE_REL]["failure_count"],
+            0,
+            artifacts[CLI_PRODUCTION_REHEARSAL_GATE_REL],
+        )
         self.assertFalse(json.dumps(artifacts).count("SELECT *"))
+
+    def test_rehearsal_token_phase_uses_sanitization_not_whole_cli_gate(self):
+        with _root_with_validation_sql() as temp:
+            artifacts = {
+                CLI_LAUNCH_GATE_REL: {
+                    "passed": False,
+                    "failure_count": 2,
+                    "failures": [{"code": "SNOWFLAKE_CLI_QUERY_BUDGET_PROOF_MISSING"}],
+                    "snowflake_cli_token_auth_used": True,
+                    "snowflake_cli_token_file_supplied": True,
+                    "snowflake_cli_token_path_leak_count": 0,
+                    "snowflake_cli_temp_sql_path_leak_count": 0,
+                    "raw_sql_included": False,
+                }
+            }
+            results = build_production_deployment_rehearsal_results(
+                temp,
+                artifacts,
+                SnowflakeCliValidationOptions(
+                    connection="dev",
+                    profile="internal_live",
+                    authenticator="PROGRAMMATIC_ACCESS_TOKEN",
+                    token_file_path="provided-token-file",
+                ),
+            )
+
+        token_row = next(row for row in results["rows"] if row["phase"] == "token_auth_sanitization")
+        self.assertTrue(token_row["passed"], token_row)
+        self.assertEqual(token_row["token_path_leak_count"], 0)
+
+    def test_rehearsal_rejects_stale_fixture_live_gate_under_internal_live(self):
+        with _root_with_validation_sql() as temp:
+            root = Path(temp)
+            gate_path = root / "artifacts" / "launch_readiness" / "security_credential_expiration_live_gate_results.json"
+            gate_path.parent.mkdir(parents=True, exist_ok=True)
+            gate_path.write_text(
+                json.dumps(
+                    {
+                        "source": "security_credential_expiration_live_gate_results",
+                        "passed": True,
+                        "launch_profile": "internal_fixture",
+                        "live_required": False,
+                        "live_executed": False,
+                        "live_passed": False,
+                        "live_skipped": True,
+                        "raw_sql_included": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            results = build_production_deployment_rehearsal_results(
+                root,
+                {},
+                SnowflakeCliValidationOptions(connection="dev", profile="internal_live"),
+            )
+
+        credential_row = next(row for row in results["rows"] if row["phase"] == "credential_expiration_live_chain")
+        self.assertFalse(credential_row["passed"], credential_row)
+        self.assertIn("fixture-profile", credential_row["failure_reason"])
 
     def test_formula_sql_uses_cloud_services_adjustment(self):
         from tools.contracts import snowflake_cli_live_validation as module

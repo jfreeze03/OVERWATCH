@@ -49,11 +49,13 @@ CLI_SUMMARY_CARD_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_summary_card_v
 CLI_QUERY_BUDGET_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_query_budget_results.json"
 CLI_MANIFEST_RECONCILIATION_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_manifest_reconciliation_results.json"
 CLI_TEMP_FILE_HYGIENE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_temp_file_hygiene_results.json"
+CLI_PRODUCTION_REHEARSAL_REL = f"{SNOWFLAKE_VALIDATION_DIR}/production_deployment_rehearsal_results.json"
 CLI_LAUNCH_GATE_REL = f"{LAUNCH_READINESS_DIR}/snowflake_cli_live_gate_results.json"
 CLI_FORMULA_VALUE_GATE_REL = f"{LAUNCH_READINESS_DIR}/snowflake_cli_formula_value_gate_results.json"
 CLI_COST_RECONCILIATION_GATE_REL = f"{LAUNCH_READINESS_DIR}/live_cost_reconciliation_gate_results.json"
 CLI_TEMP_FILE_HYGIENE_GATE_REL = f"{LAUNCH_READINESS_DIR}/snowflake_cli_temp_file_hygiene_gate_results.json"
 CLI_SETUP_MIGRATION_GATE_REL = f"{LAUNCH_READINESS_DIR}/setup_migration_live_gate_results.json"
+CLI_PRODUCTION_REHEARSAL_GATE_REL = f"{LAUNCH_READINESS_DIR}/production_deployment_rehearsal_gate_results.json"
 CLI_RELEASE_REL = f"{RELEASE_CANDIDATE_DIR}/snowflake_cli_release_results.json"
 
 CONNECTION_TEST_TIMEOUT_SECONDS = 240
@@ -73,11 +75,13 @@ REQUIRED_CLI_ARTIFACTS = {
     CLI_QUERY_BUDGET_REL,
     CLI_MANIFEST_RECONCILIATION_REL,
     CLI_TEMP_FILE_HYGIENE_REL,
+    CLI_PRODUCTION_REHEARSAL_REL,
     CLI_LAUNCH_GATE_REL,
     CLI_FORMULA_VALUE_GATE_REL,
     CLI_COST_RECONCILIATION_GATE_REL,
     CLI_TEMP_FILE_HYGIENE_GATE_REL,
     CLI_SETUP_MIGRATION_GATE_REL,
+    CLI_PRODUCTION_REHEARSAL_GATE_REL,
     PACKET_AVAILABILITY_GATE_REL,
     CLI_RELEASE_REL,
 }
@@ -613,6 +617,14 @@ def _skipped_artifacts(
     )
     gate = evaluate_snowflake_cli_live_gate(artifacts, options.profile, [])
     artifacts[CLI_LAUNCH_GATE_REL] = gate
+    artifacts[CLI_PRODUCTION_REHEARSAL_REL] = build_production_deployment_rehearsal_results(
+        Path.cwd(),
+        artifacts,
+        options,
+    )
+    artifacts[CLI_PRODUCTION_REHEARSAL_GATE_REL] = evaluate_production_deployment_rehearsal_gate(
+        artifacts[CLI_PRODUCTION_REHEARSAL_REL]
+    )
     artifacts[CLI_RELEASE_REL] = {
         "source": "snowflake_cli_release_results",
         "generated_at": _utc_now(),
@@ -632,6 +644,9 @@ def _skipped_artifacts(
         "snowflake_cli_temp_file_hygiene_passed": bool(gate.get("temp_file_hygiene_passed")),
         "temp_sql_file_leftover_count": int(gate.get("temp_sql_file_leftover_count") or 0),
         "setup_migration_live_passed": bool(gate.get("setup_migration_live_passed")),
+        "production_deployment_rehearsal_passed": bool(
+            artifacts[CLI_PRODUCTION_REHEARSAL_GATE_REL].get("passed")
+        ),
         "skip_reason": reason,
         "raw_sql_included": False,
     }
@@ -2540,6 +2555,22 @@ def _all_rows(artifacts: Mapping[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def _as_mapping(value: object) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _refresh_rehearsal_live_dependency_artifacts(root: Path, profile: str) -> None:
+    from tools.contracts.cortex_token_efficiency_validation import (
+        write_cortex_token_efficiency_artifacts,
+    )
+    from tools.contracts.security_credential_validation import (
+        write_security_credential_validation_artifacts,
+    )
+
+    write_security_credential_validation_artifacts(root, profile=profile)
+    write_cortex_token_efficiency_artifacts(root, profile=profile)
+
+
 def evaluate_snowflake_cli_live_gate(
     artifacts: Mapping[str, Any],
     profile: str,
@@ -2694,6 +2725,286 @@ def evaluate_snowflake_cli_live_gate(
     }
 
 
+def _payload_failure_reason(mapping: Mapping[str, Any]) -> str:
+    failure_reason = str(mapping.get("failure_reason") or "")
+    if failure_reason:
+        return failure_reason
+    failures = mapping.get("failures")
+    if isinstance(failures, Sequence) and not isinstance(failures, (str, bytes)):
+        reasons: list[str] = []
+        for failure in failures:
+            if not isinstance(failure, Mapping):
+                continue
+            reason = str(
+                failure.get("failure_reason")
+                or failure.get("reason")
+                or failure.get("code")
+                or failure.get("check")
+                or ""
+            )
+            if reason:
+                reasons.append(reason)
+        if reasons:
+            return "; ".join(reasons[:3])
+    return ""
+
+
+def _artifact_passed_or_fixture_skipped(
+    payload: object,
+    profile: str,
+    *,
+    require_live_execution: bool = False,
+) -> tuple[bool, bool, str]:
+    mapping = payload if isinstance(payload, Mapping) else {}
+    if not mapping:
+        return False, False, "artifact_missing"
+    skipped = bool(mapping.get("skipped") or mapping.get("live_skipped"))
+    if require_live_execution and profile in {"internal_live", "prod_candidate"}:
+        payload_profile = str(mapping.get("launch_profile") or mapping.get("profile") or "")
+        if payload_profile and payload_profile not in {"internal_live", "prod_candidate"}:
+            return False, skipped, "live profile cannot use fixture-profile deployment proof"
+        if not bool(mapping.get("live_required")):
+            return False, skipped, "live profile requires a live-required deployment proof row"
+        if skipped:
+            return False, True, "live profile requires this deployment rehearsal phase"
+        if not bool(mapping.get("live_executed")):
+            return False, skipped, "live proof did not execute"
+        if not bool(mapping.get("live_passed")):
+            return False, skipped, _payload_failure_reason(mapping) or "live proof did not pass"
+    if skipped and profile == "internal_fixture":
+        return True, True, str(mapping.get("skip_reason") or "fixture profile skip")
+    return bool(mapping.get("passed")) and not skipped, skipped, _payload_failure_reason(mapping)
+
+
+def _token_auth_sanitization_payload(
+    gate: Mapping[str, Any],
+    options: SnowflakeCliValidationOptions,
+    *,
+    token_path_leak_count: int,
+    temp_path_leak_count: int,
+) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+    token_supplied = bool(options.token_file_path)
+    authenticator_supplied = bool(options.authenticator)
+    if not gate:
+        failures.append({"code": "SNOWFLAKE_CLI_GATE_MISSING"})
+    if token_path_leak_count:
+        failures.append({"code": "SNOWFLAKE_CLI_TOKEN_FILE_PATH_LEAK", "leak_count": token_path_leak_count})
+    if temp_path_leak_count:
+        failures.append({"code": "SNOWFLAKE_CLI_TEMP_SQL_FILE_PATH_LEAK", "leak_count": temp_path_leak_count})
+    if bool(gate.get("raw_sql_included")):
+        failures.append({"code": "SNOWFLAKE_CLI_RAW_SQL_INCLUDED"})
+    if token_supplied and not bool(gate.get("snowflake_cli_token_file_supplied")):
+        failures.append({"code": "SNOWFLAKE_CLI_TOKEN_FILE_NOT_RECORDED_AS_SUPPLIED"})
+    if authenticator_supplied and not bool(gate.get("snowflake_cli_token_auth_used")):
+        failures.append({"code": "SNOWFLAKE_CLI_AUTHENTICATOR_NOT_USED"})
+    return {
+        "source": "snowflake_cli_token_auth_sanitization",
+        "passed": not failures,
+        "skipped": not token_supplied and not authenticator_supplied,
+        "failure_count": len(failures),
+        "failures": failures,
+        "token_file_supplied": token_supplied,
+        "authenticator_supplied": authenticator_supplied,
+        "token_path_leak_count": token_path_leak_count,
+        "temp_sql_path_leak_count": temp_path_leak_count,
+        "raw_sql_included": False,
+    }
+
+
+def _load_gate(root: Path, rel: str) -> Mapping[str, Any]:
+    try:
+        payload = json.loads((root / rel).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, Mapping) else {}
+
+
+def _production_rehearsal_phase_row(
+    *,
+    phase: str,
+    artifact: str,
+    payload: object,
+    profile: str,
+    required_live: bool,
+    token_path_leak_count: int = 0,
+    temp_path_leak_count: int = 0,
+    raw_sql_leak_count: int = 0,
+    require_live_execution: bool = False,
+) -> dict[str, Any]:
+    passed, skipped, reason = _artifact_passed_or_fixture_skipped(
+        payload,
+        profile,
+        require_live_execution=require_live_execution,
+    )
+    if not payload and not required_live and profile == "internal_fixture":
+        passed = True
+        skipped = True
+        reason = "fixture profile skip"
+    if (
+        profile == "internal_fixture"
+        and not required_live
+        and phase in {"credential_expiration_live_chain", "cortex_token_efficiency_live_chain"}
+        and not passed
+    ):
+        passed = True
+        skipped = True
+        reason = "fixture profile skip"
+    if required_live and skipped:
+        passed = False
+        reason = reason or "live profile requires this deployment rehearsal phase"
+    if token_path_leak_count or temp_path_leak_count or raw_sql_leak_count:
+        passed = False
+        reason = "sanitization leak detected"
+    return {
+        "producer": "snowflake_cli_live_validation",
+        "provenance_origin": "producer",
+        "generated_at": _utc_now(),
+        "source": "production_deployment_rehearsal",
+        "runtime_source": "snowflake_cli_phase_artifact",
+        "section": "Production Deployment",
+        "workflow": "Deployment rehearsal",
+        "phase": phase,
+        "artifact": Path(artifact).name,
+        "passed": passed,
+        "skipped": skipped,
+        "required_live": required_live,
+        "failure_reason": "" if passed else reason or "deployment rehearsal phase failed",
+        "token_path_leak_count": token_path_leak_count,
+        "temp_sql_path_leak_count": temp_path_leak_count,
+        "raw_sql_leak_count": raw_sql_leak_count,
+        "raw_sql_included": False,
+    }
+
+
+def build_production_deployment_rehearsal_results(
+    root: Path | str,
+    artifacts: Mapping[str, Any],
+    options: SnowflakeCliValidationOptions,
+) -> dict[str, Any]:
+    root_path = Path(root).resolve()
+    live_profile = options.profile in {"internal_live", "prod_candidate"}
+    gate = artifacts.get(CLI_LAUNCH_GATE_REL, {})
+    token_path_leak_count = int(_as_mapping(gate).get("snowflake_cli_token_path_leak_count") or 0)
+    temp_path_leak_count = int(_as_mapping(gate).get("snowflake_cli_temp_sql_path_leak_count") or 0)
+    token_auth_payload = _token_auth_sanitization_payload(
+        _as_mapping(gate),
+        options,
+        token_path_leak_count=token_path_leak_count,
+        temp_path_leak_count=temp_path_leak_count,
+    )
+
+    phase_specs: list[tuple[str, str, object, bool, bool]] = [
+        ("cli_capability_check", CLI_CAPABILITY_REL, artifacts.get(CLI_CAPABILITY_REL), False, False),
+        ("connection_test", CLI_CONNECTION_REL, artifacts.get(CLI_CONNECTION_REL), live_profile, False),
+        (
+            "token_auth_sanitization",
+            CLI_LAUNCH_GATE_REL,
+            token_auth_payload,
+            live_profile and bool(options.token_file_path),
+            False,
+        ),
+        ("temp_sql_file_hygiene", CLI_TEMP_FILE_HYGIENE_GATE_REL, artifacts.get(CLI_TEMP_FILE_HYGIENE_GATE_REL), False, False),
+        ("setup_sql_availability", CLI_SETUP_REL, artifacts.get(CLI_SETUP_REL), live_profile, False),
+        ("validation_sql_availability", CLI_SETUP_REL, artifacts.get(CLI_SETUP_REL), live_profile, False),
+        ("migration_ledger_validation", CLI_SETUP_MIGRATION_GATE_REL, artifacts.get(CLI_SETUP_MIGRATION_GATE_REL), live_profile, False),
+        ("required_object_existence", CLI_SETUP_MIGRATION_REL, artifacts.get(CLI_SETUP_MIGRATION_REL), live_profile, False),
+        (
+            "role_privilege_matrix_validation",
+            "production_deployment_readiness_gate_results.json",
+            _load_gate(root_path, "artifacts/launch_readiness/production_deployment_readiness_gate_results.json"),
+            False,
+            False,
+        ),
+        ("packet_availability_validation", PACKET_AVAILABILITY_GATE_REL, artifacts.get(PACKET_AVAILABILITY_GATE_REL), live_profile, False),
+        ("cost_reconciliation_validation", CLI_COST_RECONCILIATION_GATE_REL, artifacts.get(CLI_COST_RECONCILIATION_GATE_REL), live_profile, False),
+        (
+            "credential_expiration_live_chain",
+            "security_credential_expiration_live_gate_results.json",
+            _load_gate(root_path, "artifacts/launch_readiness/security_credential_expiration_live_gate_results.json"),
+            live_profile,
+            live_profile,
+        ),
+        (
+            "cortex_token_efficiency_live_chain",
+            "cortex_token_efficiency_live_gate_results.json",
+            _load_gate(root_path, "artifacts/launch_readiness/cortex_token_efficiency_live_gate_results.json"),
+            live_profile,
+            live_profile,
+        ),
+        ("fast_refresh_smoke_or_skip", CLI_SETUP_REL, artifacts.get(CLI_SETUP_REL), False, False),
+        (
+            "post_deploy_app_smoke",
+            "app_entry_smoke_gate_results.json",
+            _load_gate(root_path, "artifacts/launch_readiness/app_entry_smoke_gate_results.json"),
+            False,
+            False,
+        ),
+    ]
+    rows = [
+        _production_rehearsal_phase_row(
+            phase=phase,
+            artifact=artifact,
+            payload=payload,
+            profile=options.profile,
+            required_live=required_live,
+            token_path_leak_count=token_path_leak_count if phase == "token_auth_sanitization" else 0,
+            temp_path_leak_count=temp_path_leak_count if phase == "temp_sql_file_hygiene" else 0,
+            raw_sql_leak_count=0,
+            require_live_execution=require_live_execution,
+        )
+        for phase, artifact, payload, required_live, require_live_execution in phase_specs
+    ]
+    failures = [row for row in rows if not bool(row.get("passed"))]
+    live_skipped_without_waiver = [
+        row for row in rows if bool(row.get("required_live")) and bool(row.get("skipped")) and not row.get("passed")
+    ]
+    return {
+        "source": "production_deployment_rehearsal_results",
+        "producer": "snowflake_cli_live_validation",
+        "provenance_origin": "producer",
+        "generated_at": _utc_now(),
+        "launch_profile": options.profile,
+        "passed": not failures,
+        "deployment_rehearsal_passed": not failures,
+        "failure_count": len(failures),
+        "phase_count": len(rows),
+        "live_required": live_profile,
+        "live_skipped_without_waiver_count": len(live_skipped_without_waiver),
+        "token_path_leak_count": token_path_leak_count,
+        "temp_sql_path_leak_count": temp_path_leak_count,
+        "temp_sql_file_leftover_count": int(_as_mapping(gate).get("temp_sql_file_leftover_count") or 0),
+        "raw_sql_included": False,
+        "rows": rows,
+        "failures": failures,
+    }
+
+
+def evaluate_production_deployment_rehearsal_gate(payload: object) -> dict[str, Any]:
+    results = payload if isinstance(payload, Mapping) else {}
+    failures = list(results.get("failures") or [])
+    if not results:
+        failures = [{"code": "PRODUCTION_DEPLOYMENT_REHEARSAL_MISSING"}]
+    elif not bool(results.get("passed")) and not failures:
+        failures = [{"code": "PRODUCTION_DEPLOYMENT_REHEARSAL_FAILED"}]
+    return {
+        "source": "production_deployment_rehearsal_gate_results",
+        "producer": "snowflake_cli_live_validation",
+        "generated_at": _utc_now(),
+        "passed": not failures and bool(results.get("passed")),
+        "deployment_rehearsal_passed": not failures and bool(results.get("passed")),
+        "failure_count": len(failures),
+        "phase_count": int(results.get("phase_count") or 0),
+        "live_required": bool(results.get("live_required")),
+        "live_skipped_without_waiver_count": int(results.get("live_skipped_without_waiver_count") or 0),
+        "token_path_leak_count": int(results.get("token_path_leak_count") or 0),
+        "temp_sql_path_leak_count": int(results.get("temp_sql_path_leak_count") or 0),
+        "temp_sql_file_leftover_count": int(results.get("temp_sql_file_leftover_count") or 0),
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+
+
 def run_snowflake_cli_live_validation(
     root: Path | str = ".",
     *,
@@ -2779,6 +3090,15 @@ def run_snowflake_cli_live_validation(
     artifacts[CLI_MANIFEST_REL] = _manifest_from_rows(_all_rows(artifacts))
     artifacts[CLI_MANIFEST_RECONCILIATION_REL] = _manifest_reconciliation_results(artifacts, artifacts[CLI_MANIFEST_REL])
     artifacts[CLI_LAUNCH_GATE_REL] = evaluate_snowflake_cli_live_gate(artifacts, options.profile, [])
+    _refresh_rehearsal_live_dependency_artifacts(root_path, options.profile)
+    artifacts[CLI_PRODUCTION_REHEARSAL_REL] = build_production_deployment_rehearsal_results(
+        root_path,
+        artifacts,
+        options,
+    )
+    artifacts[CLI_PRODUCTION_REHEARSAL_GATE_REL] = evaluate_production_deployment_rehearsal_gate(
+        artifacts[CLI_PRODUCTION_REHEARSAL_REL]
+    )
     artifacts[CLI_RELEASE_REL] = {
         "source": "snowflake_cli_release_results",
         "generated_at": _utc_now(),
@@ -2807,6 +3127,9 @@ def run_snowflake_cli_live_validation(
         "cost_reconciliation_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("cost_reconciliation_passed")),
         "query_budget_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("query_budget_passed")),
         "manifest_reconciliation_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("manifest_reconciliation_passed")),
+        "production_deployment_rehearsal_passed": bool(
+            artifacts[CLI_PRODUCTION_REHEARSAL_GATE_REL].get("passed")
+        ),
         "raw_sql_included": False,
     }
     return artifacts
@@ -2923,6 +3246,8 @@ __all__ = [
     "CLI_MANIFEST_RECONCILIATION_REL",
     "CLI_PACKET_VALUE_REL",
     "CLI_QUERY_BUDGET_REL",
+    "CLI_PRODUCTION_REHEARSAL_GATE_REL",
+    "CLI_PRODUCTION_REHEARSAL_REL",
     "CLI_RELEASE_REL",
     "CLI_SETUP_MIGRATION_GATE_REL",
     "CLI_SETUP_MIGRATION_REL",
@@ -2935,6 +3260,7 @@ __all__ = [
     "SnowflakeCliValidationOptions",
     "TEMP_SQL_PREFIX",
     "evaluate_snowflake_cli_live_gate",
+    "evaluate_production_deployment_rehearsal_gate",
     "evaluate_setup_migration_live_gate",
     "evaluate_temp_file_hygiene_gate",
     "run_snowflake_cli_live_validation",

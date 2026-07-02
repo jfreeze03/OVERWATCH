@@ -48,3 +48,15 @@ Use this when the dashboard is blank, stale, slow, or showing conflicting teleme
 ## Rollback
 
 The setup scripts are additive. To roll back a new contract, disable the related task or alert first, then drop the new view/table only after exporting audit/history rows that must be retained.
+
+For a full mart rebuild, use `snowflake/OVERWATCH_MART_DROP.sql` only through
+an operator-approved rollback change with `OVERWATCH_DESTRUCTIVE_MODE=TRUE`.
+The drop script is scoped to OVERWATCH-owned objects and does not drop the
+database, schema, warehouse, resource monitor, or access roles by default.
+
+After rollback, rerun `snowflake/OVERWATCH_MART_SETUP.sql` and
+`snowflake/OVERWATCH_MART_VALIDATION.sql`. Setup is designed to be idempotent:
+`CREATE ... IF NOT EXISTS` statements and the `OVERWATCH_SCHEMA_MIGRATION`
+ledger should converge to the expected migration rows on rerun. If a migration
+row is missing after setup, stop the deployment and reconcile the setup bundle
+before resuming refresh tasks.

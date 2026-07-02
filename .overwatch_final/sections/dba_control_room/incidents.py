@@ -4,11 +4,11 @@ from __future__ import annotations
 from datetime import datetime
 import streamlit as st
 from sections.shell_helpers import (
-    _clean_display_text,
     render_escaped_bold_text,
     render_shell_snapshot,
     render_shell_status_strip,
 )
+from utils.display_safety import clean_display_text
 from utils.primitives import (
     safe_float,
     safe_int,
@@ -16,6 +16,8 @@ from utils.primitives import (
 from utils.downloads import (
     download_text,
 )
+
+_clean_display_text = clean_display_text
 from .types import (
     ACTION_QUEUE_WORKFLOW,
     FAILURE_TRIAGE_WORKFLOW,

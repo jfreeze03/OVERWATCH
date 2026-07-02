@@ -15,9 +15,7 @@ from route_registry import (
     SECTION_ROUTE_STATE as _ROUTE_SECTION_ROUTE_STATE,
     normalize_section_route as _normalize_section_route,
 )
-
-
-CONFIG_VERSION = "2026-06-05-trexis-scope-v1"
+from version import CONFIG_VERSION
 
 
 DEFAULTS = {

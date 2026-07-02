@@ -8,8 +8,10 @@ from typing import Any
 
 import streamlit as st
 
-from sections.shell_helpers import _clean_display_text
+from utils.display_safety import clean_display_text
 from utils.primitives import safe_float, safe_int
+
+_clean_display_text = clean_display_text
 
 
 _SEVERITY_RANK = {

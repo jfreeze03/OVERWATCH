@@ -1611,8 +1611,12 @@ class NavigationIntegrityTests(unittest.TestCase):
 
         self.assertIn("from shell import render_app", app_text)
         self.assertIn("def queue_section_navigation", navigation_text)
-        self.assertIn("CONNECTION_OPTIONAL_SECTIONS = set(ALL_SECTIONS)", navigation_text)
-        self.assertIn("def section_requires_connection", navigation_text)
+        self.assertIn("OFFLINE_CAPABLE_SECTIONS = frozenset(ALL_SECTIONS)", navigation_text)
+        self.assertIn("def section_connection_policy", navigation_text)
+        self.assertNotIn("CONNECTION_OPTIONAL_SECTIONS", navigation_text)
+        self.assertNotIn("def section_requires_connection", navigation_text)
+        navigation_header = "\n".join(navigation_text.splitlines()[:40])
+        self.assertNotIn("from sections.navigation import", navigation_header)
         self.assertIn("PENDING_SECTION", navigation_text)
         self.assertIn("def section_render_signature", (APP_ROOT / "refresh.py").read_text(encoding="utf-8"))
         self.assertIn("LAST_SECTION_RENDER_SIGNATURE", navigation_text)
@@ -1626,12 +1630,31 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("with fresh_section_container(section_slot):", shell_text)
         self.assertIn("dispatch_section(active_section)", shell_text)
         self.assertIn("def dispatch_section", dispatch_text)
-        self.assertIn("needs_connection = section_requires_connection(active_section)", shell_text)
-        self.assertIn("elif needs_connection and (", shell_text)
+        self.assertIn("connection_policy = section_connection_policy(active_section)", shell_text)
+        self.assertIn("elif connection_policy.requires_connection and (", shell_text)
         self.assertNotIn("transition_slot = st.empty()", app_text)
         self.assertNotIn("transition_slot.empty()", app_text)
         self.assertIn(".ow-section-transition", theme_text)
         self.assertIn("position: fixed", theme_text)
+
+    def test_connection_policy_is_explicit_and_packet_fallback_capable(self):
+        import navigation
+
+        for section in PRIMARY_SECTIONS:
+            policy = navigation.section_connection_policy(section)
+            self.assertEqual(policy.section, section)
+            self.assertTrue(policy.offline_capable)
+            self.assertFalse(policy.requires_connection)
+            self.assertEqual(policy.fallback_surface, "packet_or_connection_fallback")
+
+        unknown = navigation.section_connection_policy("Unknown Experimental Surface")
+        self.assertFalse(unknown.offline_capable)
+        self.assertTrue(unknown.requires_connection)
+
+        navigation_text = (APP_ROOT / "navigation.py").read_text(encoding="utf-8")
+        module_header = "\n".join(navigation_text.splitlines()[:40])
+        self.assertNotIn("sections.navigation", module_header)
+        self.assertIn("from sections.navigation import request_executive_landing_hydration", navigation_text)
 
     def test_app_shell_header_renders_before_sidebar_hydration(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
@@ -1865,7 +1888,13 @@ class NavigationIntegrityTests(unittest.TestCase):
                     patch.object(shell, "section_render_signature", return_value=("Executive Landing", "ALFA"))
                 )
                 stack.enter_context(patch.object(shell, "should_show_section_transition", return_value=False))
-                stack.enter_context(patch.object(shell, "section_requires_connection", return_value=True))
+                stack.enter_context(
+                    patch.object(
+                        shell,
+                        "section_connection_policy",
+                        return_value=types.SimpleNamespace(offline_capable=True, requires_connection=False),
+                    )
+                )
                 stack.enter_context(patch.object(shell.st, "empty", return_value=object()))
                 stack.enter_context(
                     patch.object(shell, "fresh_section_container", return_value=contextlib.nullcontext())
@@ -1922,7 +1951,13 @@ class NavigationIntegrityTests(unittest.TestCase):
                 )
                 stack.enter_context(patch.object(shell, "current_visible_sections", return_value=["Executive Landing"]))
                 stack.enter_context(patch.object(shell, "current_active_section", return_value="Executive Landing"))
-                stack.enter_context(patch.object(shell, "section_requires_connection", return_value=False))
+                stack.enter_context(
+                    patch.object(
+                        shell,
+                        "section_connection_policy",
+                        return_value=types.SimpleNamespace(offline_capable=True, requires_connection=False),
+                    )
+                )
                 stack.enter_context(patch.object(shell, "current_credit_price", return_value=3.0))
                 stack.enter_context(patch.object(shell, "render_topbar_filter_strip", return_value="ALFA"))
                 stack.enter_context(

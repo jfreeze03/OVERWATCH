@@ -40,7 +40,7 @@ Scope: primary app code, route aliases, Snowflake setup text, and regression tes
 | `.overwatch_final/sections/alert_center.py` | Alert Command Findings | Alert Investigation Findings | Yes | Yes |
 | `.overwatch_final/sections/executive_landing.py` | Command Center | Correlated Investigations | Yes | Yes |
 | `.overwatch_final/sections/query_analysis.py` | AI Query Diagnosis | Query Investigation | Yes | Yes |
-| `.overwatch_final/sections/query_workbench.py` | AI Query Diagnosis | Query Investigation | Yes | Yes |
+| `.overwatch_final/sections/query_investigation_root_cause.py` | AI Query Diagnosis | Query Investigation | Yes | Yes |
 | `.overwatch_final/utils/alerts.py` | DBA Morning Brief | DBA Daily Brief | Yes | Yes |
 | `.overwatch_final/utils/recommendation_intelligence.py` | Query diagnosis / Task graphs | Query Investigation / Pipeline & Task Health | Yes | Yes |
 | `.overwatch_final/utils/scorecards.py` | Query Diagnosis / task graphs | Query Investigation / Pipeline & Task Health | Yes | Yes |
@@ -74,4 +74,3 @@ The `MART_COMMAND_CENTER_*`, `OVERWATCH_COMMAND_CENTER_*`, and `SP_OVERWATCH_REF
 ## Stale Chart References
 
 No `see chart A/B/C/D` or `chart A/B/C/D` references were found in primary app code by the regression runner.
-

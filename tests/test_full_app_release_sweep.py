@@ -307,6 +307,12 @@ def _passing_payload(root: Path) -> dict:
         "temp_sql_file_leftover_count": 0,
         "temp_sql_file_path_stored": False,
     }
+    setup_migration_gate = {
+        **passed_gate,
+        "setup_migration_live_passed": True,
+        "object_probe_passed": True,
+        "ledger_probe_passed": True,
+    }
     return {
         "artifacts/full_app_validation/view_results.json": view_rows,
         "artifacts/full_app_validation/rendered_fragments.json": fragment_rows,
@@ -351,6 +357,7 @@ def _passing_payload(root: Path) -> dict:
         },
         "artifacts/launch_readiness/snowflake_cli_live_gate_results.json": snowflake_cli_gate,
         "artifacts/launch_readiness/snowflake_cli_temp_file_hygiene_gate_results.json": temp_hygiene_gate,
+        "artifacts/launch_readiness/setup_migration_live_gate_results.json": setup_migration_gate,
     }
 
 

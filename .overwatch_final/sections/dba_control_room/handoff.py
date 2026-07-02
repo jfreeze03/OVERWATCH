@@ -4,9 +4,9 @@ from __future__ import annotations
 from datetime import datetime
 import streamlit as st
 from sections.shell_helpers import (
-    _clean_display_text,
     render_shell_snapshot,
 )
+from utils.display_safety import clean_display_text
 from utils.primitives import (
     safe_float,
     safe_int,
@@ -28,6 +28,8 @@ from .types import (
 from .queue import (
     _priority_exceptions,
 )
+
+_clean_display_text = clean_display_text
 from .incidents import (
     _dba_runbook_route_templates,
 )

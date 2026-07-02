@@ -896,8 +896,8 @@ def render():
     elif active_view == "Root-Cause Brief":
         import importlib
 
-        query_workbench = importlib.import_module("sections.query_workbench")
-        query_workbench.render_root_cause_brief(session)
+        root_cause = importlib.import_module("sections.query_investigation_root_cause")
+        root_cause.render_root_cause_brief(session)
 
     elif active_view == "Detailed Diagnosis":
         import importlib

@@ -422,7 +422,7 @@ def build_ui_kit_alignment_results(root: Path | str = ".") -> dict[str, Any]:
         token in display_safety_source
         for token in ("Refresh-backed", "Evidence cache", "Deep diagnostics", "Packet")
     )
-    shell_uses_source_scrubber = "scrub_daily_text" in shell_source
+    shell_uses_source_scrubber = "clean_display_text" in shell_source
     credential_tile_rendered = (
         '"credential_expirations"' in view_model_source
         and "credential_expiration_tile_from_packet" in security_helper

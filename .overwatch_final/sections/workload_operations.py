@@ -687,7 +687,7 @@ def render() -> None:
         if st.session_state.get("exceptions_only_mode") and "workload_operations_workflow" not in st.session_state:
             set_state("workload_operations_workflow", WORKLOAD_OVERVIEW_WORKFLOW)
         migrate_legacy_workflow_state(
-            "query_workbench_workflow",
+            "legacy_query_investigation_workflow",
             "workload_operations_workflow",
             LEGACY_WORKFLOW_MAP,
         )

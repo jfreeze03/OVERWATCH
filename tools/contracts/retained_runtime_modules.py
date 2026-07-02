@@ -55,7 +55,7 @@ _ADMIN_MODULES = (
     "sections.pipeline_health",
     "sections.query_analysis",
     "sections.query_search",
-    "sections.query_workbench",
+    "sections.query_investigation_root_cause",
     "sections.recommendations",
     "sections.security_access",
     "sections.storage_monitor",

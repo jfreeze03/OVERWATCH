@@ -69,7 +69,7 @@ $env:OVERWATCH_QUERY_TAG_PREFIX = "OVERWATCH_VALIDATION"
 .\scripts\run_snowflake_cli_live_validation.ps1 <connection> -SkipRefresh
 ```
 
-If query-history permission is missing, the tool writes an explicit skipped artifact with a sanitized reason. `internal_live` and `prod_candidate` require query-history proof or an owner-approved waiver.
+Query-budget proof combines Snowflake query-history rows for executed tagged queries with producer-backed runtime artifacts for expected-zero boundaries such as warm first paint, route actions, and Query Search no-click. If query-history permission is missing, the tool writes an explicit skipped artifact with a sanitized reason. `internal_live` and `prod_candidate` require query-history/runtime proof or an owner-approved waiver.
 
 ## Generated Artifacts
 
@@ -80,6 +80,7 @@ The validator writes:
 - `artifacts/snowflake_validation/snowflake_cli_execution_manifest.json`
 - `artifacts/snowflake_validation/snowflake_cli_manifest_reconciliation_results.json`
 - `artifacts/snowflake_validation/snowflake_cli_setup_validation_results.json`
+- `artifacts/snowflake_validation/setup_migration_live_results.json`
 - `artifacts/snowflake_validation/packet_availability_matrix_results.json`
 - `artifacts/snowflake_validation/snowflake_cli_packet_availability_results.json`
 - `artifacts/snowflake_validation/snowflake_cli_formula_value_results.json`
@@ -92,6 +93,7 @@ The validator writes:
 - `artifacts/launch_readiness/live_cost_reconciliation_gate_results.json`
 - `artifacts/launch_readiness/snowflake_cli_formula_value_gate_results.json`
 - `artifacts/launch_readiness/snowflake_cli_temp_file_hygiene_gate_results.json`
+- `artifacts/launch_readiness/setup_migration_live_gate_results.json`
 - `artifacts/launch_readiness/snowflake_cli_live_gate_results.json`
 - `artifacts/release_candidate/snowflake_cli_release_results.json`
 

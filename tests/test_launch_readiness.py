@@ -150,6 +150,7 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(summary["snowflake_cli_live_validation_failure_count"], 0)
         self.assertFalse(summary["snowflake_cli_connection_passed"])
         self.assertFalse(summary["snowflake_cli_setup_validation_passed"])
+        self.assertTrue(summary["setup_migration_live_passed"])
         self.assertFalse(summary["snowflake_cli_packet_value_passed"])
         self.assertFalse(summary["snowflake_cli_formula_value_passed"])
         self.assertFalse(summary["snowflake_cli_summary_card_value_passed"])
@@ -196,6 +197,7 @@ class LaunchReadinessTests(unittest.TestCase):
             "formula_live_validation",
             "render_provenance_reconciliation",
             "snowflake_cli_live_validation",
+            "setup_migration_live_validation",
             "metric_semantic_registry",
             "workload_formula_semantics",
             "query_budget_recording",
@@ -349,6 +351,7 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertTrue(summary["snowflake_cli_live_validation_passed"])
         self.assertTrue(summary["snowflake_cli_live_validation_skipped"])
         self.assertFalse(summary["snowflake_cli_live_validation_required"])
+        self.assertTrue(summary["setup_migration_live_passed"])
         self.assertTrue(summary["render_provenance_reconciliation_passed"])
         self.assertEqual(summary["render_provenance_reconciliation_failure_count"], 0)
         self.assertTrue(summary["credential_expiration_gate_passed"])

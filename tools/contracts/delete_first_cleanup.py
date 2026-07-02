@@ -196,6 +196,13 @@ def build_delete_first_inventory(root: Path) -> dict[str, Any]:
     for path, item_type in _inventory_paths(root):
         row = _classify_sql(root, path) if item_type == "sql_object" else _classify_python(root, path)
         rows.append(row)
+        if row["path"] == ".overwatch_final/sections/query_workbench.py":
+            failures.append(
+                {
+                    "item_id": row["item_id"],
+                    "reason": "retired query_workbench module returned to production source",
+                }
+            )
         classification = str(row.get("classification") or "")
         if classification == "unknown_blocker":
             failures.append({"item_id": row["item_id"], "reason": "retained item is unclassified"})

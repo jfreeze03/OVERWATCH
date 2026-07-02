@@ -24,6 +24,7 @@ from runtime_state import (
     get_state,
     set_state,
 )
+from version import APP_VERSION
 from .sql_safe import sql_literal
 
 
@@ -43,7 +44,6 @@ LOG_TABLE = (
     f"{safe_identifier(ALERT_SCHEMA)}."
     f"{safe_identifier('OVERWATCH_USAGE_LOG')}"
 )
-APP_VERSION = "3.0"
 _ENABLED_KEY = LOGGING_ENABLED
 _QUERY_ENABLED_KEY = QUERY_LOGGING_ENABLED
 
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS {log_table} (
     COMPANY_VIEW     VARCHAR(50),
     SECTION          VARCHAR(200),
     QUERY_DURATION_MS NUMBER,
-    APP_VERSION      VARCHAR(20) DEFAULT {sql_literal(APP_VERSION, 20)},
+    APP_VERSION      VARCHAR(40) DEFAULT {sql_literal(APP_VERSION, 40)},
     SESSION_ID       VARCHAR(200),
     EVENT_TYPE       VARCHAR(50) DEFAULT 'SECTION_LOAD',
     QUERY_HASH       VARCHAR(80),

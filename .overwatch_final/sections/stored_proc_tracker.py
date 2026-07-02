@@ -5,7 +5,7 @@ import re
 import streamlit as st
 import pandas as pd
 from config import DEFAULTS, THRESHOLDS
-from sections.shell_helpers import _clean_display_text, render_shell_snapshot
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     day_window_selectbox,
     get_session,
@@ -39,6 +39,9 @@ from utils import (
     upsert_actions,
 )
 from utils.workflows import render_load_status
+from utils.display_safety import clean_display_text
+
+_clean_display_text = clean_display_text
 
 
 PROCEDURE_SIGNAL_ROUTES = {

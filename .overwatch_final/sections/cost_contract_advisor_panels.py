@@ -23,13 +23,15 @@ from sections.cost_contract_helpers import get_current_ai_credit_price
 from sections.cost_contract_intelligence import _build_service_cost_lens_summary
 from sections.cost_contract_overview_panels import _render_metric_items
 from sections.shell_helpers import (
-    _clean_display_text,
     render_escaped_labeled_text,
     render_shell_snapshot,
 )
+from utils.display_safety import clean_display_text
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_source_note
 from utils.workflows import render_priority_dataframe
+
+_clean_display_text = clean_display_text
 
 
 def _render_savings_closure_control(queue: pd.DataFrame, credit_price: float) -> None:

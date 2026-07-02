@@ -1,4 +1,4 @@
-# sections/query_workbench.py - legacy root-cause helpers for Query Analysis
+# sections/query_investigation_root_cause.py - root-cause helpers for Workload Operations / Query Investigation
 from __future__ import annotations
 
 import pandas as pd
@@ -372,7 +372,7 @@ def _generate_root_cause_cortex_narrative(session, prompt: str) -> str:
         prompt,
         alias="NARRATIVE",
         prompt_limit=16000,
-        feature="query_workbench_root_cause",
+        feature="query_investigation_root_cause",
     )
 
 

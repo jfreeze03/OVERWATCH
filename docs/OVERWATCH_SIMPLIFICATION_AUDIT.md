@@ -122,7 +122,7 @@ Those secondary systems are not worthless, but they should not be daily operator
 | `stored_proc_tracker.py` | Weekly/incident | Medium | Medium | MERGE into pipeline/workload incidents. |
 | `query_analysis.py` | Incident-driven | High | Medium | KEEP as workload incident detail. |
 | `query_search.py` | Incident-driven | Medium | Low | MERGE into query investigation. |
-| `query_workbench.py` | DBA utility | Medium | Medium | MOVE to settings/admin tools. |
+| `query_investigation_root_cause.py` | Workload Operations / Query Investigation root-cause utility | Medium | Medium | MOVED from retired `query_workbench.py` production module; keep only behind explicit Query Investigation workflow. |
 | `contention_center.py` | Incident-driven | High | Medium | MERGE into workload incident details. |
 | `live_monitor.py` | Incident-driven | Medium | Low | MERGE into incidents. |
 | `detailed_diagnosis.py` | Incident-driven | Medium | Low | MERGE into query investigation. |

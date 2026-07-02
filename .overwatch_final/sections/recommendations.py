@@ -10,7 +10,7 @@ from sections.warehouse_health import (
     _build_warehouse_guardrail_coverage,
     _warehouse_setting_action_plan,
 )
-from sections.shell_helpers import _clean_display_text, render_escaped_bold_text, render_shell_snapshot
+from sections.shell_helpers import render_escaped_bold_text, render_shell_snapshot
 from utils import (
     credits_to_dollars,
     day_window_selectbox,
@@ -40,8 +40,11 @@ from utils import (
     sql_literal,
     upsert_actions,
 )
+from utils.display_safety import clean_display_text
 from utils.recommendation_intelligence import build_automation_readiness_board, harden_recommendation
 from utils.workflows import clean_operator_display_text, render_load_status, render_priority_dataframe, render_workflow_selector
+
+_clean_display_text = clean_display_text
 
 
 RECOMMENDATION_PANES = (

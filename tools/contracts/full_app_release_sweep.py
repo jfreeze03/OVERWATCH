@@ -1177,6 +1177,7 @@ def build_full_app_release_sweep(
         ("cortex_token_efficiency_live", "cortex_token_efficiency_live_gate_results"),
         ("snowflake_cli_live_validation", "snowflake_cli_live_gate_results"),
         ("snowflake_cli_temp_file_hygiene", "snowflake_cli_temp_file_hygiene_gate_results"),
+        ("setup_migration_live", "setup_migration_live_gate_results"),
     )
     gate_rows: list[dict[str, Any]] = []
     for area, key in gate_checks:
@@ -1255,6 +1256,7 @@ def build_full_app_release_sweep(
     credential_row = next((row for row in rows if row.get("area") == "security_credential"), {})
     snowflake_cli_gate = _gate(payloads, "snowflake_cli_live_gate_results")
     snowflake_temp_gate = _gate(payloads, "snowflake_cli_temp_file_hygiene_gate_results")
+    setup_migration_gate = _gate(payloads, "setup_migration_live_gate_results")
     cortex_live_gate = _gate(payloads, "cortex_token_efficiency_live_gate_results")
     first_paint_failure_count = sum(
         1
@@ -1313,6 +1315,9 @@ def build_full_app_release_sweep(
         "snowflake_cli_temp_sql_path_leak_count": _as_int(snowflake_cli_gate.get("snowflake_cli_temp_sql_path_leak_count")),
         "snowflake_cli_temp_file_hygiene_passed": bool(
             snowflake_cli_gate.get("temp_file_hygiene_passed", snowflake_temp_gate.get("passed"))
+        ),
+        "setup_migration_live_passed": bool(
+            snowflake_cli_gate.get("setup_migration_live_passed") or setup_migration_gate.get("passed")
         ),
         "temp_sql_file_leftover_count": _as_int(
             snowflake_cli_gate.get("temp_sql_file_leftover_count", snowflake_temp_gate.get("temp_sql_file_leftover_count"))
@@ -1374,6 +1379,7 @@ def evaluate_full_app_release_sweep_gate(payload: object) -> dict[str, Any]:
         "snowflake_cli_token_path_leak_count": _as_int(results.get("snowflake_cli_token_path_leak_count")),
         "snowflake_cli_temp_sql_path_leak_count": _as_int(results.get("snowflake_cli_temp_sql_path_leak_count")),
         "snowflake_cli_temp_file_hygiene_passed": bool(results.get("snowflake_cli_temp_file_hygiene_passed")),
+        "setup_migration_live_passed": bool(results.get("setup_migration_live_passed")),
         "temp_sql_file_leftover_count": _as_int(results.get("temp_sql_file_leftover_count")),
         "user_id_daily_leak_count": _as_int(results.get("user_id_daily_leak_count")),
         "credential_id_daily_leak_count": _as_int(results.get("credential_id_daily_leak_count")),
@@ -1421,6 +1427,7 @@ def write_full_app_release_sweep_artifacts(
                 "artifacts/launch_readiness/cortex_token_efficiency_live_gate_results.json",
                 "artifacts/launch_readiness/snowflake_cli_live_gate_results.json",
                 "artifacts/launch_readiness/snowflake_cli_temp_file_hygiene_gate_results.json",
+                "artifacts/launch_readiness/setup_migration_live_gate_results.json",
             ),
         )
     results, failures = build_full_app_release_sweep(payloads, root=root_path)

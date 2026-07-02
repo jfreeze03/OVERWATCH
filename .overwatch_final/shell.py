@@ -36,7 +36,7 @@ from navigation import (
     current_active_section,
     current_visible_sections,
     mark_section_rendered,
-    section_requires_connection,
+    section_connection_policy,
     set_active_section,
     should_show_section_transition,
 )
@@ -97,18 +97,22 @@ def _render_app_body() -> None:
 
     visible_sections = current_visible_sections()
     active_section = current_active_section(visible_sections)
-    needs_connection = section_requires_connection(active_section)
+    connection_policy = section_connection_policy(active_section)
     active_company = str(get_state(ACTIVE_COMPANY, DEFAULT_COMPANY) or DEFAULT_COMPANY)
     set_active_section(active_section)
 
     with trace(
         "shell:probe_snowflake_available",
         active_section=active_section,
-        detail={"idle_query_paused": idle_query_paused, "needs_connection": needs_connection},
+        detail={
+            "idle_query_paused": idle_query_paused,
+            "offline_capable": connection_policy.offline_capable,
+            "requires_connection": connection_policy.requires_connection,
+        },
     ):
         connection_available = (
             cached_snowflake_available(default=False)
-            if idle_query_paused or not needs_connection
+            if idle_query_paused or connection_policy.offline_capable
             else probe_snowflake_available()
         )
     with trace(
@@ -180,7 +184,7 @@ def _render_app_body() -> None:
                     render_section_body_marker(active_section)
                     render_admin_access_required(current_role)
                 mark_section_rendered(active_section, section_signature)
-            elif needs_connection and (
+            elif connection_policy.requires_connection and (
                 not connection_available or get_state(CONNECTION_UNAVAILABLE)
             ):
                 with fresh_section_container(section_slot):

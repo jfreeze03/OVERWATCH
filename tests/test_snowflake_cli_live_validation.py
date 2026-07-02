@@ -24,6 +24,8 @@ from tools.contracts.snowflake_cli_live_validation import (
     CLI_PACKET_VALUE_REL,
     CLI_COST_RECONCILIATION_REL,
     CLI_QUERY_BUDGET_REL,
+    CLI_SETUP_MIGRATION_GATE_REL,
+    CLI_SETUP_MIGRATION_REL,
     CLI_SETUP_REL,
     CLI_TEMP_FILE_HYGIENE_GATE_REL,
     CLI_TEMP_FILE_HYGIENE_REL,
@@ -35,6 +37,7 @@ from tools.contracts.snowflake_cli_live_validation import (
     run_snowflake_cli_live_validation,
     sanitize_text,
     write_snowflake_cli_live_validation_artifacts,
+    _rendered_formula_static_contract_only,
 )
 from tools.contracts.packet_availability_live_validation import (
     PACKET_AVAILABILITY_GATE_REL,
@@ -180,6 +183,18 @@ def _root_with_validation_sql() -> tempfile.TemporaryDirectory[str]:
     temp = tempfile.TemporaryDirectory()
     root = Path(temp.name)
     (root / "snowflake").mkdir(parents=True)
+    (root / "snowflake" / "OVERWATCH_MART_SETUP.sql").write_text(
+        """
+CREATE TABLE IF NOT EXISTS OVERWATCH_SCHEMA_MIGRATION (MIGRATION_VERSION VARCHAR);
+MERGE INTO OVERWATCH_SCHEMA_MIGRATION tgt USING (
+  SELECT '2026.06.13-executive-observability-mart' AS MIGRATION_VERSION
+) src ON tgt.MIGRATION_VERSION = src.MIGRATION_VERSION;
+MERGE INTO OVERWATCH_SCHEMA_MIGRATION tgt USING (
+  SELECT '2026.06.17-enterprise-operating-model' AS MIGRATION_VERSION
+) src ON tgt.MIGRATION_VERSION = src.MIGRATION_VERSION;
+""",
+        encoding="utf-8",
+    )
     (root / "snowflake" / "OVERWATCH_MART_VALIDATION.sql").write_text("-- validation placeholder\n", encoding="utf-8")
     rendered = {
         "source": "rendered_formula_results",
@@ -235,9 +250,9 @@ def _runner(
                     [
                         {
                             "ROW_JSON": {
-                                "procedure_name": "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEF",
+                                "procedure_name": "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST",
                                 "signature_count": 1,
-                                "supports_mode_boolean_signature": 1,
+                                "supports_zero_arg_signature": 1,
                             }
                         }
                     ]
@@ -246,6 +261,43 @@ def _runner(
             )
         if "QUERY_HISTORY" in joined:
             return subprocess.CompletedProcess(args, 0, _query_budget_stdout(), "")
+        if "INFORMATION_SCHEMA.TABLES" in joined and "OVERWATCH_SCHEMA_MIGRATION" in joined:
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                json.dumps(
+                    [
+                        {
+                            "ROW_JSON": {
+                                "migration_table_exists": True,
+                                "required_object_count": 3,
+                                "present_required_object_count": 3,
+                                "missing_required_object_count": 0,
+                            }
+                        }
+                    ]
+                ),
+                "",
+            )
+        if "FROM OVERWATCH_SCHEMA_MIGRATION" in joined or ".OVERWATCH_SCHEMA_MIGRATION" in joined:
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                json.dumps(
+                    [
+                        {
+                            "ROW_JSON": {
+                                "expected_migration_count": 2,
+                                "present_migration_count": 2,
+                                "missing_migration_count": 0,
+                                "latest_migration_version": "2026.06.17-enterprise-operating-model",
+                                "repo_source_file_count": 2,
+                            }
+                        }
+                    ]
+                ),
+                "",
+            )
         if "PACKET_AVAILABILITY_PROBE" in joined:
             return subprocess.CompletedProcess(args, 0, _availability_stdout(), "")
         if "MART_SECTION_COMMAND_BRIEF" in joined:
@@ -266,6 +318,30 @@ def _runner(
 
 
 class SnowflakeCliLiveValidationTests(unittest.TestCase):
+    def test_rendered_formula_static_detector_ignores_flat_fixture_context(self):
+        runtime_backed = {
+            "source": "rendered_formula_results",
+            "value_checks": [
+                {
+                    "packet_field": "ACCOUNT_BILLED_COST_USD",
+                    "flat_value_source": "artifacts/formula_authority/flat_packet_formula_results.json:fixture_expected_value",
+                    "rendered_value_source": "artifacts/full_app_validation/rendered_fragments.json:producer_runtime_render",
+                }
+            ],
+        }
+        static_rendered = {
+            "source": "rendered_formula_results",
+            "value_checks": [
+                {
+                    "packet_field": "ACCOUNT_BILLED_COST_USD",
+                    "rendered_value_source": "artifacts/full_app_validation/rendered_formula_results.json:fixture_expected_value",
+                }
+            ],
+        }
+
+        self.assertFalse(_rendered_formula_static_contract_only(runtime_backed))
+        self.assertTrue(_rendered_formula_static_contract_only(static_rendered))
+
     def test_internal_fixture_without_connection_writes_profile_aware_skipped_artifacts(self):
         with _root_with_validation_sql() as temp:
             root = Path(temp)
@@ -281,6 +357,8 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
             self.assertFalse(artifacts[CLI_LAUNCH_GATE_REL]["snowflake_cli_live_executed"])
             self.assertFalse(artifacts[CLI_LAUNCH_GATE_REL]["snowflake_cli_live_passed"])
             self.assertTrue((root / CLI_CONNECTION_REL).exists())
+            self.assertTrue((root / CLI_SETUP_MIGRATION_REL).exists())
+            self.assertTrue((root / CLI_SETUP_MIGRATION_GATE_REL).exists())
             self.assertTrue((root / CLI_QUERY_BUDGET_REL).exists())
             self.assertTrue((root / CLI_MANIFEST_RECONCILIATION_REL).exists())
 
@@ -497,6 +575,8 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
             )
 
         self.assertTrue(artifacts[CLI_SETUP_REL]["passed"], artifacts[CLI_SETUP_REL])
+        self.assertTrue(artifacts[CLI_SETUP_MIGRATION_REL]["passed"], artifacts[CLI_SETUP_MIGRATION_REL])
+        self.assertTrue(artifacts[CLI_SETUP_MIGRATION_GATE_REL]["passed"], artifacts[CLI_SETUP_MIGRATION_GATE_REL])
         self.assertTrue(artifacts[SNOWFLAKE_CLI_PACKET_AVAILABILITY_REL]["passed"], artifacts[SNOWFLAKE_CLI_PACKET_AVAILABILITY_REL])
         self.assertTrue(artifacts[CLI_PACKET_VALUE_REL]["passed"], artifacts[CLI_PACKET_VALUE_REL])
         self.assertTrue(artifacts[CLI_FORMULA_VALUE_REL]["passed"], artifacts[CLI_FORMULA_VALUE_REL])
@@ -518,6 +598,7 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
         self.assertFalse(artifacts[CLI_LAUNCH_GATE_REL]["snowflake_cli_live_skipped"], artifacts[CLI_LAUNCH_GATE_REL])
         self.assertTrue(artifacts[PACKET_AVAILABILITY_GATE_REL]["passed"], artifacts[PACKET_AVAILABILITY_GATE_REL])
         self.assertTrue(artifacts[CLI_LAUNCH_GATE_REL]["packet_availability_passed"], artifacts[CLI_LAUNCH_GATE_REL])
+        self.assertTrue(artifacts[CLI_LAUNCH_GATE_REL]["setup_migration_live_passed"], artifacts[CLI_LAUNCH_GATE_REL])
         self.assertTrue(artifacts[CLI_LAUNCH_GATE_REL]["cost_reconciliation_passed"], artifacts[CLI_LAUNCH_GATE_REL])
         self.assertFalse(json.dumps(artifacts).count("SELECT *"))
 
@@ -550,6 +631,21 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
 
         self.assertIn("COALESCE(IS_EXACT_SCOPE, FALSE) DESC", sql)
         self.assertNotIn("AND COALESCE(IS_EXACT_SCOPE, TRUE)", sql)
+
+    def test_nested_json_output_from_multistatement_temp_file_is_flattened(self):
+        from tools.contracts import snowflake_cli_live_validation as module
+
+        rows = module._parse_json_rows(
+            json.dumps(
+                [
+                    [{"status": "Statement executed successfully."}],
+                    [{"ROW_JSON": {"section": "Executive Landing", "boundary": "first_paint_packet"}}],
+                ]
+            )
+        )
+
+        self.assertEqual(rows[-1]["ROW_JSON"]["section"], "Executive Landing")
+        self.assertTrue(any(row.get("status") == "Statement executed successfully." for row in rows))
 
     def test_null_packet_value_with_source_rows_fails_formula_validation(self):
         with _root_with_validation_sql() as temp:

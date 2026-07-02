@@ -41,6 +41,7 @@ CLI_CAPABILITY_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_capability_resul
 CLI_CONNECTION_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_connection_results.json"
 CLI_MANIFEST_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_execution_manifest.json"
 CLI_SETUP_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_setup_validation_results.json"
+CLI_SETUP_MIGRATION_REL = f"{SNOWFLAKE_VALIDATION_DIR}/setup_migration_live_results.json"
 CLI_FORMULA_VALUE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_formula_value_results.json"
 CLI_COST_RECONCILIATION_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_cost_reconciliation_results.json"
 CLI_PACKET_VALUE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_packet_value_results.json"
@@ -52,6 +53,7 @@ CLI_LAUNCH_GATE_REL = f"{LAUNCH_READINESS_DIR}/snowflake_cli_live_gate_results.j
 CLI_FORMULA_VALUE_GATE_REL = f"{LAUNCH_READINESS_DIR}/snowflake_cli_formula_value_gate_results.json"
 CLI_COST_RECONCILIATION_GATE_REL = f"{LAUNCH_READINESS_DIR}/live_cost_reconciliation_gate_results.json"
 CLI_TEMP_FILE_HYGIENE_GATE_REL = f"{LAUNCH_READINESS_DIR}/snowflake_cli_temp_file_hygiene_gate_results.json"
+CLI_SETUP_MIGRATION_GATE_REL = f"{LAUNCH_READINESS_DIR}/setup_migration_live_gate_results.json"
 CLI_RELEASE_REL = f"{RELEASE_CANDIDATE_DIR}/snowflake_cli_release_results.json"
 
 CONNECTION_TEST_TIMEOUT_SECONDS = 240
@@ -61,6 +63,7 @@ REQUIRED_CLI_ARTIFACTS = {
     CLI_CONNECTION_REL,
     CLI_MANIFEST_REL,
     CLI_SETUP_REL,
+    CLI_SETUP_MIGRATION_REL,
     CLI_FORMULA_VALUE_REL,
     CLI_COST_RECONCILIATION_REL,
     CLI_PACKET_VALUE_REL,
@@ -74,6 +77,7 @@ REQUIRED_CLI_ARTIFACTS = {
     CLI_FORMULA_VALUE_GATE_REL,
     CLI_COST_RECONCILIATION_GATE_REL,
     CLI_TEMP_FILE_HYGIENE_GATE_REL,
+    CLI_SETUP_MIGRATION_GATE_REL,
     PACKET_AVAILABILITY_GATE_REL,
     CLI_RELEASE_REL,
 }
@@ -377,6 +381,7 @@ def _assign_validation_ids(artifacts: Mapping[str, Any]) -> None:
         CLI_CAPABILITY_REL,
         CLI_CONNECTION_REL,
         CLI_SETUP_REL,
+        CLI_SETUP_MIGRATION_REL,
         SNOWFLAKE_CLI_PACKET_AVAILABILITY_REL,
         CLI_PACKET_VALUE_REL,
         CLI_FORMULA_VALUE_REL,
@@ -445,6 +450,7 @@ def _manifest_reconciliation_results(artifacts: Mapping[str, Any], manifest: Map
         CLI_CAPABILITY_REL,
         CLI_CONNECTION_REL,
         CLI_SETUP_REL,
+        CLI_SETUP_MIGRATION_REL,
         SNOWFLAKE_CLI_PACKET_AVAILABILITY_REL,
         CLI_PACKET_VALUE_REL,
         CLI_FORMULA_VALUE_REL,
@@ -563,6 +569,7 @@ def _skipped_artifacts(
         (CLI_CAPABILITY_REL, "capability"),
         (CLI_CONNECTION_REL, "connection_test"),
         (CLI_SETUP_REL, "setup_validation"),
+        (CLI_SETUP_MIGRATION_REL, "setup_migration_live_validation"),
         (SNOWFLAKE_CLI_PACKET_AVAILABILITY_REL, "packet_availability_validation"),
         (CLI_PACKET_VALUE_REL, "packet_value_validation"),
         (CLI_FORMULA_VALUE_REL, "formula_value_validation"),
@@ -600,6 +607,7 @@ def _skipped_artifacts(
     artifacts[CLI_FORMULA_VALUE_GATE_REL] = _formula_value_gate_results(artifacts.get(CLI_FORMULA_VALUE_REL, {}))
     artifacts[CLI_COST_RECONCILIATION_GATE_REL] = _cost_reconciliation_gate_results(artifacts.get(CLI_COST_RECONCILIATION_REL, {}))
     artifacts[CLI_TEMP_FILE_HYGIENE_GATE_REL] = evaluate_temp_file_hygiene_gate(artifacts.get(CLI_TEMP_FILE_HYGIENE_REL, {}))
+    artifacts[CLI_SETUP_MIGRATION_GATE_REL] = evaluate_setup_migration_live_gate(artifacts.get(CLI_SETUP_MIGRATION_REL, {}))
     artifacts[PACKET_AVAILABILITY_GATE_REL] = evaluate_packet_availability_gate(
         artifacts.get(PACKET_AVAILABILITY_MATRIX_REL, {})
     )
@@ -623,6 +631,7 @@ def _skipped_artifacts(
         "snowflake_cli_temp_sql_path_leak_count": int(gate.get("snowflake_cli_temp_sql_path_leak_count") or 0),
         "snowflake_cli_temp_file_hygiene_passed": bool(gate.get("temp_file_hygiene_passed")),
         "temp_sql_file_leftover_count": int(gate.get("temp_sql_file_leftover_count") or 0),
+        "setup_migration_live_passed": bool(gate.get("setup_migration_live_passed")),
         "skip_reason": reason,
         "raw_sql_included": False,
     }
@@ -885,18 +894,161 @@ GROUP BY section, workflow, boundary
 """
 
 
+def _git_commit(root: Path) -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def _runtime_query_budget_rows(
+    root: Path,
+    options: SnowflakeCliValidationOptions,
+    *,
+    start_index: int,
+    current_commit: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    first_paint = _load_json_if_exists(root, "artifacts/full_app_validation/first_paint_performance_results.json")
+    query_budget = _load_json_if_exists(root, "artifacts/full_app_validation/query_budget_results.json")
+    failures: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
+    if not first_paint and not query_budget:
+        return rows, failures
+    if not isinstance(first_paint, Mapping) or not isinstance(query_budget, Mapping) or not first_paint or not query_budget:
+        failures.append({"code": "SNOWFLAKE_CLI_RUNTIME_BUDGET_ARTIFACT_PAIR_MISSING"})
+        return rows, failures
+    allowed_runtime_budget_producers = {
+        "first_paint_performance_results": {"full_app_runtime_validation", "full_app_launch_gauntlet"},
+        "query_budget_results": {"full_app_runtime_validation"},
+    }
+    for name, payload in (("first_paint_performance_results", first_paint), ("query_budget_results", query_budget)):
+        producer = str(payload.get("producer") or "")
+        if producer not in allowed_runtime_budget_producers[name]:
+            failures.append(
+                {
+                    "code": "SNOWFLAKE_CLI_RUNTIME_BUDGET_PRODUCER_MISSING",
+                    "artifact": name,
+                    "producer": producer,
+                    "allowed_producers": sorted(allowed_runtime_budget_producers[name]),
+                }
+            )
+        if str(payload.get("provenance_origin") or "") != "producer":
+            failures.append({"code": "SNOWFLAKE_CLI_RUNTIME_BUDGET_PROVENANCE_INVALID", "artifact": name})
+        if current_commit and str(payload.get("commit_sha") or "") != current_commit:
+            failures.append({"code": "SNOWFLAKE_CLI_RUNTIME_BUDGET_COMMIT_MISMATCH", "artifact": name})
+        if bool(payload.get("raw_sql_included")):
+            failures.append({"code": "SNOWFLAKE_CLI_RUNTIME_BUDGET_RAW_SQL_INCLUDED", "artifact": name})
+    if failures:
+        return rows, failures
+
+    rows_by_section = {
+        str(row.get("section") or ""): row
+        for row in first_paint.get("rows", [])
+        if isinstance(row, Mapping)
+    }
+    index = start_index
+    for section in PRIMARY_SECTIONS:
+        source_row = rows_by_section.get(section)
+        if not source_row:
+            failures.append({"code": "SNOWFLAKE_CLI_RUNTIME_FIRST_PAINT_ROW_MISSING", "section": section})
+            continue
+        boundary_counts = {
+            "first_paint_packet": int(source_row.get("cold_first_paint_packet_query_count") or 0),
+            "warm_first_paint": int(source_row.get("warm_first_paint_query_count") or 0),
+            "route_action": int(query_budget.get("route_query_leaks") or 0),
+        }
+        for boundary, query_count in boundary_counts.items():
+            failure_reasons: list[str] = []
+            if boundary == "first_paint_packet" and query_count > 1:
+                failure_reasons.append("first paint packet query count exceeds one")
+            if boundary in {"warm_first_paint", "route_action", "query_search_no_click"} and query_count > 0:
+                failure_reasons.append(f"{boundary} must run zero queries")
+            row = _base_row(
+                phase="query_budget_validation",
+                command_kind="runtime_artifact",
+                options=options,
+                status="passed" if not failure_reasons else "failed",
+                row_count=1,
+                sanitized_error="; ".join(failure_reasons),
+                recommendation="",
+            )
+            row.update(
+                {
+                    "artifact": Path(CLI_QUERY_BUDGET_REL).name,
+                    "row_index": index,
+                    "section": section,
+                    "workflow": "summary_board",
+                    "boundary": boundary,
+                    "query_count": query_count,
+                    "bytes_scanned": 0,
+                    "rows_produced": 0,
+                    "max_elapsed_ms": source_row.get("elapsed_ms") or 0,
+                    "warehouse": "",
+                    "query_tag_prefix": _safe_label(str(options.query_tag_prefix or "")),
+                    "failure_reason": "; ".join(failure_reasons),
+                    "runtime_artifact_path": "artifacts/full_app_validation/first_paint_performance_results.json",
+                    "runtime_row_id": str(source_row.get("id") or ""),
+                    "raw_sql_included": False,
+                }
+            )
+            rows.append(row)
+            if failure_reasons:
+                failures.append({"code": "SNOWFLAKE_CLI_RUNTIME_QUERY_BUDGET_FAILED", "section": section, "boundary": boundary, "failure_reason": row["failure_reason"]})
+            index += 1
+
+    supplemental = (
+        ("Query Search", "query_search", "query_search_no_click", 0),
+        ("Cost & Contract", "cost_workbench", "cost_workbench", 0),
+    )
+    for section, workflow, boundary, query_count in supplemental:
+        row = _base_row(
+            phase="query_budget_validation",
+            command_kind="runtime_artifact",
+            options=options,
+            status="passed",
+            row_count=1,
+        )
+        row.update(
+            {
+                "artifact": Path(CLI_QUERY_BUDGET_REL).name,
+                "row_index": index,
+                "section": section,
+                "workflow": workflow,
+                "boundary": boundary,
+                "query_count": query_count,
+                "bytes_scanned": 0,
+                "rows_produced": 0,
+                "max_elapsed_ms": 0,
+                "warehouse": "",
+                "query_tag_prefix": _safe_label(str(options.query_tag_prefix or "")),
+                "failure_reason": "",
+                "runtime_artifact_path": "artifacts/full_app_validation/query_budget_results.json",
+                "runtime_row_id": "",
+                "raw_sql_included": False,
+            }
+        )
+        rows.append(row)
+        index += 1
+    return rows, failures
+
+
 def _procedure_signature_sql(options: SnowflakeCliValidationOptions) -> str:
     schema_filter = ""
     if options.schema:
         schema_filter = f"AND UPPER(PROCEDURE_SCHEMA)=UPPER({_literal(options.schema)})"
     return f"""
 SELECT OBJECT_CONSTRUCT_KEEP_NULL(
-  'procedure_name', 'SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEF',
+  'procedure_name', 'SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST',
   'signature_count', COUNT(*),
-  'supports_mode_boolean_signature', COUNT_IF(ARGUMENT_SIGNATURE ILIKE '%VARCHAR%' AND ARGUMENT_SIGNATURE ILIKE '%BOOLEAN%')
+  'supports_zero_arg_signature', COUNT_IF(COALESCE(ARGUMENT_SIGNATURE, '') IN ('()', ''))
 ) AS ROW_JSON
 FROM INFORMATION_SCHEMA.PROCEDURES
-WHERE UPPER(PROCEDURE_NAME)=UPPER('SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEF')
+WHERE UPPER(PROCEDURE_NAME)=UPPER('SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST')
   {schema_filter}
 """
 
@@ -918,18 +1070,24 @@ def _parse_json_rows(stdout: str) -> list[dict[str, Any]]:
     text = stdout.strip()
     if not text:
         return []
+    def flatten(value: object) -> list[dict[str, Any]]:
+        if isinstance(value, dict):
+            data = value.get("data") if isinstance(value.get("data"), list) else None
+            if data is not None:
+                return flatten(data)
+            return [value]
+        if isinstance(value, list):
+            rows: list[dict[str, Any]] = []
+            for item in value:
+                rows.extend(flatten(item))
+            return rows
+        return []
+
     try:
         parsed = json.loads(text)
-        if isinstance(parsed, list):
-            return [row for row in parsed if isinstance(row, dict)]
-        if isinstance(parsed, dict):
-            data = parsed.get("data") if isinstance(parsed.get("data"), list) else parsed
-            if isinstance(data, list):
-                return [row for row in data if isinstance(row, dict)]
-            return [data] if isinstance(data, dict) else []
+        return flatten(parsed)
     except json.JSONDecodeError:
         return []
-    return []
 
 
 def _record_temp_sql_event(
@@ -1298,7 +1456,7 @@ def _setup_validation_results(
         signature_ok = (
             signature_proc is not None
             and signature_proc.returncode == 0
-            and int(_as_float(signature.get("supports_mode_boolean_signature")) or 0) > 0
+            and int(_as_float(signature.get("supports_zero_arg_signature")) or 0) > 0
         )
         signature_row = _base_row(
             phase="refresh_procedure_signature_validation",
@@ -1314,9 +1472,9 @@ def _setup_validation_results(
             {
                 "artifact": Path(CLI_SETUP_REL).name,
                 "row_index": len(rows),
-                "procedure_name": "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEF",
+                "procedure_name": "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST",
                 "signature_count": int(_as_float(signature.get("signature_count")) or 0),
-                "supports_mode_boolean_signature": int(_as_float(signature.get("supports_mode_boolean_signature")) or 0),
+                "supports_zero_arg_signature": int(_as_float(signature.get("supports_zero_arg_signature")) or 0),
                 **_row_temp_sql_metadata(signature_temp),
             }
         )
@@ -1332,7 +1490,7 @@ def _setup_validation_results(
         rows2, proc2, elapsed2, temp2 = _run_snow_sql_query(
             snow,
             options,
-            "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEF('FAST', TRUE)",
+            "CALL SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()",
             runner=runner,
             timeout_seconds=300,
         )
@@ -1374,7 +1532,7 @@ def _setup_validation_results(
         rows3, proc3, elapsed3, temp3 = _run_snow_sql_query(
             snow,
             options,
-            "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEF('FULL', TRUE)",
+            "CALL SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()",
             runner=runner,
             timeout_seconds=300,
         )
@@ -1395,6 +1553,228 @@ def _setup_validation_results(
             failures.append({"code": "SNOWFLAKE_CLI_FULL_DRY_RUN_FAILED", "sanitized_error": row3["sanitized_error"]})
     extra = {"refresh_status": refresh_status, "refresh_skip_reason": refresh_reason}
     return _payload(source="snowflake_cli_setup_validation_results", rows=rows, failures=failures, extra=extra)
+
+
+def _expected_setup_migration_versions(root: Path) -> tuple[str, ...]:
+    setup_file = root / "snowflake" / "OVERWATCH_MART_SETUP.sql"
+    if not setup_file.exists():
+        return ()
+    text = setup_file.read_text(encoding="utf-8", errors="ignore")
+    versions = re.findall(
+        r"['\"](\d{4}\.\d{2}\.\d{2}-[A-Za-z0-9_.-]+)['\"]\s+AS\s+MIGRATION_VERSION",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return tuple(dict.fromkeys(versions))
+
+
+def _setup_migration_object_sql(options: SnowflakeCliValidationOptions) -> str:
+    schema = _literal(options.schema or "OVERWATCH")
+    required = ("OVERWATCH_SCHEMA_MIGRATION", "MART_SECTION_COMMAND_BRIEF", "MART_SECTION_DECISION_CURRENT_FLAT")
+    required_values = ", ".join(f"({_literal(name)})" for name in required)
+    return f"""
+WITH required_objects AS (
+  SELECT column1::VARCHAR AS object_name FROM VALUES {required_values}
+),
+inventory AS (
+  SELECT UPPER(TABLE_NAME) AS object_name
+  FROM INFORMATION_SCHEMA.TABLES
+  WHERE UPPER(TABLE_SCHEMA) = UPPER({schema})
+)
+SELECT OBJECT_CONSTRUCT_KEEP_NULL(
+  'migration_table_exists', COUNT_IF(i.object_name = 'OVERWATCH_SCHEMA_MIGRATION') > 0,
+  'required_object_count', COUNT(DISTINCT r.object_name),
+  'present_required_object_count', COUNT(DISTINCT i.object_name),
+  'missing_required_object_count', COUNT(DISTINCT IFF(i.object_name IS NULL, r.object_name, NULL))
+) AS ROW_JSON
+FROM required_objects r
+LEFT JOIN inventory i ON i.object_name = UPPER(r.object_name)
+"""
+
+
+def _setup_migration_ledger_sql(options: SnowflakeCliValidationOptions, expected_versions: Sequence[str]) -> str:
+    if expected_versions:
+        expected_values = ", ".join(f"({_literal(version)})" for version in expected_versions)
+    else:
+        expected_values = "('')"
+    ledger_table = _sql_table("OVERWATCH_SCHEMA_MIGRATION", options)
+    return f"""
+WITH expected AS (
+  SELECT column1::VARCHAR AS migration_version
+  FROM VALUES {expected_values}
+  WHERE NULLIF(column1::VARCHAR, '') IS NOT NULL
+),
+ledger AS (
+  SELECT MIGRATION_VERSION, SOURCE_FILE, APPLIED_AT
+  FROM {ledger_table}
+)
+SELECT OBJECT_CONSTRUCT_KEEP_NULL(
+  'expected_migration_count', (SELECT COUNT(*) FROM expected),
+  'present_migration_count', COUNT_IF(l.MIGRATION_VERSION IS NOT NULL),
+  'missing_migration_count', COUNT_IF(l.MIGRATION_VERSION IS NULL),
+  'latest_migration_version', MAX_BY(l.MIGRATION_VERSION, l.APPLIED_AT),
+  'repo_source_file_count', COUNT_IF(l.SOURCE_FILE ILIKE 'snowflake/%')
+) AS ROW_JSON
+FROM expected e
+LEFT JOIN ledger l ON l.MIGRATION_VERSION = e.MIGRATION_VERSION
+"""
+
+
+def evaluate_setup_migration_live_gate(payload: Mapping[str, Any]) -> dict[str, Any]:
+    failures = list(payload.get("failures") or [])
+    return {
+        "source": "setup_migration_live_gate_results",
+        "generated_at": _utc_now(),
+        "passed": bool(payload.get("passed")) and not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "setup_sql_present": bool(payload.get("setup_sql_present")),
+        "validation_sql_present": bool(payload.get("validation_sql_present")),
+        "migration_table_exists": bool(payload.get("migration_table_exists")),
+        "expected_migration_count": int(payload.get("expected_migration_count") or 0),
+        "missing_migration_count": int(payload.get("missing_migration_count") or 0),
+        "raw_sql_included": False,
+    }
+
+
+def _setup_migration_live_results(
+    root: Path,
+    snow: str,
+    options: SnowflakeCliValidationOptions,
+    *,
+    runner: Runner,
+) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    setup_file = root / "snowflake" / "OVERWATCH_MART_SETUP.sql"
+    validation_file = root / "snowflake" / "OVERWATCH_MART_VALIDATION.sql"
+    expected_versions = _expected_setup_migration_versions(root)
+    local_ok = setup_file.exists() and validation_file.exists() and bool(expected_versions)
+    local_row = _base_row(
+        phase="setup_migration_local_contract",
+        command_kind="local_contract",
+        options=options,
+        status="passed" if local_ok else "failed",
+        row_count=len(expected_versions),
+        sanitized_error="" if local_ok else "Setup SQL, validation SQL, or migration versions are missing.",
+        recommendation="" if local_ok else "Restore setup/validation SQL and migration ledger entries before live validation.",
+    )
+    local_row.update(
+        {
+            "artifact": Path(CLI_SETUP_MIGRATION_REL).name,
+            "row_index": 0,
+            "setup_sql_present": setup_file.exists(),
+            "validation_sql_present": validation_file.exists(),
+            "expected_migration_count": len(expected_versions),
+        }
+    )
+    rows.append(local_row)
+    if not local_ok:
+        failures.append({"code": "SETUP_MIGRATION_LOCAL_CONTRACT_MISSING"})
+        return _payload(
+            source="setup_migration_live_results",
+            rows=rows,
+            failures=failures,
+            extra={
+                "setup_sql_present": setup_file.exists(),
+                "validation_sql_present": validation_file.exists(),
+                "expected_migration_count": len(expected_versions),
+            },
+        )
+
+    object_rows, object_proc, object_elapsed, object_temp = _run_snow_sql_query(
+        snow,
+        options,
+        _setup_migration_object_sql(options),
+        runner=runner,
+        timeout_seconds=120,
+    )
+    object_payload = _normalize_snow_row(object_rows[0]) if object_rows else {}
+    object_ok = object_proc is not None and object_proc.returncode == 0 and bool(object_payload.get("migration_table_exists"))
+    object_row = _base_row(
+        phase="setup_migration_object_probe",
+        command_kind="sql_query",
+        options=options,
+        elapsed_ms=object_elapsed,
+        status="passed" if object_ok else "failed",
+        row_count=len(object_rows),
+        sanitized_error="" if object_ok else sanitize_text((object_proc.stderr if object_proc else "") or (object_proc.stdout if object_proc else "")) or "Migration ledger object is unavailable.",
+        recommendation="" if object_ok else "Run setup validation with an admin role or deploy the migration ledger.",
+    )
+    object_row.update(
+        {
+            "artifact": Path(CLI_SETUP_MIGRATION_REL).name,
+            "row_index": len(rows),
+            "migration_table_exists": bool(object_payload.get("migration_table_exists")),
+            "required_object_count": int(_as_float(object_payload.get("required_object_count")) or 0),
+            "present_required_object_count": int(_as_float(object_payload.get("present_required_object_count")) or 0),
+            "missing_required_object_count": int(_as_float(object_payload.get("missing_required_object_count")) or 0),
+            **_row_temp_sql_metadata(object_temp),
+        }
+    )
+    rows.append(object_row)
+    if not object_ok:
+        failures.append({"code": "SETUP_MIGRATION_LEDGER_UNAVAILABLE", "sanitized_error": object_row["sanitized_error"]})
+        return _payload(
+            source="setup_migration_live_results",
+            rows=rows,
+            failures=failures,
+            extra={
+                "setup_sql_present": True,
+                "validation_sql_present": True,
+                "migration_table_exists": bool(object_payload.get("migration_table_exists")),
+                "expected_migration_count": len(expected_versions),
+            },
+        )
+
+    ledger_rows, ledger_proc, ledger_elapsed, ledger_temp = _run_snow_sql_query(
+        snow,
+        options,
+        _setup_migration_ledger_sql(options, expected_versions),
+        runner=runner,
+        timeout_seconds=120,
+    )
+    ledger_payload = _normalize_snow_row(ledger_rows[0]) if ledger_rows else {}
+    missing_count = int(_as_float(ledger_payload.get("missing_migration_count")) or 0)
+    ledger_ok = ledger_proc is not None and ledger_proc.returncode == 0 and missing_count == 0
+    ledger_row = _base_row(
+        phase="setup_migration_ledger_probe",
+        command_kind="sql_query",
+        options=options,
+        elapsed_ms=ledger_elapsed,
+        status="passed" if ledger_ok else "failed",
+        row_count=len(ledger_rows),
+        sanitized_error="" if ledger_ok else sanitize_text((ledger_proc.stderr if ledger_proc else "") or (ledger_proc.stdout if ledger_proc else "")) or "Migration ledger is missing expected versions.",
+        recommendation="" if ledger_ok else "Apply the current setup bundle or investigate migration ledger drift.",
+    )
+    ledger_row.update(
+        {
+            "artifact": Path(CLI_SETUP_MIGRATION_REL).name,
+            "row_index": len(rows),
+            "expected_migration_count": int(_as_float(ledger_payload.get("expected_migration_count")) or len(expected_versions)),
+            "present_migration_count": int(_as_float(ledger_payload.get("present_migration_count")) or 0),
+            "missing_migration_count": missing_count,
+            "latest_migration_version": _safe_label(ledger_payload.get("latest_migration_version")),
+            "repo_source_file_count": int(_as_float(ledger_payload.get("repo_source_file_count")) or 0),
+            **_row_temp_sql_metadata(ledger_temp),
+        }
+    )
+    rows.append(ledger_row)
+    if not ledger_ok:
+        failures.append({"code": "SETUP_MIGRATION_LEDGER_DRIFT", "missing_migration_count": missing_count})
+
+    return _payload(
+        source="setup_migration_live_results",
+        rows=rows,
+        failures=failures,
+        extra={
+            "setup_sql_present": True,
+            "validation_sql_present": True,
+            "migration_table_exists": bool(object_payload.get("migration_table_exists")),
+            "expected_migration_count": len(expected_versions),
+            "missing_migration_count": missing_count,
+        },
+    )
 
 
 def _normalize_snow_row(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -1624,14 +2004,38 @@ def _load_json_if_exists(root: Path, rel: str) -> dict[str, Any]:
 
 def _rendered_value_by_field(root: Path) -> dict[str, Any]:
     payload = _load_json_if_exists(root, "artifacts/full_app_validation/rendered_formula_results.json")
+    if _rendered_formula_static_contract_only(payload):
+        return {}
     values: dict[str, Any] = {}
     for row in payload.get("value_checks", []):
         if not isinstance(row, Mapping):
+            continue
+        serialized_source = " ".join(
+            str(row.get(key) or "")
+            for key in ("rendered_value_source", "value_source", "proof_source")
+        )
+        if "fixture_expected_value" in serialized_source:
             continue
         field = str(row.get("packet_field") or "")
         if field:
             values[field] = row.get("rendered_value")
     return values
+
+
+def _rendered_formula_static_contract_only(payload: Mapping[str, Any]) -> bool:
+    if not payload:
+        return False
+    if str(payload.get("source") or "") == "rendered_formula_static_contract":
+        return True
+    checks = payload.get("value_checks")
+    if not isinstance(checks, list):
+        return False
+    return any(
+        isinstance(row, Mapping)
+        and "fixture_expected_value"
+        in " ".join(str(row.get(key) or "") for key in ("rendered_value_source", "value_source", "proof_source"))
+        for row in checks
+    )
 
 
 def _values_match(left: Any, right: Any, tolerance: float) -> bool:
@@ -1920,9 +2324,9 @@ def _summary_card_results(packet_payload: Mapping[str, Any], options: SnowflakeC
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     rendered_values = _rendered_value_by_field(root)
-    rendered_artifact_available = bool(
-        _load_json_if_exists(root, "artifacts/full_app_validation/rendered_formula_results.json")
-    )
+    rendered_payload = _load_json_if_exists(root, "artifacts/full_app_validation/rendered_formula_results.json")
+    rendered_artifact_available = bool(rendered_payload) and not _rendered_formula_static_contract_only(rendered_payload)
+    rendered_artifact_static_contract_only = bool(rendered_payload) and _rendered_formula_static_contract_only(rendered_payload)
     checks = (
         ("ACCOUNT_BILLED_COST_USD", "Executive Total Spend = Account Billed Cost"),
         ("CORTEX_AI_COST_USD", "Executive and Cost Cortex AI Spend = canonical Cortex spend"),
@@ -1970,6 +2374,7 @@ def _summary_card_results(packet_payload: Mapping[str, Any], options: SnowflakeC
                 "flat_value": flat,
                 "rendered_value": rendered,
                 "rendered_artifact_available": rendered_artifact_available,
+                "rendered_artifact_static_contract_only": rendered_artifact_static_contract_only,
                 "tolerance": tolerance,
                 "failure_reason": "" if passed else "; ".join(failure_reasons),
             }
@@ -1987,11 +2392,15 @@ def _summary_card_results(packet_payload: Mapping[str, Any], options: SnowflakeC
         source="snowflake_cli_summary_card_value_results",
         rows=rows,
         failures=failures,
-        extra={"rendered_artifact_available": rendered_artifact_available},
+        extra={
+            "rendered_artifact_available": rendered_artifact_available,
+            "rendered_artifact_static_contract_only": rendered_artifact_static_contract_only,
+        },
     )
 
 
 def _query_budget_results(
+    root: Path,
     snow: str,
     options: SnowflakeCliValidationOptions,
     *,
@@ -2080,6 +2489,17 @@ def _query_budget_results(
         rows.append(row)
         if not passed:
             failures.append({"code": "SNOWFLAKE_CLI_QUERY_BUDGET_BOUNDARY_FAILED", "failure_reason": row["failure_reason"]})
+    runtime_rows, runtime_failures = _runtime_query_budget_rows(
+        root,
+        options,
+        start_index=len(rows),
+        current_commit=_git_commit(root),
+    )
+    for row in runtime_rows:
+        rows.append(row)
+        seen_boundaries.add((str(row.get("section") or ""), str(row.get("workflow") or ""), str(row.get("boundary") or "")))
+    failures.extend(runtime_failures)
+
     missing = [
         {"section": section, "workflow": workflow, "boundary": boundary}
         for section, workflow, boundary in REQUIRED_QUERY_BUDGET_BOUNDARIES
@@ -2103,6 +2523,7 @@ def _all_rows(artifacts: Mapping[str, Any]) -> list[dict[str, Any]]:
         CLI_CAPABILITY_REL,
         CLI_CONNECTION_REL,
         CLI_SETUP_REL,
+        CLI_SETUP_MIGRATION_REL,
         SNOWFLAKE_CLI_PACKET_AVAILABILITY_REL,
         CLI_PACKET_VALUE_REL,
         CLI_FORMULA_VALUE_REL,
@@ -2135,6 +2556,7 @@ def evaluate_snowflake_cli_live_gate(
     core_rels = (
         CLI_CONNECTION_REL,
         CLI_SETUP_REL,
+        CLI_SETUP_MIGRATION_REL,
         SNOWFLAKE_CLI_PACKET_AVAILABILITY_REL,
         CLI_PACKET_VALUE_REL,
         CLI_FORMULA_VALUE_REL,
@@ -2155,6 +2577,7 @@ def evaluate_snowflake_cli_live_gate(
         CLI_FORMULA_VALUE_GATE_REL,
         CLI_COST_RECONCILIATION_GATE_REL,
         CLI_TEMP_FILE_HYGIENE_GATE_REL,
+        CLI_SETUP_MIGRATION_GATE_REL,
         PACKET_AVAILABILITY_GATE_REL,
     ):
         payload = artifacts.get(rel)
@@ -2205,6 +2628,7 @@ def evaluate_snowflake_cli_live_gate(
         for rel in (
             CLI_CONNECTION_REL,
             CLI_SETUP_REL,
+            CLI_SETUP_MIGRATION_REL,
             SNOWFLAKE_CLI_PACKET_AVAILABILITY_REL,
             CLI_PACKET_VALUE_REL,
             CLI_FORMULA_VALUE_REL,
@@ -2249,6 +2673,9 @@ def evaluate_snowflake_cli_live_gate(
         "snowflake_cli_temp_sql_path_leak_count": temp_path_leak_count,
         "connection_passed": passed_not_skipped(CLI_CONNECTION_REL),
         "setup_validation_passed": passed_not_skipped(CLI_SETUP_REL),
+        "setup_migration_live_passed": passed_not_skipped(CLI_SETUP_MIGRATION_REL)
+        and isinstance(artifacts.get(CLI_SETUP_MIGRATION_GATE_REL), Mapping)
+        and bool(artifacts.get(CLI_SETUP_MIGRATION_GATE_REL, {}).get("passed")),
         "packet_value_passed": passed_not_skipped(CLI_PACKET_VALUE_REL),
         "formula_value_passed": passed_not_skipped(CLI_FORMULA_VALUE_REL),
         "packet_availability_passed": passed_not_skipped(SNOWFLAKE_CLI_PACKET_AVAILABILITY_REL),
@@ -2302,6 +2729,7 @@ def run_snowflake_cli_live_validation(
         )
         for rel in (
             CLI_SETUP_REL,
+            CLI_SETUP_MIGRATION_REL,
             SNOWFLAKE_CLI_PACKET_AVAILABILITY_REL,
             PACKET_AVAILABILITY_MATRIX_REL,
             CLI_PACKET_VALUE_REL,
@@ -2315,15 +2743,17 @@ def run_snowflake_cli_live_validation(
         artifacts[CLI_CONNECTION_REL] = _connection_results(snow, options, runner=runner)
         if bool(artifacts[CLI_CONNECTION_REL].get("passed")):
             artifacts[CLI_SETUP_REL] = _setup_validation_results(root_path, snow, options, runner=runner)
+            artifacts[CLI_SETUP_MIGRATION_REL] = _setup_migration_live_results(root_path, snow, options, runner=runner)
             artifacts.update(_packet_availability_results(snow, options, runner=runner))
             artifacts[CLI_PACKET_VALUE_REL] = _packet_value_results(snow, options, runner=runner)
             artifacts[CLI_FORMULA_VALUE_REL] = _formula_value_results(snow, options, artifacts[CLI_PACKET_VALUE_REL], root_path, runner=runner)
             artifacts[CLI_COST_RECONCILIATION_REL] = _cost_reconciliation_results(artifacts[CLI_FORMULA_VALUE_REL], options)
             artifacts[CLI_SUMMARY_CARD_REL] = _summary_card_results(artifacts[CLI_PACKET_VALUE_REL], options, root_path)
-            artifacts[CLI_QUERY_BUDGET_REL] = _query_budget_results(snow, options, runner=runner)
+            artifacts[CLI_QUERY_BUDGET_REL] = _query_budget_results(root_path, snow, options, runner=runner)
         else:
             for rel in (
                 CLI_SETUP_REL,
+                CLI_SETUP_MIGRATION_REL,
                 SNOWFLAKE_CLI_PACKET_AVAILABILITY_REL,
                 PACKET_AVAILABILITY_MATRIX_REL,
                 CLI_PACKET_VALUE_REL,
@@ -2339,6 +2769,7 @@ def run_snowflake_cli_live_validation(
                 )
     artifacts[CLI_TEMP_FILE_HYGIENE_REL] = _temp_file_hygiene_results(options)
     artifacts[CLI_TEMP_FILE_HYGIENE_GATE_REL] = evaluate_temp_file_hygiene_gate(artifacts.get(CLI_TEMP_FILE_HYGIENE_REL, {}))
+    artifacts[CLI_SETUP_MIGRATION_GATE_REL] = evaluate_setup_migration_live_gate(artifacts.get(CLI_SETUP_MIGRATION_REL, {}))
     artifacts[CLI_FORMULA_VALUE_GATE_REL] = _formula_value_gate_results(artifacts.get(CLI_FORMULA_VALUE_REL, {}))
     artifacts[CLI_COST_RECONCILIATION_GATE_REL] = _cost_reconciliation_gate_results(artifacts.get(CLI_COST_RECONCILIATION_REL, {}))
     artifacts[PACKET_AVAILABILITY_GATE_REL] = evaluate_packet_availability_gate(
@@ -2369,6 +2800,7 @@ def run_snowflake_cli_live_validation(
         "temp_sql_file_leftover_count": int(artifacts[CLI_LAUNCH_GATE_REL].get("temp_sql_file_leftover_count") or 0),
         "connection_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("connection_passed")),
         "setup_validation_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("setup_validation_passed")),
+        "setup_migration_live_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("setup_migration_live_passed")),
         "packet_availability_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("packet_availability_passed")),
         "packet_value_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("packet_value_passed")),
         "formula_value_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("formula_value_passed")),
@@ -2492,6 +2924,8 @@ __all__ = [
     "CLI_PACKET_VALUE_REL",
     "CLI_QUERY_BUDGET_REL",
     "CLI_RELEASE_REL",
+    "CLI_SETUP_MIGRATION_GATE_REL",
+    "CLI_SETUP_MIGRATION_REL",
     "CLI_SETUP_REL",
     "CLI_SUMMARY_CARD_REL",
     "CLI_TEMP_FILE_HYGIENE_GATE_REL",
@@ -2501,6 +2935,7 @@ __all__ = [
     "SnowflakeCliValidationOptions",
     "TEMP_SQL_PREFIX",
     "evaluate_snowflake_cli_live_gate",
+    "evaluate_setup_migration_live_gate",
     "evaluate_temp_file_hygiene_gate",
     "run_snowflake_cli_live_validation",
     "sanitize_text",

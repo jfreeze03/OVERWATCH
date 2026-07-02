@@ -1,11 +1,12 @@
 """Top-level navigation resolution for the OVERWATCH app shell.
 
 This module owns sidebar section selection, visible section calculation, and
-section transition state. In-section workflow routing remains in
-`sections.navigation` for compatibility with existing section modules.
+section transition state. In-section workflow routing remains isolated behind
+the local queueing helper for compatibility with existing section modules.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 
 import streamlit as st
@@ -31,10 +32,18 @@ from runtime_state import (
     pop_state,
     set_state,
 )
-from sections.navigation import request_executive_landing_hydration, request_section_workspace
 
 
-CONNECTION_OPTIONAL_SECTIONS = set(ALL_SECTIONS)
+@dataclass(frozen=True)
+class SectionConnectionPolicy:
+    section: str
+    offline_capable: bool
+    requires_connection: bool
+    fallback_surface: str
+
+
+OFFLINE_CAPABLE_SECTIONS = frozenset(ALL_SECTIONS)
+CONNECTION_REQUIRED_SECTIONS = frozenset()
 
 
 def normalize_nav_section(section: str) -> str:
@@ -50,6 +59,32 @@ def resolve_visible_sections() -> list[str]:
 def current_visible_sections() -> list[str]:
     """Return visible sections for the current role without importing section modules."""
     return resolve_visible_sections()
+
+
+def section_connection_policy(section: str) -> SectionConnectionPolicy:
+    """Return the explicit connection policy for a shell section.
+
+    OVERWATCH primary sections are packet/fallback capable by design: section
+    entry should not probe Snowflake, and unavailable/missing-packet states are
+    rendered by the section or shell fallback instead of blocking navigation.
+    Unknown routes fail closed until they are classified.
+    """
+    target = normalize_nav_section(section)
+    if target not in set(ALL_SECTIONS):
+        return SectionConnectionPolicy(
+            section=target,
+            offline_capable=False,
+            requires_connection=True,
+            fallback_surface="connection_required",
+        )
+    offline_capable = target in OFFLINE_CAPABLE_SECTIONS
+    requires_connection = target in CONNECTION_REQUIRED_SECTIONS
+    return SectionConnectionPolicy(
+        section=target,
+        offline_capable=offline_capable,
+        requires_connection=requires_connection,
+        fallback_surface="packet_or_connection_fallback",
+    )
 
 
 def current_active_section(visible_sections: list[str]) -> str:
@@ -70,6 +105,8 @@ def apply_section_compatibility_state(section: str) -> None:
 
 def queue_section_navigation(section: str) -> None:
     """Mark a section switch before the next rerun starts rendering."""
+    from sections.navigation import request_executive_landing_hydration, request_section_workspace
+
     raw_section = str(section or "").strip()
     with query_budget_context("route_action", section=normalize_nav_section(raw_section), workflow="", budget=SECTION_ROUTE_QUERY_BUDGET):
         target = normalize_nav_section(raw_section)
@@ -86,11 +123,6 @@ def queue_section_navigation(section: str) -> None:
         request_section_workspace(target)
         apply_section_compatibility_state(raw_section)
         set_state(NAV_SECTION, target)
-
-
-def section_requires_connection(section: str) -> bool:
-    """Return whether the selected section needs Snowflake before it renders."""
-    return normalize_nav_section(section) not in CONNECTION_OPTIONAL_SECTIONS
 
 
 def mark_section_rendered(section: str, signature: tuple) -> None:

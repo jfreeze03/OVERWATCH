@@ -61,6 +61,8 @@ from tools.contracts.snowflake_cli_live_validation import (
     CLI_PACKET_VALUE_REL,
     CLI_QUERY_BUDGET_REL,
     CLI_RELEASE_REL,
+    CLI_SETUP_MIGRATION_GATE_REL,
+    CLI_SETUP_MIGRATION_REL,
     CLI_SETUP_REL,
     CLI_TEMP_FILE_HYGIENE_GATE_REL,
     REQUIRED_CLI_ARTIFACTS,
@@ -2816,6 +2818,7 @@ def _release_candidate_summary_bundle(
         "snowflake_cli_live_validation_passed": bool(launch_summary.get("snowflake_cli_live_validation_passed")),
         "snowflake_cli_live_validation_skipped": bool(launch_summary.get("snowflake_cli_live_validation_skipped")),
         "snowflake_cli_live_validation_required": bool(launch_summary.get("snowflake_cli_live_validation_required")),
+        "setup_migration_live_passed": bool(launch_summary.get("setup_migration_live_passed")),
         "snowflake_cli_formula_value_passed": bool(launch_summary.get("snowflake_cli_formula_value_passed")),
         "snowflake_cli_packet_value_passed": bool(launch_summary.get("snowflake_cli_packet_value_passed")),
         "snowflake_cli_query_budget_passed": bool(launch_summary.get("snowflake_cli_query_budget_passed")),
@@ -4764,6 +4767,7 @@ def _release_gate_matrix(
     formula_live_gate = _as_mapping(launch_artifacts.get("formula_live_gate_results"))
     snowflake_cli_gate = _as_mapping(launch_artifacts.get("snowflake_cli_live_gate_results"))
     snowflake_cli_temp_hygiene_gate = _as_mapping(launch_artifacts.get("snowflake_cli_temp_file_hygiene_gate_results"))
+    setup_migration_live_gate = _as_mapping(launch_artifacts.get("setup_migration_live_gate_results"))
     metric_semantic_gate = _as_mapping(launch_artifacts.get("metric_semantic_gate_results"))
     query_budget_gate = _as_mapping(launch_artifacts.get("query_budget_gate_results"))
     workload_formula_gate = _as_mapping(launch_artifacts.get("workload_formula_gate_results"))
@@ -5226,6 +5230,14 @@ def _release_gate_matrix(
             "failure_reason": ""
             if snowflake_cli_gate.get("passed")
             else "Local Snowflake CLI live validation is required for live launch profiles or needs a signed waiver.",
+        },
+        {
+            "gate": "setup_migration_live_validation",
+            "artifact": CLI_SETUP_MIGRATION_GATE_REL,
+            "passed": bool(setup_migration_live_gate.get("passed")),
+            "failure_reason": ""
+            if setup_migration_live_gate.get("passed")
+            else "Snowflake setup SQL, required objects, or migration ledger live validation failed.",
         },
         {
             "gate": "metric_semantic_registry",
@@ -5708,6 +5720,7 @@ def evaluate_launch_readiness(
     formula_live_gate = _as_mapping(launch_artifacts.get("formula_live_gate_results"))
     snowflake_cli_gate = _as_mapping(launch_artifacts.get("snowflake_cli_live_gate_results"))
     snowflake_cli_temp_hygiene_gate = _as_mapping(launch_artifacts.get("snowflake_cli_temp_file_hygiene_gate_results"))
+    setup_migration_live_gate = _as_mapping(launch_artifacts.get("setup_migration_live_gate_results"))
     metric_semantic_gate = _as_mapping(launch_artifacts.get("metric_semantic_gate_results"))
     query_budget_gate = _as_mapping(launch_artifacts.get("query_budget_gate_results"))
     workload_formula_gate = _as_mapping(launch_artifacts.get("workload_formula_gate_results"))
@@ -5998,6 +6011,9 @@ def evaluate_launch_readiness(
         "snowflake_cli_temp_file_hygiene_passed": bool(
             snowflake_cli_gate.get("temp_file_hygiene_passed", snowflake_cli_temp_hygiene_gate.get("passed"))
         ),
+        "setup_migration_live_passed": bool(
+            snowflake_cli_gate.get("setup_migration_live_passed") or setup_migration_live_gate.get("passed")
+        ),
         "temp_sql_file_leftover_count": _as_int(
             snowflake_cli_gate.get("temp_sql_file_leftover_count", snowflake_cli_temp_hygiene_gate.get("temp_sql_file_leftover_count"))
         ),
@@ -6284,6 +6300,7 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         "snowflake_cli_temp_sql_path_leak_count": _as_int(snowflake_cli_gate.get("snowflake_cli_temp_sql_path_leak_count")),
         "snowflake_cli_temp_file_hygiene_passed": bool(snowflake_cli_gate.get("temp_file_hygiene_passed")),
         "temp_sql_file_leftover_count": _as_int(snowflake_cli_gate.get("temp_sql_file_leftover_count")),
+        "setup_migration_live_passed": bool(snowflake_cli_gate.get("setup_migration_live_passed")),
         "snowflake_cli_live_validation_passed": bool(snowflake_cli_gate.get("snowflake_cli_gate_passed", snowflake_cli_gate.get("passed"))),
         "snowflake_cli_live_validation_skipped": bool(snowflake_cli_gate.get("snowflake_cli_live_skipped", snowflake_cli_gate.get("skipped"))),
         "connection_passed": bool(snowflake_cli_gate.get("connection_passed")),
@@ -6300,6 +6317,9 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["snowflake_cli_live_gate_results"] = snowflake_cli_gate
     launch_artifacts["snowflake_cli_temp_file_hygiene_gate_results"] = snowflake_cli_artifacts[
         CLI_TEMP_FILE_HYGIENE_GATE_REL
+    ]
+    launch_artifacts["setup_migration_live_gate_results"] = snowflake_cli_artifacts[
+        CLI_SETUP_MIGRATION_GATE_REL
     ]
     formula_end_to_end_artifacts = write_formula_end_to_end_artifacts(root_path)
     payloads.update(formula_end_to_end_artifacts)

@@ -47,18 +47,19 @@ from sections.cortex_signals import build_cortex_signal, render_cortex_signal_pa
 from sections.decision_workspace_target_filters import get_decision_evidence_target
 from sections.operator_case import make_case_evidence, render_add_to_case_button
 from sections.shell_helpers import (
-    _clean_display_text,
     build_first_paint_summary_spec,
     render_decision_evidence_panel,
     render_data_freshness,
     render_escaped_bold_text,
     render_section_first_paint_shell,
 )
+from utils.display_safety import clean_display_text
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note, defer_source_note
 
 
 pd = lazy_pandas()
+_clean_display_text = clean_display_text
 
 credits_to_dollars = _lazy_util("credits_to_dollars")
 get_active_environment = _lazy_util("get_active_environment")

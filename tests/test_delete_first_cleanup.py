@@ -41,6 +41,23 @@ class DeleteFirstCleanupTests(unittest.TestCase):
         self.assertFalse(gate["passed"])
         self.assertIn("unclassified", gate["failures"][0]["reason"])
 
+    def test_retired_query_workbench_module_blocks_gate(self):
+        from tools.contracts.delete_first_cleanup import build_delete_first_inventory, evaluate_delete_first_cleanup_gate
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sections = root / ".overwatch_final" / "sections"
+            sections.mkdir(parents=True)
+            (sections / "query_workbench.py").write_text("# retired module\n", encoding="utf-8")
+
+            inventory = build_delete_first_inventory(root)
+            gate = evaluate_delete_first_cleanup_gate(inventory)
+
+        self.assertFalse(gate["passed"])
+        self.assertTrue(
+            any("retired query_workbench" in failure["reason"] for failure in gate["failures"])
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

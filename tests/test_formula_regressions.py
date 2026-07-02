@@ -228,7 +228,7 @@ from sections.change_drift import (  # noqa: E402
     build_change_control_operability_fact_ddl,
     build_change_control_operability_fact_migration_sql,
 )
-from sections.query_workbench import (  # noqa: E402
+from sections.query_investigation_root_cause import (  # noqa: E402
     _build_mart_root_cause_sql,
     _build_root_cause_markdown,
     _root_cause_cortex_prompt,

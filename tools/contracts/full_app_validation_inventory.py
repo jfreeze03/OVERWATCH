@@ -385,7 +385,6 @@ def _live_feature_results() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]
         ("setup_health_refresh", "admin_setup", 1, 1),
         ("optional_optimization_status", "advanced_diagnostics", 1, 1),
         ("metadata_probe_diagnostics", "metadata_probe", 1, 1),
-        ("live_monitor_refresh", "advanced_diagnostics", 1, 1),
     ]
     inventory = []
     results = []

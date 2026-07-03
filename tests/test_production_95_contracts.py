@@ -227,7 +227,6 @@ class Production95ContractsTests(unittest.TestCase):
         cost_text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
         alert_text = (APP_ROOT / "sections" / "alert_center.py").read_text(encoding="utf-8")
         workload_text = (APP_ROOT / "sections" / "workload_operations.py").read_text(encoding="utf-8")
-        native_monitoring = (APP_ROOT / "sections" / "native_monitoring.py").read_text(encoding="utf-8")
         refresh_doc = (ROOT / "docs" / "REFRESH_ARCHITECTURE.md").read_text(encoding="utf-8")
 
         self.assertIn('"Cost & Contract", "sections.cost_contract"', config_text)
@@ -242,8 +241,7 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertNotIn("Cost Command Board", cost_text)
         self.assertNotIn("Alert Command Board", alert_text)
         self.assertNotIn("Workload Command Board", workload_text)
-        self.assertNotIn("Data Quality & Compare", native_monitoring)
-        self.assertNotIn("Governance Native Sources", native_monitoring)
+        self.assertFalse((APP_ROOT / "sections" / "native_monitoring.py").exists())
         self.assertFalse((APP_ROOT / "sections" / "native_readiness.py").exists())
         self.assertNotIn("render_workload_data_quality_board", workload_text)
 

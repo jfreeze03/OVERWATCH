@@ -344,21 +344,6 @@ def maybe_clear_scope_cache_on_filter_change() -> None:
         set_state(PREV_GLOBAL_FILTER_SIGNATURE, current_filter_signature)
 
 
-def render_inline_scope_field(label: object, value: object, *, selectable: bool = True) -> None:
-    """Render the compact command-bar field chrome used around native widgets."""
-    chevron = '<span class="ow-inline-scope-chevron">⌄</span>' if selectable else ""
-    st.markdown(
-        f"""
-        <div class="ow-inline-scope-control" aria-hidden="true">
-            <span class="ow-inline-scope-label">{_escape_html(label)}</span>
-            <strong class="ow-inline-scope-value">{_escape_html(value)}</strong>
-            {chevron}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def render_global_command_bar(active_company: str, *, credit_price: float | None = None) -> str:
     """Render the single global scope command bar above the Decision Workspace."""
     pop_state("_overwatch_scope_drawer_open", None)

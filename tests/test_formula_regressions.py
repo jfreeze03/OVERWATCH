@@ -56,10 +56,6 @@ from sections.account_health import (  # noqa: E402
     _load_live_query_status,
     _live_query_status_sql,
 )
-from sections.adoption_analytics import (  # noqa: E402
-    _load_adoption_live,
-    _metric as adoption_metric,
-)
 from sections.alert_center import (  # noqa: E402
     _alert_center_action_brief,
     _apply_alert_center_brief_first_default,
@@ -322,7 +318,6 @@ from sections.task_management import (  # noqa: E402
     TASK_CONTROL_DETAILS,
     TASK_CONTROL_VIEWS,
 )
-from sections.usage_overview import _first_number as usage_first_number  # noqa: E402
 from sections.warehouse_health import (  # noqa: E402
     _annotate_warehouse_admin_readiness,
     _warehouse_action_queue_closure_sql,
@@ -4339,15 +4334,9 @@ class FormulaRegressionTests(unittest.TestCase):
 
     def test_dashboard_metric_helpers_do_not_emit_nan(self):
         df = pd.DataFrame({"VALUE": [math.nan]})
-        self.assertEqual(adoption_metric(df, "VALUE"), 0.0)
         self.assertEqual(service_value(df, "VALUE"), 0.0)
-        self.assertEqual(usage_first_number(df, "VALUE"), 0.0)
 
     def test_adoption_role_mix_exposes_visible_error_rate(self):
-        live_source = inspect.getsource(_load_adoption_live).upper()
-        self.assertIn("AS ERROR_RATE", live_source)
-        self.assertIn("AA_ROLE_TYPE", live_source)
-
         mart_sql = build_mart_adoption_role_type_sql(30, "ALFA").upper()
         self.assertIn("AS ERROR_RATE", mart_sql)
         self.assertIn("SUM(FAILED_COUNT)", mart_sql)
@@ -4682,9 +4671,7 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state.update(previous)
 
     def test_usage_overview_storage_sums_are_null_safe(self):
-        usage_text = (APP_ROOT / "sections" / "usage_overview.py").read_text(encoding="utf-8")
         text = (APP_ROOT / "utils" / "shared_metrics_storage.py").read_text(encoding="utf-8")
-        self.assertIn("load_shared_usage_storage_kpis", usage_text)
         self.assertIn("SUM(COALESCE(c.average_database_bytes, 0))", text)
         self.assertIn("SUM(COALESCE(c.average_failsafe_bytes, 0))", text)
         self.assertNotIn("SUM(c.average_database_bytes)", text)
@@ -7602,8 +7589,6 @@ class FormulaRegressionTests(unittest.TestCase):
 
     def test_connected_program_tracking_uses_auth_event_before_query_tag_fallback(self):
         security_text = (APP_ROOT / "sections" / "security_access.py").read_text(encoding="utf-8").upper()
-        topology_text = (APP_ROOT / "sections" / "platform_topology.py").read_text(encoding="utf-8").upper()
-        adoption_text = (APP_ROOT / "sections" / "adoption_analytics.py").read_text(encoding="utf-8").upper()
         compat_text = (APP_ROOT / "utils" / "compatibility.py").read_text(encoding="utf-8").upper()
 
         self.assertIn("CONNECTED PROGRAMS", security_text)
@@ -7614,14 +7599,6 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("LOGIN-ONLY REPORTED CLIENT; NO DATABASE CONTEXT", security_text)
         self.assertIn("QUERY_TAG FALLBACK; NOT EXACT CONNECTED-PROGRAM IDENTITY", security_text)
         self.assertIn("CLIENT VALUE IS REPORTED, NOT AUTHENTICATED", security_text)
-
-        for section_text in (topology_text, adoption_text):
-            self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.SESSIONS", section_text)
-            self.assertIn("SESSION_ID TO SESSIONS CLIENT METADATA", section_text)
-            self.assertIn("AUTHN_EVENT_ID", section_text)
-            self.assertIn("REPORTED_CLIENT_TYPE", section_text)
-            self.assertIn("QUERY_TAG FALLBACK; NOT EXACT CONNECTED-PROGRAM IDENTITY", section_text)
-            self.assertIn("SOURCE_CONFIDENCE", section_text)
 
         self.assertIn('"AUTHN_EVENT_ID"', compat_text)
         self.assertIn('"EVENT_ID"', compat_text)

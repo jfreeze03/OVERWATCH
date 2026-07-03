@@ -51,7 +51,6 @@ _ADMIN_MODULES = (
     "sections.dba_tools_query_kill_view",
     "sections.dba_tools_task_graph_control_view",
     "sections.dba_tools_warehouse_settings_view",
-    "sections.live_monitor",
     "sections.pipeline_health",
     "sections.query_analysis",
     "sections.query_search",

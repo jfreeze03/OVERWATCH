@@ -468,43 +468,6 @@ def render_kpi_hero_row(metrics: Sequence[Mapping[str, object] | tuple[object, o
         st.html(f'<section class="ow-kpi-hero-grid" aria-label="Key metrics">{"".join(cards)}</section>')
 
 
-def render_local_section_menu(
-    *,
-    title: str,
-    items: Sequence[Mapping[str, object]],
-    active_value: object,
-    key_prefix: str,
-    on_select: Callable[[str], None] | None = None,
-) -> str:
-    """Render a section-local menu that is visually distinct from workflow button grids."""
-    st.html(
-        '<aside class="ow-local-nav" aria-label="Local section navigation">'
-        f'<div class="ow-local-nav-title">{_escape_markup(clean_display_text(title))}</div>'
-        '</aside>'
-    )
-    active = str(active_value or "")
-    selected = active
-    for idx, item in enumerate(items or ()):
-        label = clean_display_text(item.get("label", ""))
-        value = str(item.get("value", label))
-        detail = clean_display_text(item.get("detail", ""))
-        group = clean_display_text(item.get("group", ""))
-        if group:
-            st.html(f'<div class="ow-local-nav-group">{_escape_markup(group)}</div>')
-        active_class = " ow-local-nav-item-active" if value == active else ""
-        st.html(
-            f'<div class="ow-local-nav-item{active_class}">'
-            f'<strong>{_escape_markup(label)}</strong>'
-            f'<span>{_escape_markup(detail)}</span>'
-            '</div>'
-        )
-        if value != active and st.button(label, key=f"{key_prefix}_{idx}_{_key_fragment(value)}", width="stretch"):
-            selected = value
-            if on_select is not None:
-                on_select(value)
-    return selected
-
-
 def render_single_choice_navigation(
     *,
     label: str,

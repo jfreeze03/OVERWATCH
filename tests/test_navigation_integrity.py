@@ -1707,7 +1707,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn('type="primary" if is_active else "secondary"', sidebar_toggle_block)
         self.assertIn("def render_global_command_bar", filters_text)
         self.assertIn("ow-global-command-bar", filters_text)
-        self.assertIn("ow-inline-scope-control", filters_text)
+        self.assertNotIn("ow-inline-scope-control", filters_text)
         self.assertIn("ow-command-context", filters_text)
         self.assertNotIn("ow-compact-scope-bar", filters_text)
         self.assertNotIn("ow-inline-scope-heading", filters_text)
@@ -2677,16 +2677,10 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_heavy_chart_dependency_stays_lazy(self):
         display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")
-        usage_text = (APP_ROOT / "sections" / "usage_overview.py").read_text(encoding="utf-8")
-        adoption_text = (APP_ROOT / "sections" / "adoption_analytics.py").read_text(encoding="utf-8")
-        topology_text = (APP_ROOT / "sections" / "platform_topology.py").read_text(encoding="utf-8")
 
         self.assertNotIn("\nimport altair as alt", display_text)
         self.assertIn("def _altair", display_text)
         self.assertIn("alt = _altair()", display_text)
-        for section_text in (usage_text, adoption_text, topology_text):
-            self.assertNotIn("\nimport altair as alt", section_text)
-            self.assertIn("def _altair", section_text)
 
 
 if __name__ == "__main__":

@@ -22,10 +22,12 @@ def load_mart_table(
     """Run a mart query and return a fallback-friendly result object."""
     source = source_label or mart_object_name(table_name)
     try:
+        # Marts hold "latest snapshot" summaries; a 300s summary tier keeps them
+        # fresh after task refreshes instead of pinning rows for a full hour.
         df = run_query(
             sql,
             ttl_key=f"mart_{str(table_name).lower()}",
-            tier="historical",
+            tier="command_summary",
             section="Mart",
         )
         if df.empty:

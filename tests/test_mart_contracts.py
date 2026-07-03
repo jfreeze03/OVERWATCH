@@ -619,7 +619,7 @@ class MartContractTests(unittest.TestCase):
         run_query.assert_called_once_with(
             "SELECT 1",
             ttl_key="mart_fact_query_hourly",
-            tier="historical",
+            tier="command_summary",
             section="Mart",
         )
 

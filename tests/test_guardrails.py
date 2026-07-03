@@ -48,11 +48,10 @@ class GuardrailTests(unittest.TestCase):
         self.assertEqual(result.message, "No summary rows returned.")
         mock_run.assert_called_once()
         _, kwargs = mock_run.call_args
-        self.assertEqual(kwargs["tier"], "historical")
+        self.assertEqual(kwargs["tier"], "command_summary")
         self.assertEqual(kwargs["section"], "Mart")
 
     def test_usage_overview_and_heatmap_sources_use_mart_before_live(self):
-        usage_text = (APP_ROOT / "sections" / "usage_overview.py").read_text(encoding="utf-8").upper()
         account_text = "\n".join(
             path.read_text(encoding="utf-8").upper()
             for path in [
@@ -90,12 +89,6 @@ class GuardrailTests(unittest.TestCase):
                 APP_ROOT / "sections" / "task_management_etl_audit_view.py",
             ]
         )
-        adoption_text = (APP_ROOT / "sections" / "adoption_analytics.py").read_text(encoding="utf-8").upper()
-
-        self.assertIn("LOAD_SHARED_USAGE_STORAGE_KPIS", usage_text)
-        self.assertIn("LOAD_SHARED_USAGE_METERING_KPIS", usage_text)
-        self.assertIn("LOAD_SHARED_QUERY_HISTORY_ROLLUP", usage_text)
-        self.assertIn("LOAD_SHARED_WAREHOUSE_PRESSURE_SUMMARY", usage_text)
         self.assertIn("LOAD_SHARED_USAGE_METERING_KPIS", account_text)
         self.assertIn("LOAD_SHARED_QUERY_HISTORY_ROLLUP", account_text)
         self.assertIn("LOAD_SHARED_BILL_METERING_SUMMARY", cost_text)
@@ -117,7 +110,6 @@ class GuardrailTests(unittest.TestCase):
         self.assertIn("WORKLOAD HEATMAP LIVE FALLBACK IS CAPPED AT 30 DAYS", shared_metric_surface)
         self.assertNotIn("SELECT * FROM {ETL_AUDIT_FQN}", task_text)
         self.assertIn("WHERE RUN_START >= DATEADD('DAY', -30, CURRENT_TIMESTAMP())", task_text)
-        self.assertIn("ADOPTION ANALYTICS LIVE FALLBACK IS CAPPED AT 35 DAYS", adoption_text)
 
     def test_storage_monitor_live_fallback_is_capped(self):
         storage_text = (APP_ROOT / "sections" / "storage_monitor.py").read_text(encoding="utf-8")

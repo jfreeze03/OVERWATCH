@@ -1007,7 +1007,15 @@ def record_ui_query_event(
         "finished_at": finished_at or datetime.now().isoformat(timespec="milliseconds"),
         "actual_query_executed": actual_query_executed,
         "cache_layer": cache_layer,
-        "cache_hit": cache_layer in {"session", "streamlit_cache", "paused"} or actual_query_executed is False,
+        # A known real execution is never a cache hit, even when it was stored
+        # through a cache layer; only unknown execution falls back to the layer.
+        "cache_hit": (
+            actual_query_executed is False
+            or (
+                actual_query_executed is None
+                and cache_layer in {"session", "streamlit_cache", "paused"}
+            )
+        ),
         "boundary": query_boundary,
         "product_boundary": original_boundary,
         "query_boundary": query_boundary,

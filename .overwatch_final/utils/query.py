@@ -16,15 +16,20 @@ from datetime import datetime
 from runtime_state import (
     ACTIVE_COMPANY,
     ACTIVE_QUERY_TAG,
+    AI_CREDIT_PRICE,
+    CREDIT_PRICE,
     CURRENT_ROLE,
+    EXCEPTIONS_ONLY_MODE,
     GLOBAL_DATABASE,
     GLOBAL_END_DATE,
     GLOBAL_ENVIRONMENT,
     GLOBAL_ROLE,
+    GLOBAL_SCHEMA,
     GLOBAL_START_DATE,
     GLOBAL_USER,
     GLOBAL_WAREHOUSE,
     NAV_SECTION,
+    STORAGE_COST_PER_TB,
     PERF_RUN_ID,
     QUERY_BUDGET_HITS,
     QUERY_BUDGET_WARNING_HASHES,
@@ -52,6 +57,7 @@ from performance import (
     begin_direct_sql_allowance,
     current_first_paint_render_id,
     end_direct_sql_allowance,
+    get_snowflake_execution_counter,
     increment_snowflake_execution_counter,
     is_first_paint_active,
     record_query_lint_finding,
@@ -982,8 +988,15 @@ def _cache_context() -> str:
         str(get_state(GLOBAL_USER, "")),
         str(get_state(GLOBAL_ROLE, "")),
         str(get_state(GLOBAL_DATABASE, "")),
+        str(get_state(GLOBAL_SCHEMA, "")),
         str(get_state(GLOBAL_ENVIRONMENT, "")),
         str(get_state(CURRENT_ROLE, "")),
+        # Settings that change dollarized/derived values must key the cache so a
+        # rate or triage-mode change never serves rows computed for another rate.
+        str(get_state(EXCEPTIONS_ONLY_MODE, "")),
+        str(get_state(CREDIT_PRICE, "")),
+        str(get_state(AI_CREDIT_PRICE, "")),
+        str(get_state(STORAGE_COST_PER_TB, "")),
     ])
 
 
@@ -1349,12 +1362,17 @@ def _run_query_base(
                 cache_salt = _cache_salt(ttl_key)
                 context = _cache_context()
                 fn   = _TIER_FN.get(tier, _cached_recent)
-                meta.update(actual_query_executed=None, cache_layer="streamlit_cache")
-                return fn(executable_query, context, cache_salt, query_tag, ttl_key, section, boundary, max_rows), meta
+                executions_before = len(get_snowflake_execution_counter())
+                result = fn(executable_query, context, cache_salt, query_tag, ttl_key, section, boundary, max_rows)
+                # The cached tier fn only reaches Snowflake on a cache miss, so
+                # the execution counter tells us whether this was a real hit.
+                executed = len(get_snowflake_execution_counter()) > executions_before
+                meta.update(actual_query_executed=executed, cache_layer="streamlit_cache")
+                return result, meta
             # Bypass cache - always wrapped in try/except
             try:
                 meta.update(actual_query_executed=True, cache_layer="none")
-                return _execute_snowflake_query(
+                result = _execute_snowflake_query(
                     executable_query,
                     query_tag,
                     ttl_key=ttl_key,
@@ -1362,7 +1380,12 @@ def _run_query_base(
                     section=section,
                     max_rows=max_rows,
                     query_boundary=boundary,
-                ), meta
+                )
+                # A forced execution just produced fresher rows than any cached
+                # entry for this ttl_key. Bump the scoped salt so later cached
+                # reads cannot serve pre-refresh rows within the tier TTL.
+                force_refresh(ttl_key)
+                return result, meta
             except Exception as e:
                 _show_query_warning("Data unavailable", e)
                 meta.update(actual_query_executed=True, cache_layer="none", error=format_snowflake_error(e))

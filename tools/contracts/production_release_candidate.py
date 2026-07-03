@@ -19,6 +19,10 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from tools.contracts.app_entry_smoke import APP_ENTRY_SMOKE_GATE_REL, write_app_entry_smoke_artifacts
+from tools.contracts.a_grade_execution_matrix import (
+    A_GRADE_EXECUTION_MATRIX_GATE_REL,
+    A_GRADE_EXECUTION_MATRIX_SUMMARY_REL,
+)
 from tools.contracts.ci_artifact_reality import (
     CI_ARTIFACT_REALITY_GATE_REL,
     CI_ARTIFACT_REALITY_RESULTS_REL,
@@ -507,6 +511,8 @@ def _final_release_candidate_summary(root: Path, results: Mapping[str, Any]) -> 
     launch_summary = dict(_load_json(root, "artifacts/launch_readiness/launch_readiness_summary.json"))
     ci_gate = _load_json(root, CI_ARTIFACT_REALITY_GATE_REL)
     full_sweep = _load_json(root, FULL_APP_RELEASE_SWEEP_GATE_REL)
+    a_grade_gate = _load_json(root, A_GRADE_EXECUTION_MATRIX_GATE_REL)
+    a_grade_summary = _load_json(root, A_GRADE_EXECUTION_MATRIX_SUMMARY_REL)
     snowflake_cli = _load_json(root, CLI_LAUNCH_GATE_REL)
     rehearsal = _load_json(root, CLI_PRODUCTION_REHEARSAL_GATE_REL)
     current_failures = list(results.get("failures") or [])
@@ -524,6 +530,17 @@ def _final_release_candidate_summary(root: Path, results: Mapping[str, Any]) -> 
         "passed": passed,
         "all_passed": passed,
         "production_deployable": production_deployable,
+        "a_grade_ready": bool(a_grade_gate.get("a_grade_ready", a_grade_summary.get("a_grade_ready", False))),
+        "a_grade_execution_matrix_passed": bool(a_grade_gate.get("passed")),
+        "query_performance_grade": str(a_grade_gate.get("query_performance_grade") or launch_summary.get("query_performance_grade") or ""),
+        "app_performance_grade": str(a_grade_gate.get("app_performance_grade") or launch_summary.get("app_performance_grade") or ""),
+        "ui_grade": str(a_grade_gate.get("ui_grade") or launch_summary.get("ui_grade") or ""),
+        "ux_grade": str(a_grade_gate.get("ux_grade") or launch_summary.get("ux_grade") or ""),
+        "maintainability_grade": str(a_grade_gate.get("maintainability_grade") or launch_summary.get("maintainability_grade") or ""),
+        "production_readiness_grade": str(
+            a_grade_gate.get("production_readiness_grade") or launch_summary.get("production_readiness_grade") or ""
+        ),
+        "required_followups": list(a_grade_gate.get("required_followups") or launch_summary.get("required_followups") or []),
         "failure_count": len(current_failures),
         "hard_gate_failure_count": len(current_failures),
         "production_release_candidate_passed": bool(results.get("passed")),
@@ -676,6 +693,12 @@ def run_production_release_candidate(
             CI_ARTIFACT_REALITY_GATE_REL,
             lambda _r: payloads,
             gate_rel=CI_ARTIFACT_REALITY_GATE_REL,
+        )
+        add(
+            "a_grade_execution_matrix",
+            A_GRADE_EXECUTION_MATRIX_GATE_REL,
+            lambda _r: payloads,
+            gate_rel=A_GRADE_EXECUTION_MATRIX_GATE_REL,
         )
         phase_rows.append(
             _phase_row(

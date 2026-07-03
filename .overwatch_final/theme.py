@@ -1298,6 +1298,37 @@ div[class*="st-key-"][class*="_decision_workspace_shell"],
     opacity: 0;
     pointer-events: none;
 }
+.ow-skip-to-main {
+    position: fixed;
+    left: 1rem;
+    top: 0.75rem;
+    z-index: 10000;
+    transform: translateY(-180%);
+    background: var(--bg-card);
+    border: 2px solid var(--accent);
+    border-radius: 8px;
+    color: var(--text-primary);
+    padding: 0.55rem 0.75rem;
+    font-weight: 700;
+    text-decoration: none;
+    transition: transform 120ms ease;
+}
+.ow-skip-to-main:focus,
+.ow-skip-to-main:focus-visible {
+    transform: translateY(0);
+    outline: 3px solid rgba(var(--accent-rgb), 0.38);
+    outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms;
+        animation-iteration-count: 1;
+        scroll-behavior: auto;
+        transition-duration: 0.01ms;
+    }
+}
 .ow-decision-workspace {
     display: contents;
 }

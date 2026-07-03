@@ -329,6 +329,13 @@ def filter_existing_columns(session, object_name: str, columns: Iterable[str]) -
         process_result = _process_column_probe_result(object_name, col)
         if process_result is not None:
             probe_cache[cache_key] = process_result
+        else:
+            # get_available_columns() is the object/session metadata probe. Do
+            # not compile-probe every requested column after a successful object
+            # probe; that pattern was the remaining source of N+1 metadata
+            # chatter on evidence loaders.
+            probe_cache[cache_key] = True
+            _mark_process_column_probe(object_name, col, True)
     unprobed = [col for col in candidates if f"{object_name}:{col}" not in probe_cache]
     if unprobed:
         with _GLOBAL_COLUMN_PROBE_EXECUTION_LOCK:

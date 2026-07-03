@@ -122,6 +122,9 @@ def _evaluate_first_paint_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[
         query_search = _row_count(row, "query_search_query_count")
         direct_sql = _row_count(row, "direct_sql_count", "direct_sql_event_count")
         session_open = _row_count(row, "session_open_count")
+        pre_first_paint_session_open = _row_count(row, "pre_first_paint_session_open_count")
+        shell_session_open = _row_count(row, "shell_session_open_count")
+        metadata_probe_count = _row_count(row, "metadata_probe_count", "metadata_probe_events")
         reasons: list[str] = []
         if missing_fields:
             reasons.append(f"first-paint telemetry missing required fields: {', '.join(missing_fields)}")
@@ -151,6 +154,12 @@ def _evaluate_first_paint_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[
             reasons.append("Query Search ran during first paint")
         if direct_sql:
             reasons.append("first paint emitted direct SQL")
+        if pre_first_paint_session_open:
+            reasons.append("session opened before first-paint boundary")
+        if shell_session_open:
+            reasons.append("shell opened a Snowflake session before section first paint")
+        if metadata_probe_count > 1:
+            reasons.append("metadata probing exceeded one probe for the object/session boundary")
         if session_open and section in PRIMARY_SECTIONS and cold_packet == 0:
             reasons.append("first paint opened a session outside the packet lookup")
         checked.append(
@@ -170,6 +179,9 @@ def _evaluate_first_paint_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[
                 "query_search_query_count": query_search,
                 "direct_sql_count": direct_sql,
                 "session_open_count": session_open,
+                "pre_first_paint_session_open_count": pre_first_paint_session_open,
+                "shell_session_open_count": shell_session_open,
+                "metadata_probe_count": metadata_probe_count,
                 "passed": not reasons,
                 "failure_reason": "; ".join(reasons),
                 "raw_sql_included": False,
@@ -194,6 +206,9 @@ def _evaluate_budget_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[dict[
         session_open = _row_count(row, "session_open_count")
         direct_sql = _row_count(row, "direct_sql_count", "direct_sql_events")
         account_usage = _row_count(row, "account_usage_count", "account_usage_events")
+        metadata_probe_count = _row_count(row, "metadata_probe_count", "metadata_probe_events")
+        pre_first_paint_session_open = _row_count(row, "pre_first_paint_session_open_count")
+        shell_session_open = _row_count(row, "shell_session_open_count")
         reasons: list[str] = []
         if not section:
             reasons.append("telemetry row missing section")
@@ -207,6 +222,12 @@ def _evaluate_budget_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[dict[
             reasons.append("first paint crossed Account Usage/deep-history boundary")
         if boundary == "warm_first_paint" and query_count:
             reasons.append("warm first paint executed a query")
+        if pre_first_paint_session_open:
+            reasons.append("session opened before first-paint boundary")
+        if shell_session_open:
+            reasons.append("shell opened a Snowflake session before section first paint")
+        if metadata_probe_count > 1:
+            reasons.append("metadata probing exceeded one probe for the object/session boundary")
         checked.append(
             {
                 "section": section,
@@ -216,6 +237,9 @@ def _evaluate_budget_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[dict[
                 "session_open_count": session_open,
                 "direct_sql_count": direct_sql,
                 "account_usage_count": account_usage,
+                "metadata_probe_count": metadata_probe_count,
+                "pre_first_paint_session_open_count": pre_first_paint_session_open,
+                "shell_session_open_count": shell_session_open,
                 "passed": not reasons,
                 "failure_reason": "; ".join(reasons),
                 "raw_sql_included": False,
@@ -260,6 +284,15 @@ def evaluate_performance_budget_gate(
             if not cost_violation_count:
                 cost_violation_count = max(1, len(cost_failures))
     failures = first_paint_failures + budget_failures + cost_failures
+    metadata_probe_violation_count = sum(
+        1
+        for row in [*first_paint_rows, *budget_checks]
+        if _as_int(row.get("metadata_probe_count")) > 1
+    )
+    pre_first_paint_session_open_count = sum(
+        _as_int(row.get("pre_first_paint_session_open_count")) for row in [*first_paint_rows, *budget_checks]
+    )
+    shell_session_open_count = sum(_as_int(row.get("shell_session_open_count")) for row in [*first_paint_rows, *budget_checks])
     return {
         "source": "performance_budget_gate",
         "generated_at": _now(),
@@ -269,6 +302,9 @@ def evaluate_performance_budget_gate(
         "query_budget_rows": budget_checks,
         "cost_overview_no_autoload_rows": cost_rows,
         "cost_overview_autoload_violation_count": cost_violation_count,
+        "metadata_probe_violation_count": metadata_probe_violation_count,
+        "pre_first_paint_session_open_count": pre_first_paint_session_open_count,
+        "shell_session_open_count": shell_session_open_count,
         "failures": failures,
         "raw_sql_included": False,
     }
@@ -289,6 +325,9 @@ def write_performance_budget_gate_artifacts(root: Path | str = ".") -> dict[str,
         "query_budget_rows": gate.get("query_budget_rows", []),
         "cost_overview_no_autoload_rows": gate.get("cost_overview_no_autoload_rows", []),
         "cost_overview_autoload_violation_count": int(gate.get("cost_overview_autoload_violation_count") or 0),
+        "metadata_probe_violation_count": int(gate.get("metadata_probe_violation_count") or 0),
+        "pre_first_paint_session_open_count": int(gate.get("pre_first_paint_session_open_count") or 0),
+        "shell_session_open_count": int(gate.get("shell_session_open_count") or 0),
         "raw_sql_included": False,
     }
     _write_json(root_path / PERFORMANCE_BUDGET_RESULTS_REL, results)

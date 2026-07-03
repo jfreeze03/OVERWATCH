@@ -82,6 +82,10 @@ def render_app() -> None:
 def _render_app_body() -> None:
     with trace("shell:inject_theme"):
         inject_theme()
+        st.markdown(
+            '<a class="ow-skip-to-main" href="#overwatch-active-section-body">Skip to main content</a>',
+            unsafe_allow_html=True,
+        )
     with trace("shell:ensure_startup_state"):
         ensure_startup_state()
     with trace("shell:seed_current_role_from_secrets"):

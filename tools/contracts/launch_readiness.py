@@ -133,6 +133,12 @@ from tools.contracts.app_entry_smoke import (
     evaluate_app_entry_smoke_gate,
     write_app_entry_smoke_artifacts,
 )
+from tools.contracts.a_grade_execution_matrix import (
+    A_GRADE_EXECUTION_MATRIX_GATE_REL,
+    A_GRADE_EXECUTION_MATRIX_RESULTS_REL,
+    A_GRADE_EXECUTION_MATRIX_SUMMARY_REL,
+    write_a_grade_execution_matrix_artifacts,
+)
 from tools.contracts.post_deploy_smoke import (
     POST_DEPLOY_SMOKE_GATE_REL,
     POST_DEPLOY_SMOKE_RESULTS_REL,
@@ -204,11 +210,21 @@ from tools.contracts.import_laziness import (
     evaluate_import_laziness_gate,
     write_import_laziness_artifacts,
 )
+from tools.contracts.first_paint_slo import (
+    FIRST_PAINT_SLO_GATE_REL,
+    FIRST_PAINT_SLO_RESULTS_REL,
+    write_first_paint_slo_artifacts,
+)
 from tools.contracts.performance_budget_gate import (
     PERFORMANCE_BUDGET_GATE_REL,
     PERFORMANCE_BUDGET_RESULTS_REL,
     evaluate_performance_budget_gate,
     write_performance_budget_gate_artifacts,
+)
+from tools.contracts.query_boundary_lint import (
+    QUERY_BOUNDARY_LINT_GATE_REL,
+    QUERY_BOUNDARY_LINT_RESULTS_REL,
+    write_query_boundary_lint_artifacts,
 )
 from tools.contracts.cortex_token_efficiency_validation import (
     CORTEX_TOKEN_EFFICIENCY_GATE_REL,
@@ -252,6 +268,11 @@ from tools.contracts.ui_kit_alignment import (
     SOURCE_SAFE_FOOTER_GATE_REL,
     UI_KIT_ALIGNMENT_GATE_REL,
     write_ui_kit_alignment_artifacts,
+)
+from tools.contracts.ui_system_grade import (
+    UI_SYSTEM_GRADE_GATE_REL,
+    UI_SYSTEM_GRADE_RESULTS_REL,
+    write_ui_system_grade_artifacts,
 )
 
 
@@ -327,6 +348,10 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     SQL_CLEANUP_GATE_REL,
     DELETE_FIRST_GATE_REL,
     PERFORMANCE_BUDGET_GATE_REL,
+    FIRST_PAINT_SLO_GATE_REL,
+    QUERY_BOUNDARY_LINT_GATE_REL,
+    UI_SYSTEM_GRADE_GATE_REL,
+    A_GRADE_EXECUTION_MATRIX_GATE_REL,
     METRIC_SOURCE_GOVERNANCE_GATE_REL,
     UI_KIT_ALIGNMENT_GATE_REL,
     SECTION_LAYOUT_CONTRACT_GATE_REL,
@@ -367,6 +392,10 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     CONNECTION_POLICY_RESULTS_REL,
     FALLBACK_RENDER_RESULTS_REL,
     PERFORMANCE_BUDGET_RESULTS_REL,
+    FIRST_PAINT_SLO_RESULTS_REL,
+    QUERY_BOUNDARY_LINT_RESULTS_REL,
+    UI_SYSTEM_GRADE_RESULTS_REL,
+    A_GRADE_EXECUTION_MATRIX_RESULTS_REL,
     FULL_APP_RELEASE_SWEEP_RESULTS_REL,
     FULL_APP_RELEASE_FAILURES_REL,
     SETTINGS_LIVE_FEATURE_RESULTS_REL,
@@ -400,6 +429,7 @@ REQUIRED_RELEASE_CANDIDATE_ARTIFACTS = {
     f"{POST_DEPLOY_SMOKE_RESULTS_REL}",
     f"{SNOWFLAKE_OBJECT_DRIFT_RESULTS_REL}",
     PRODUCTION_DEPLOYMENT_MANIFEST_REL,
+    A_GRADE_EXECUTION_MATRIX_SUMMARY_REL,
     CLI_RELEASE_REL,
 }
 
@@ -5036,6 +5066,10 @@ def _release_gate_matrix(
     full_app_release_sweep_gate = _as_mapping(launch_artifacts.get("full_app_release_sweep_gate_results"))
     settings_live_feature_gate = _as_mapping(launch_artifacts.get("settings_live_feature_gate_results"))
     performance_budget_gate = _as_mapping(launch_artifacts.get("performance_budget_gate_results"))
+    first_paint_slo_gate = _as_mapping(launch_artifacts.get("first_paint_slo_gate_results"))
+    query_boundary_lint_gate = _as_mapping(launch_artifacts.get("query_boundary_lint_gate_results"))
+    ui_system_grade_gate = _as_mapping(launch_artifacts.get("ui_system_grade_gate_results"))
+    a_grade_execution_matrix_gate = _as_mapping(launch_artifacts.get("a_grade_execution_matrix_gate_results"))
     full_app_launch_gate = _as_mapping(launch_artifacts.get("full_app_launch_gate_results"))
     deterministic_render_gate = _as_mapping(launch_artifacts.get("deterministic_render_gate_results"))
     browser_smoke_gate = _as_mapping(launch_artifacts.get("browser_smoke_gate_results"))
@@ -5316,6 +5350,38 @@ def _release_gate_matrix(
             "artifact": PERFORMANCE_BUDGET_GATE_REL,
             "passed": bool(performance_budget_gate.get("passed")),
             "failure_reason": "" if performance_budget_gate.get("passed") else "Performance budget rows show first-paint, route-action, Query Search, or workbench query violations.",
+        },
+        {
+            "gate": "first_paint_slo_gate",
+            "artifact": FIRST_PAINT_SLO_GATE_REL,
+            "passed": bool(first_paint_slo_gate.get("passed")),
+            "failure_reason": ""
+            if first_paint_slo_gate.get("passed")
+            else "First-paint SLO proof is missing or shows slow, warm-query, packet-size, or autoload violations.",
+        },
+        {
+            "gate": "query_boundary_lint",
+            "artifact": QUERY_BOUNDARY_LINT_GATE_REL,
+            "passed": bool(query_boundary_lint_gate.get("passed")),
+            "failure_reason": ""
+            if query_boundary_lint_gate.get("passed")
+            else "A critical run_query call lacks an explicit query_boundary.",
+        },
+        {
+            "gate": "ui_system_grade",
+            "artifact": UI_SYSTEM_GRADE_GATE_REL,
+            "passed": bool(ui_system_grade_gate.get("passed")),
+            "failure_reason": ""
+            if ui_system_grade_gate.get("passed")
+            else "A release-blocking UI accessibility baseline check failed.",
+        },
+        {
+            "gate": "a_grade_execution_matrix",
+            "artifact": A_GRADE_EXECUTION_MATRIX_GATE_REL,
+            "passed": bool(a_grade_execution_matrix_gate.get("passed")),
+            "failure_reason": ""
+            if a_grade_execution_matrix_gate.get("passed")
+            else "Executable A-grade matrix has failed release-blocking rows.",
         },
         {
             "gate": "metric_source_governance",
@@ -6042,6 +6108,12 @@ def evaluate_launch_readiness(
             _as_mapping(payloads.get("artifacts/full_app_validation/query_budget_results.json")),
             _as_mapping(payloads.get("artifacts/full_app_validation/cost_overview_no_autoload_results.json")),
         ),
+        "first_paint_slo_gate_results": _as_mapping(launch_artifacts.get("first_paint_slo_gate_results")),
+        "query_boundary_lint_gate_results": _as_mapping(launch_artifacts.get("query_boundary_lint_gate_results")),
+        "ui_system_grade_gate_results": _as_mapping(launch_artifacts.get("ui_system_grade_gate_results")),
+        "a_grade_execution_matrix_gate_results": _as_mapping(
+            launch_artifacts.get("a_grade_execution_matrix_gate_results")
+        ),
         "user_stress_gate_results": _as_mapping(launch_artifacts.get("user_stress_gate_results"))
         or evaluate_user_stress_gate(payloads.get(USER_STRESS_RESULTS_REL)),
         "source_internal_leak_scan_gate_results": _as_mapping(launch_artifacts.get("source_internal_leak_scan_gate_results"))
@@ -6127,6 +6199,10 @@ def evaluate_launch_readiness(
     full_app_release_sweep_gate = _as_mapping(launch_artifacts.get("full_app_release_sweep_gate_results"))
     settings_live_feature_gate = _as_mapping(launch_artifacts.get("settings_live_feature_gate_results"))
     performance_budget_gate = _as_mapping(launch_artifacts.get("performance_budget_gate_results"))
+    first_paint_slo_gate = _as_mapping(launch_artifacts.get("first_paint_slo_gate_results"))
+    query_boundary_lint_gate = _as_mapping(launch_artifacts.get("query_boundary_lint_gate_results"))
+    ui_system_grade_gate = _as_mapping(launch_artifacts.get("ui_system_grade_gate_results"))
+    a_grade_execution_matrix_gate = _as_mapping(launch_artifacts.get("a_grade_execution_matrix_gate_results"))
     full_app_launch_gate = _as_mapping(launch_artifacts.get("full_app_launch_gate_results"))
     deterministic_render_gate = _as_mapping(launch_artifacts.get("deterministic_render_gate_results"))
     browser_smoke_gate = _as_mapping(launch_artifacts.get("browser_smoke_gate_results"))
@@ -6194,6 +6270,15 @@ def evaluate_launch_readiness(
         "passed": passed,
         "hard_gate_passed": passed,
         "failure_count": len(failures),
+        "waiver_count": _as_int(_as_mapping(launch_artifacts.get("launch_waivers")).get("waiver_count")),
+        "blocker_summary": [
+            {
+                "gate": str(row.get("code") or row.get("gate") or ""),
+                "failure_reason": str(row.get("failure_reason") or row.get("message") or ""),
+                "artifact": str(row.get("path") or row.get("artifact") or ""),
+            }
+            for row in failures[:20]
+        ],
         "blocking_failures": failures,
         "check_count": len(matrix),
         "pass_count": sum(1 for row in matrix if row.get("passed")),
@@ -6261,6 +6346,15 @@ def evaluate_launch_readiness(
         and bool(rollback_readiness_gate.get("rollback_ready", rollback_readiness_gate.get("passed")))
         and bool(post_deploy_smoke_gate.get("passed"))
         and bool(snowflake_object_drift_gate.get("passed")),
+        "a_grade_ready": bool(a_grade_execution_matrix_gate.get("a_grade_ready")),
+        "a_grade_execution_matrix_passed": bool(a_grade_execution_matrix_gate.get("passed")),
+        "a_grade_deferred_count": _as_int(a_grade_execution_matrix_gate.get("a_grade_deferred_count")),
+        "query_performance_grade": str(a_grade_execution_matrix_gate.get("query_performance_grade") or ""),
+        "app_performance_grade": str(a_grade_execution_matrix_gate.get("app_performance_grade") or ""),
+        "ux_grade": str(a_grade_execution_matrix_gate.get("ux_grade") or ""),
+        "maintainability_grade": str(a_grade_execution_matrix_gate.get("maintainability_grade") or ""),
+        "production_readiness_grade": str(a_grade_execution_matrix_gate.get("production_readiness_grade") or ""),
+        "required_followups": _as_list(a_grade_execution_matrix_gate.get("required_followups")),
         "rollback_ready": bool(production_deployment_gate.get("rollback_ready"))
         and bool(rollback_readiness_gate.get("rollback_ready", rollback_readiness_gate.get("passed"))),
         "connection_policy_passed": bool(connection_policy_gate.get("passed")),
@@ -6312,10 +6406,20 @@ def evaluate_launch_readiness(
         ),
         "settings_live_feature_gate_passed": bool(settings_live_feature_gate.get("passed")),
         "first_paint_gate_passed": bool(first_paint_gate.get("passed")),
+        "first_paint_slo_passed": bool(first_paint_slo_gate.get("passed")),
+        "first_paint_slo_failure_count": _as_int(first_paint_slo_gate.get("failure_count")),
         "first_paint_failure_count": max(
             _as_int(first_paint_gate.get("failure_count")),
             _as_int(full_app_release_sweep_gate.get("first_paint_failure_count")),
+            _as_int(first_paint_slo_gate.get("failure_count")),
         ),
+        "query_boundary_lint_passed": bool(query_boundary_lint_gate.get("passed")),
+        "query_boundary_missing_count": _as_int(query_boundary_lint_gate.get("missing_query_boundary_count")),
+        "metadata_probe_violation_count": _as_int(performance_budget_gate.get("metadata_probe_violation_count")),
+        "pre_first_paint_session_open_count": _as_int(
+            performance_budget_gate.get("pre_first_paint_session_open_count")
+        ),
+        "shell_session_open_count": _as_int(performance_budget_gate.get("shell_session_open_count")),
         "cost_overview_autoload_violation_count": max(
             _as_int(performance_budget_gate.get("cost_overview_autoload_violation_count")),
             _as_int(full_app_release_sweep_gate.get("cost_overview_autoload_violation_count")),
@@ -6347,6 +6451,13 @@ def evaluate_launch_readiness(
             _as_int(full_app_release_sweep_gate.get("sql_cleanup_failure_count")),
         ),
         "metric_source_governance_passed": bool(metric_source_governance_gate.get("passed")),
+        "ui_system_grade_passed": bool(ui_system_grade_gate.get("passed")),
+        "ui_grade": str(
+            a_grade_execution_matrix_gate.get("ui_grade")
+            or ui_system_grade_gate.get("ui_grade")
+            or ""
+        ),
+        "ui_a_grade_ready": bool(ui_system_grade_gate.get("ui_a_grade_ready")),
         "ui_kit_alignment_passed": bool(ui_kit_alignment_gate.get("passed")),
         "ui_kit_command_brief_surface_count": _as_int(ui_kit_alignment_gate.get("command_brief_surface_count")),
         "ui_kit_source_footer_leak_count": _as_int(ui_kit_alignment_gate.get("source_footer_leak_count")),
@@ -6641,6 +6752,12 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     payloads.update(formula_end_to_end_artifacts)
     performance_budget_artifacts = write_performance_budget_gate_artifacts(root_path)
     payloads.update(performance_budget_artifacts)
+    first_paint_slo_artifacts = write_first_paint_slo_artifacts(root_path)
+    payloads.update(first_paint_slo_artifacts)
+    query_boundary_lint_artifacts = write_query_boundary_lint_artifacts(root_path)
+    payloads.update(query_boundary_lint_artifacts)
+    ui_system_grade_artifacts = write_ui_system_grade_artifacts(root_path)
+    payloads.update(ui_system_grade_artifacts)
     delete_first_cleanup_artifacts = write_delete_first_cleanup_artifacts(root_path)
     payloads.update(delete_first_cleanup_artifacts)
     import_laziness_artifacts = write_import_laziness_artifacts(root_path)
@@ -6710,6 +6827,11 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["app_entry_smoke_gate_results"] = app_entry_smoke_artifacts[APP_ENTRY_SMOKE_GATE_REL]
     launch_artifacts["import_laziness_gate_results"] = import_laziness_artifacts[IMPORT_LAZINESS_GATE_REL]
     launch_artifacts["performance_budget_gate_results"] = performance_budget_artifacts[PERFORMANCE_BUDGET_GATE_REL]
+    launch_artifacts["first_paint_slo_gate_results"] = first_paint_slo_artifacts[FIRST_PAINT_SLO_GATE_REL]
+    launch_artifacts["query_boundary_lint_gate_results"] = query_boundary_lint_artifacts[
+        QUERY_BOUNDARY_LINT_GATE_REL
+    ]
+    launch_artifacts["ui_system_grade_gate_results"] = ui_system_grade_artifacts[UI_SYSTEM_GRADE_GATE_REL]
     launch_artifacts["cortex_token_efficiency_gate_results"] = cortex_token_efficiency_artifacts[
         CORTEX_TOKEN_EFFICIENCY_GATE_REL
     ]
@@ -7119,6 +7241,14 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     raw_results, raw_failures = _raw_invariant_artifacts(root_path, payloads)
     launch_artifacts["raw_invariant_results"] = raw_results
     launch_artifacts["raw_invariant_failures"] = raw_failures
+    a_grade_artifacts = write_a_grade_execution_matrix_artifacts(
+        root_path,
+        launch_artifacts=launch_artifacts,
+    )
+    payloads.update(a_grade_artifacts)
+    launch_artifacts["a_grade_execution_matrix_gate_results"] = a_grade_artifacts[
+        A_GRADE_EXECUTION_MATRIX_GATE_REL
+    ]
 
     launch_summary, launch_failures, matrix = evaluate_launch_readiness(
         payloads,
@@ -7200,6 +7330,14 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["ci_artifact_reality_gate_results"] = evaluate_ci_artifact_reality_gate(
         launch_artifacts["ci_artifact_reality_results"]
     )
+    a_grade_artifacts = write_a_grade_execution_matrix_artifacts(
+        root_path,
+        launch_artifacts=launch_artifacts,
+    )
+    payloads.update(a_grade_artifacts)
+    launch_artifacts["a_grade_execution_matrix_gate_results"] = a_grade_artifacts[
+        A_GRADE_EXECUTION_MATRIX_GATE_REL
+    ]
     launch_summary, launch_failures, matrix = evaluate_launch_readiness(
         payloads,
         launch_artifacts,

@@ -105,6 +105,15 @@ jobs:
       - name: Run SQL performance linter tests
         run: python -m unittest tests.test_sql_performance_lint
 
+      - name: Run A-grade production gate tests
+        run: |
+          python -m unittest \
+            tests.test_a_grade_execution_matrix \
+            tests.test_first_paint_slo \
+            tests.test_query_boundary_lint \
+            tests.test_ui_system_grade \
+            tests.test_compatibility
+
       - name: Run Snowflake execution validation tests
         run: python -m unittest tests.test_snowflake_execution_validation
 
@@ -158,6 +167,18 @@ jobs:
 
       - name: Run production release candidate orchestrator
         run: python -m tools.contracts.production_release_candidate --profile internal_fixture --skip-refresh
+
+      - name: Run A-grade execution matrix gate
+        run: python -m tools.contracts.a_grade_execution_matrix
+
+      - name: Run first-paint SLO gate
+        run: python -m tools.contracts.first_paint_slo
+
+      - name: Run query-boundary lint gate
+        run: python -m tools.contracts.query_boundary_lint
+
+      - name: Run UI system grade gate
+        run: python -m tools.contracts.ui_system_grade
 
       - name: Upload Decision Workspace proof artifacts
         if: always()

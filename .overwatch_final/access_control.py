@@ -9,19 +9,16 @@ import threading
 import time
 
 import streamlit as st
-from streamlit.runtime.scriptrunner import StopException
 
 from config import ADMIN_ACCESS_ROLES
 from runtime_state import (
     CONNECTION_AVAILABLE,
-    CONNECTION_UNAVAILABLE,
     CURRENT_ROLE,
     CURRENT_ROLE_SOURCE,
     LAST_ALLOWED_ROLE,
     get_state,
     set_state,
 )
-from utils.session import get_session
 
 
 _SNOWFLAKE_AVAILABLE_PROCESS_CACHE: bool | None = None
@@ -67,7 +64,13 @@ def current_role_allows_app_access(role: str) -> bool:
 
 
 def refresh_current_role_for_access(connection_available: bool) -> str:
-    """Capture CURRENT_ROLE before deciding whether the admin monitor can render."""
+    """Return the cached role without opening a session during shell paint.
+
+    The first packet query owns the initial Snowflake session boundary. Opening
+    a session from the shell just to render navigation makes first-paint proof
+    ambiguous, so role capture is deferred until a packet/action path already
+    has a justified boundary.
+    """
     role = get_current_role()
     if not connection_available:
         return role or get_last_allowed_role()
@@ -75,14 +78,6 @@ def refresh_current_role_for_access(connection_available: bool) -> str:
         return role
     if role and get_state(CURRENT_ROLE_SOURCE) == "secrets":
         return role
-    if not role and get_last_allowed_role():
-        return get_last_allowed_role()
-    try:
-        get_session()
-    except StopException:
-        set_state(CONNECTION_UNAVAILABLE, True)
-    except Exception:
-        pass
     return get_stable_current_role()
 
 

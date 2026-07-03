@@ -177,6 +177,46 @@ class PerformanceBudgetGateTests(unittest.TestCase):
         reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
         self.assertIn("Cost Overview", reasons)
 
+    def test_pre_first_paint_shell_session_and_metadata_probe_fail(self):
+        from tools.contracts.performance_budget_gate import PRIMARY_SECTIONS, evaluate_performance_budget_gate
+
+        first_paint = {
+            "rows": [
+                {
+                    "section": section,
+                    "workflow": "Overview",
+                    "product_boundary": "first_paint_packet",
+                    "execution_boundary": "decision_packet",
+                    "cold_first_paint_packet_query_count": 1,
+                    "warm_first_paint_query_count": 0,
+                    "non_packet_first_paint_event_count": 0,
+                    "evidence_query_count": 0,
+                    "account_usage_count": 0,
+                    "detail_query_count": 0,
+                    "cost_workbench_query_count": 0,
+                    "query_search_query_count": 0,
+                    "direct_sql_count": 0,
+                    "session_open_count": 1,
+                    "pre_first_paint_session_open_count": 1 if section == "Executive Landing" else 0,
+                    "shell_session_open_count": 1 if section == "DBA Control Room" else 0,
+                    "metadata_probe_count": 2 if section == "Alert Center" else 0,
+                    "elapsed_ms": 10,
+                    "passed": True,
+                }
+                for section in PRIMARY_SECTIONS
+            ]
+        }
+
+        gate = evaluate_performance_budget_gate(first_paint, {"rows": []})
+
+        self.assertFalse(gate["passed"])
+        self.assertEqual(gate["pre_first_paint_session_open_count"], 1)
+        self.assertEqual(gate["shell_session_open_count"], 1)
+        self.assertEqual(gate["metadata_probe_violation_count"], 1)
+        reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
+        self.assertIn("before first-paint", reasons)
+        self.assertIn("metadata", reasons)
+
 
 if __name__ == "__main__":
     unittest.main()

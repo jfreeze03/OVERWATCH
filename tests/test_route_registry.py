@@ -11,9 +11,8 @@ import route_registry  # noqa: E402
 import workflow_contracts  # noqa: E402
 import config  # noqa: E402
 from config import PRIMARY_SECTIONS, normalize_section_name  # noqa: E402
-from sections import account_health  # noqa: E402
 from sections import alert_center  # noqa: E402
-from sections import executive_landing  # noqa: E402
+from sections import executive_landing_common  # noqa: E402
 from sections import executive_landing_contracts  # noqa: E402
 from sections import security_posture_contracts  # noqa: E402
 
@@ -109,8 +108,8 @@ class RouteRegistryTests(unittest.TestCase):
         for alias, workflow in expected.items():
             with self.subTest(alias=alias):
                 self.assertEqual(route_registry.normalize_workflow_alias("Executive Landing", alias), workflow)
-                self.assertEqual(executive_landing.normalize_executive_landing_workflow(alias), workflow)
-        self.assertEqual(executive_landing.normalize_executive_landing_workflow("Unknown"), "Executive Overview")
+                self.assertEqual(executive_landing_common.normalize_executive_landing_workflow(alias), workflow)
+        self.assertEqual(executive_landing_common.normalize_executive_landing_workflow("Unknown"), "Executive Overview")
 
     def test_alert_center_aliases_remain_current_panes(self):
         expected = {
@@ -129,9 +128,9 @@ class RouteRegistryTests(unittest.TestCase):
                 self.assertEqual(alert_center._normalize_alert_center_view(alias), pane)
 
     def test_account_health_retired_routes_still_land_on_control_room(self):
-        for route in (None, "Account Health", "Command Center", "DBA Control Room"):
+        for route in ("Account Health", "Command Center", "DBA Control Room"):
             with self.subTest(route=route):
-                self.assertEqual(account_health._canonical_account_route(route), "DBA Control Room")
+                self.assertEqual(route_registry.normalize_section_route(route), "DBA Control Room")
 
     def test_config_reuses_route_registry_contracts(self):
         self.assertEqual(config.SECTION_REDIRECTS, route_registry.LEGACY_SECTION_ALIASES)
@@ -171,10 +170,6 @@ class RouteRegistryTests(unittest.TestCase):
             alert_center._normalize_alert_center_view("Issue Inbox"),
             route_registry.normalize_workflow_alias("Alert Center", "Issue Inbox"),
         )
-        self.assertEqual(
-            account_health._canonical_account_route("Account Health"),
-            route_registry.normalize_section_route("Account Health"),
-        )
 
     def test_route_registry_stays_dependency_light(self):
         source = (APP_ROOT / "route_registry.py").read_text(encoding="utf-8")
@@ -197,7 +192,6 @@ class RouteRegistryTests(unittest.TestCase):
     def test_route_registry_consumers_import_without_live_sessions(self):
         import workflow_contracts as imported_workflow_contracts  # noqa: F401
         import config as imported_config  # noqa: F401
-        from sections import account_health_common  # noqa: F401
         from sections import alert_center_navigation  # noqa: F401
         from sections import executive_landing_contracts  # noqa: F401
         from sections import security_posture_contracts  # noqa: F401

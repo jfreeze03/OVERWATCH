@@ -1,8 +1,7 @@
 """Lightweight Executive Landing route renderer.
 
-The compatibility facade in ``sections.executive_landing`` still re-exports
-the historical public surface. This route module keeps app first paint cheaper
-by importing only the active workflow renderer after the shell state is ready.
+This route module keeps app first paint cheap by importing only the active
+workflow renderer after the shell state is ready.
 """
 from __future__ import annotations
 

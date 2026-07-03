@@ -261,14 +261,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("state[workspace_key] = True", helper_text)
         self.assertIn("state[brief_key] = False", helper_text)
 
-        executive_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
         executive_shell = (APP_ROOT / "sections" / "executive_landing_shell.py").read_text(encoding="utf-8")
         executive_overview = (APP_ROOT / "sections" / "executive_landing_overview_view.py").read_text(encoding="utf-8")
         executive_security = (APP_ROOT / "sections" / "executive_landing_security_view.py").read_text(encoding="utf-8")
         self.assertIn("Executive command center", executive_overview)
         self.assertIn("Core executive KPIs", executive_overview)
         self.assertIn("What needs attention first", executive_overview)
-        self.assertNotIn("Executive Summary Signals", executive_text)
+        self.assertNotIn("Executive Summary Signals", executive_shell)
         self.assertNotIn("Executive window", executive_shell)
         self.assertNotIn("Refresh Decision Brief", executive_shell)
         self.assertIn("_active_window_days()", executive_shell)
@@ -415,7 +414,6 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("set_state(NAV_SECTION, target)", navigation_text)
 
         direct_nav_modules = {
-            "account_health_overview_view.py": ("apply_navigation_state(section)", "apply_navigation_state(tgt)"),
             "dba_control_room.py": ("apply_navigation_state(raw_target)",),
             "dba_tools.py": ('apply_navigation_state("Alert Center")',),
             "executive_landing_common.py": ("apply_navigation_state(section)",),
@@ -500,7 +498,7 @@ class NavigationIntegrityTests(unittest.TestCase):
     def test_primary_workflow_text_does_not_use_abandoned_four_section_nav(self):
         primary_text_files = [
             APP_ROOT / "layout.py",
-            APP_ROOT / "sections" / "executive_landing.py",
+            APP_ROOT / "sections" / "executive_landing_shell.py",
             APP_ROOT / "sections" / "dba_control_room" / "render.py",
             APP_ROOT / "sections" / "alert_center.py",
             APP_ROOT / "sections" / "cost_contract.py",
@@ -516,8 +514,9 @@ class NavigationIntegrityTests(unittest.TestCase):
     def test_executive_landing_uses_direct_observability_module(self):
         self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing_shell")
         self.assertTrue((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
-        full_workspace_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
+        self.assertFalse((APP_ROOT / "sections" / "executive_landing.py").exists())
         route_shell_text = (APP_ROOT / "sections" / "executive_landing_shell.py").read_text(encoding="utf-8")
+        full_workspace_text = route_shell_text
         observability_text = (APP_ROOT / "sections" / "executive_landing_data.py").read_text(encoding="utf-8")
         overview_text = (APP_ROOT / "sections" / "executive_landing_overview_view.py").read_text(encoding="utf-8")
 
@@ -938,7 +937,6 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("_sync_experience_navigation", app_text)
 
     def test_executive_landing_routes_to_workflow_panes(self):
-        executive_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
         executive_shell = (APP_ROOT / "sections" / "executive_landing_shell.py").read_text(encoding="utf-8")
         executive_contracts = (APP_ROOT / "sections" / "executive_landing_contracts.py").read_text(encoding="utf-8")
         executive_common = (APP_ROOT / "sections" / "executive_landing_common.py").read_text(encoding="utf-8")
@@ -1144,7 +1142,6 @@ class NavigationIntegrityTests(unittest.TestCase):
     def test_workflow_hubs_expose_expected_subworkflows(self):
         from sections import (
             alert_center,
-            change_drift,
             cost_contract,
             dba_control_room,
             pipeline_health,
@@ -1333,37 +1330,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(compatibility_state_for_section("Data Sharing")["security_posture_view"], "Data Sharing Exposure")
         self.assertEqual(compatibility_state_for_section("Failed Logins")["security_posture_view"], "Failed Logins")
         self.assertEqual(compatibility_state_for_section("Access posture")["security_posture_view"], "Security Overview")
-        self.assertNotIn("Release evidence", change_drift.WORKFLOWS)
-        self.assertNotIn("Owner approval evidence", change_drift.WORKFLOWS)
-        self.assertIn("Schema and object drift", change_drift.WORKFLOWS)
-        self.assertIn("Data movement and replication", change_drift.WORKFLOWS)
-        self.assertIn("Controlled DBA actions", change_drift.WORKFLOWS)
-        self.assertEqual(change_drift.WORKFLOW_MODULES["Controlled DBA actions"], "sections.dba_tools")
-        change_drift_text = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in [
-                APP_ROOT / "sections" / "change_drift.py",
-                APP_ROOT / "sections" / "change_drift_workflows_view.py",
-            ]
-        )
         dba_tools_text = (APP_ROOT / "sections" / "dba_tools.py").read_text(encoding="utf-8")
-        object_change_text = (APP_ROOT / "sections" / "object_change_monitor.py").read_text(encoding="utf-8")
-        self.assertIn('st.session_state["dba_tools_focus_tool"] = "Schema Compare"', change_drift_text)
         self.assertIn('focus_tool = str(st.session_state.get("dba_tools_focus_tool") or "")', dba_tools_text)
         self.assertIn("focus_tool_active = (", dba_tools_text)
         self.assertIn("selected_tool = focus_tool", dba_tools_text)
         self.assertIn("if not focus_tool_active:", dba_tools_text)
-        self.assertNotIn('st.header("Who Changed What?")', object_change_text)
-        self.assertEqual(
-            change_drift.WORKFLOWS[:5],
-            (
-                "Object and access changes",
-                "Schema and object drift",
-                "Data movement and replication",
-                "Stored procedure lineage",
-                "Controlled DBA actions",
-            ),
-        )
 
     def test_workflow_hubs_lazy_load_specialist_modules(self):
         hub_files = {
@@ -1384,25 +1355,9 @@ class NavigationIntegrityTests(unittest.TestCase):
                 "security_access.render()",
                 "data_sharing.render()",
             ],
-            "change_drift.py": [
-                "from sections import",
-                "object_change_monitor.render()",
-                "stored_proc_tracker.render()",
-                "dba_tools.render()",
-            ],
         }
         for file_name, removed_patterns in hub_files.items():
-            if file_name == "change_drift.py":
-                text = "\n".join(
-                    path.read_text(encoding="utf-8")
-                    for path in [
-                        APP_ROOT / "sections" / "change_drift.py",
-                        APP_ROOT / "sections" / "change_drift_contracts.py",
-                        APP_ROOT / "sections" / "change_drift_workflows_view.py",
-                    ]
-                )
-            else:
-                text = (APP_ROOT / "sections" / file_name).read_text(encoding="utf-8")
+            text = (APP_ROOT / "sections" / file_name).read_text(encoding="utf-8")
             with self.subTest(file_name=file_name):
                 self.assertIn("WORKFLOW_MODULES", text)
                 self.assertIn("render_workflow_module(", text)
@@ -2546,8 +2501,6 @@ class NavigationIntegrityTests(unittest.TestCase):
             ("cost_contract.py", 'st.header("Cost & Contract")'),
             ("workload_operations.py", 'st.header("Workload Operations")'),
             ("security_posture.py", 'st.header("Security Posture")'),
-            ("change_drift.py", 'st.header("Change & Drift")'),
-            ("account_health.py", 'st.header("Account Health - Command Center")'),
         ]
         for filename, marker in duplicate_headers:
             with self.subTest(filename=filename):

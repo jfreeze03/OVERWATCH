@@ -10,11 +10,8 @@ sys.path.insert(0, str(APP_ROOT))
 
 
 FACADE_THRESHOLDS = {
-    "sections.change_drift": 150,
     "sections.task_management": 150,
-    "sections.executive_landing": 200,
     "sections.cost_center": 150,
-    "sections.account_health": 150,
     "sections.security_posture": 250,
     "sections.alert_center": 1000,
     "sections.dba_tools": 350,
@@ -26,18 +23,6 @@ FACADE_THRESHOLDS = {
 
 
 FORBIDDEN_BY_MODULE = {
-    "sections.change_drift": (
-        "SNOWFLAKE.ACCOUNT_USAGE",
-        "INFORMATION_SCHEMA.QUERY_HISTORY",
-        "run_query(",
-        "run_query_or_raise(",
-        "pd.DataFrame(",
-        "CREATE TABLE",
-        "ALTER TABLE",
-        "INSERT INTO",
-        'if active_view == "Change Brief"',
-        'elif active_view == "Change Workflows"',
-    ),
     "sections.task_management": (
         "SNOWFLAKE.ACCOUNT_USAGE",
         "INFORMATION_SCHEMA.QUERY_HISTORY",
@@ -49,15 +34,6 @@ FORBIDDEN_BY_MODULE = {
         "SYSTEM$CANCEL",
         'elif task_view == "',
     ),
-    "sections.executive_landing": (
-        "SNOWFLAKE.ACCOUNT_USAGE",
-        "run_query(",
-        "pd.DataFrame(",
-        "def _build_platform_operating_score",
-        "def _load_executive_snapshot",
-        "def _render_executive_admin_advanced",
-        'elif active_workflow == "',
-    ),
     "sections.cost_center": (
         "SNOWFLAKE.ACCOUNT_USAGE",
         "run_query(",
@@ -66,18 +42,6 @@ FORBIDDEN_BY_MODULE = {
         "INSERT INTO",
         'elif cost_view == "',
         "filter_existing_columns(",
-    ),
-    "sections.account_health": (
-        "SNOWFLAKE.ACCOUNT_USAGE",
-        "INFORMATION_SCHEMA.QUERY_HISTORY",
-        "run_query(",
-        "run_query_or_raise(",
-        "pd.DataFrame(",
-        "CREATE TABLE",
-        "ALTER TABLE",
-        "INSERT INTO",
-        'if active_view == "Overview"',
-        'elif active_view == "Morning Report"',
     ),
     "sections.security_posture": (
         "SNOWFLAKE.ACCOUNT_USAGE",
@@ -162,23 +126,18 @@ class FacadeNoCreepTests(unittest.TestCase):
                             self.assertTrue(hasattr(module, name))
 
     def test_renderer_maps_cover_contracts(self):
-        change_drift = importlib.import_module("sections.change_drift")
-        self.assertEqual(set(change_drift.CHANGE_DRIFT_RENDERERS), set(change_drift.CHANGE_DRIFT_VIEWS))
-
         task_management = importlib.import_module("sections.task_management")
         self.assertEqual(set(task_management.TASK_MANAGEMENT_RENDERERS), set(task_management.TASK_CONTROL_VIEWS))
 
-        executive_landing = importlib.import_module("sections.executive_landing")
+        executive_landing_shell = importlib.import_module("sections.executive_landing_shell")
+        executive_contracts = importlib.import_module("sections.executive_landing_contracts")
         self.assertEqual(
-            set(executive_landing.EXECUTIVE_LANDING_RENDERERS),
-            set(executive_landing.EXECUTIVE_LANDING_WORKFLOWS),
+            set(executive_landing_shell.EXECUTIVE_LANDING_RENDERER_PATHS),
+            set(executive_contracts.EXECUTIVE_LANDING_WORKFLOWS),
         )
 
         cost_center = importlib.import_module("sections.cost_center")
         self.assertEqual(set(cost_center.COST_CENTER_RENDERERS), set(cost_center.COST_CENTER_VIEWS))
-
-        account_health = importlib.import_module("sections.account_health")
-        self.assertEqual(set(account_health.ACCOUNT_HEALTH_RENDERERS), set(account_health.ACCOUNT_HEALTH_PANES))
 
         security_posture = importlib.import_module("sections.security_posture")
         covered_security = set(security_posture.SECURITY_POSTURE_RENDERERS) | set(security_posture.WORKFLOW_MODULES)

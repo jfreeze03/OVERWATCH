@@ -52,13 +52,6 @@ class GuardrailTests(unittest.TestCase):
         self.assertEqual(kwargs["section"], "Mart")
 
     def test_usage_overview_and_heatmap_sources_use_mart_before_live(self):
-        account_text = "\n".join(
-            path.read_text(encoding="utf-8").upper()
-            for path in [
-                APP_ROOT / "sections" / "account_health.py",
-                APP_ROOT / "sections" / "account_health_overview_view.py",
-            ]
-        )
         cost_text = "\n".join(
             path.read_text(encoding="utf-8").upper()
             for path in [
@@ -89,8 +82,6 @@ class GuardrailTests(unittest.TestCase):
                 APP_ROOT / "sections" / "task_management_etl_audit_view.py",
             ]
         )
-        self.assertIn("LOAD_SHARED_USAGE_METERING_KPIS", account_text)
-        self.assertIn("LOAD_SHARED_QUERY_HISTORY_ROLLUP", account_text)
         self.assertIn("LOAD_SHARED_BILL_METERING_SUMMARY", cost_text)
         self.assertIn("LOAD_SHARED_BILL_WAREHOUSE_DELTA", cost_text)
         self.assertIn("LOAD_SHARED_WAREHOUSE_DAILY_CREDITS_BY_WAREHOUSE", cost_text)

@@ -134,7 +134,7 @@ class OperationalIntelligenceTests(unittest.TestCase):
             ROOT / ".overwatch_final" / "sections" / "cost_contract_loader.py",
             ROOT / ".overwatch_final" / "sections" / "cost_contract_evidence_load.py",
             ROOT / ".overwatch_final" / "sections" / "dba_control_room.py",
-            ROOT / ".overwatch_final" / "sections" / "executive_landing.py",
+            ROOT / ".overwatch_final" / "sections" / "executive_landing_shell.py",
         ]
         text = "\n".join(_section_source(path) for path in section_paths)
         for marker in [

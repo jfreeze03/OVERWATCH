@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
-from sections import executive_landing  # noqa: E402
+from sections import executive_landing_shell as shell  # noqa: E402
 from sections import executive_landing_actions_view as actions_view  # noqa: E402
 from sections import executive_landing_admin_view as admin_view  # noqa: E402
 from sections import executive_landing_change_view as change_view  # noqa: E402
@@ -74,7 +74,7 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
             self.assertEqual(common.normalize_executive_landing_workflow(alias), canonical)
         self.assertEqual(common.normalize_executive_landing_workflow("unknown"), "Executive Overview")
 
-    def test_facade_reexports_focused_module_names(self):
+    def test_focused_modules_export_all_names(self):
         for module in (
             contracts,
             common,
@@ -91,10 +91,7 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
         ):
             for name in module.__all__:
                 with self.subTest(module=module.__name__, name=name):
-                    self.assertIs(getattr(executive_landing, name), getattr(module, name))
-        for name in executive_landing.__all__:
-            with self.subTest(name=name):
-                self.assertTrue(hasattr(executive_landing, name))
+                    self.assertTrue(hasattr(module, name))
 
     def test_pure_scoring_and_filter_helpers(self):
         self.assertEqual(models._platform_score_state(94), "Ready")
@@ -157,14 +154,19 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
         self.assertEqual(data._environment_filter_sql("x"), "")
 
     def test_renderer_maps_cover_every_workflow(self):
-        self.assertEqual(set(contracts.EXECUTIVE_LANDING_WORKFLOWS), set(executive_landing.EXECUTIVE_LANDING_RENDERERS))
-        self.assertIs(executive_landing.EXECUTIVE_LANDING_RENDERERS["Executive Overview"], overview_view.render_executive_overview)
-        self.assertIs(executive_landing.EXECUTIVE_LANDING_RENDERERS["Cost Movement"], cost_view.render_executive_cost_movement)
-        self.assertIs(executive_landing.EXECUTIVE_LANDING_RENDERERS["Operational Risk"], operational_view.render_executive_operational_risk)
-        self.assertIs(executive_landing.EXECUTIVE_LANDING_RENDERERS["Security Risk"], security_view.render_executive_security_risk)
-        self.assertIs(executive_landing.EXECUTIVE_LANDING_RENDERERS["Change Summary"], change_view.render_executive_change_summary)
-        self.assertIs(executive_landing.EXECUTIVE_LANDING_RENDERERS["Executive Actions"], actions_view.render_executive_actions)
-        self.assertIs(executive_landing.EXECUTIVE_LANDING_RENDERERS["Executive Admin / Advanced"], admin_view.render_executive_admin_advanced)
+        self.assertEqual(set(contracts.EXECUTIVE_LANDING_WORKFLOWS), set(shell.EXECUTIVE_LANDING_RENDERER_PATHS))
+        expected = {
+            "Executive Overview": ("sections.executive_landing_overview_view", "render_executive_overview"),
+            "Cost Movement": ("sections.executive_landing_cost_view", "render_executive_cost_movement"),
+            "Operational Risk": ("sections.executive_landing_operational_view", "render_executive_operational_risk"),
+            "Security Risk": ("sections.executive_landing_security_view", "render_executive_security_risk"),
+            "Change Summary": ("sections.executive_landing_change_view", "render_executive_change_summary"),
+            "Executive Actions": ("sections.executive_landing_actions_view", "render_executive_actions"),
+            "Executive Admin / Advanced": ("sections.executive_landing_admin_view", "render_executive_admin_advanced"),
+        }
+        self.assertEqual(dict(shell.EXECUTIVE_LANDING_RENDERER_PATHS), expected)
+        self.assertIs(shell._workflow_renderer("Executive Overview"), overview_view.render_executive_overview)
+        self.assertIs(shell._workflow_renderer("Executive Admin / Advanced"), admin_view.render_executive_admin_advanced)
 
     def test_route_shell_uses_platform_primary_tabs(self):
         source = (APP_ROOT / "sections" / "executive_landing_shell.py").read_text(encoding="utf-8")
@@ -182,10 +184,8 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
             calls.append(kwargs)
             return True
 
-        original = executive_landing.EXECUTIVE_LANDING_RENDERERS.copy()
-        try:
-            executive_landing.EXECUTIVE_LANDING_RENDERERS["Executive Overview"] = fake_renderer
-            result = executive_landing._render_loaded_executive_landing_workflow(
+        with patch.object(shell, "_workflow_renderer", return_value=fake_renderer):
+            result = shell._render_loaded_executive_landing_workflow(
                 "Executive Overview",
                 summary={"state": "Ready"},
                 company="ALFA",
@@ -197,16 +197,13 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
                 snapshot=None,
                 source_health=None,
             )
-        finally:
-            executive_landing.EXECUTIVE_LANDING_RENDERERS.clear()
-            executive_landing.EXECUTIVE_LANDING_RENDERERS.update(original)
         self.assertTrue(result)
         self.assertEqual(calls[0]["company"], "ALFA")
         self.assertEqual(calls[0]["days"], 7)
 
     def test_view_source_preserves_keys_and_navigation_targets(self):
         expected_tokens = {
-            "executive_landing.py": [
+            "executive_landing_shell.py": [
                 "_executive_landing_observability_autoload_scope",
                 "executive_landing_snapshot",
                 "_active_window_days",
@@ -327,19 +324,17 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
         next_clicks.assert_called_once()
         snapshot_prompt.assert_called_once()
 
-    def test_executive_landing_facade_remains_thin(self):
-        source = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
-        self.assertLess(len(source.splitlines()), 200)
+    def test_executive_landing_shell_stays_thin(self):
+        self.assertFalse((APP_ROOT / "sections" / "executive_landing.py").exists())
+        source = (APP_ROOT / "sections" / "executive_landing_shell.py").read_text(encoding="utf-8")
         for fragment in [
             "def _build_platform_operating_score",
-            "def _load_executive_snapshot",
             "def _render_executive_admin_advanced",
             "def _render_cost_movement",
             "def _render_operational_risk",
             "def _render_security_risk",
             "SNOWFLAKE.ACCOUNT_USAGE",
             "run_query(",
-            "pd.DataFrame(",
             'elif active_workflow == "',
         ]:
             with self.subTest(fragment=fragment):

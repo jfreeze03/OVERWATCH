@@ -32,7 +32,7 @@ from route_registry import (
 
 
 PRIMARY_SECTION_MODULES = {
-    "sections.executive_landing",
+    "sections.executive_landing_shell",
     "sections.dba_control_room.render",
     "sections.alert_center",
     "sections.cost_contract",
@@ -151,6 +151,12 @@ def _local_imports(path: Path, app_root: Path, modules: set[str]) -> set[str]:
             resolved = _resolve_local_module(module, modules)
             if resolved:
                 imports.add(resolved)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            # Primary sections lazy-load workflow renderers via
+            # importlib.import_module and WORKFLOW_MODULES string maps, so
+            # exact module-name string constants count as runtime edges.
+            if node.value in modules:
+                imports.add(node.value)
     return imports
 
 

@@ -30,12 +30,6 @@ def _entry(
 
 
 _ADMIN_MODULES = (
-    "sections.account_health_checklist",
-    "sections.account_health_overview_models",
-    "sections.account_health_overview_view",
-    "sections.change_drift_brief_view",
-    "sections.change_drift_models",
-    "sections.change_drift_workflows_view",
     "sections.cost_center_action_queue",
     "sections.cost_center_attribution_view",
     "sections.cost_center_burn_view",

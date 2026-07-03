@@ -361,21 +361,5 @@ class CostCenterSplitTests(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertNotIn(fragment, source)
 
-    def test_account_health_facade_remains_locked(self):
-        source = (APP_ROOT / "sections" / "account_health.py").read_text(encoding="utf-8")
-        self.assertLess(len(source.splitlines()), 150)
-        for fragment in [
-            "SNOWFLAKE.ACCOUNT_USAGE",
-            "run_query(",
-            "pd.DataFrame(",
-            "CREATE TABLE",
-            "INSERT INTO",
-            'if active_view == "Overview"',
-            'elif active_view == "Morning Report"',
-        ]:
-            with self.subTest(fragment=fragment):
-                self.assertNotIn(fragment, source)
-
-
 if __name__ == "__main__":
     unittest.main()

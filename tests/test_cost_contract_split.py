@@ -132,13 +132,5 @@ class CostContractSplitTests(unittest.TestCase):
         ):
             self.assertIn(css_class, theme_text)
 
-    def test_account_health_user_cost_drilldown_targets_explorer_user_lens(self):
-        account_health_text = (APP_ROOT / "sections" / "account_health_overview_view.py").read_text(encoding="utf-8")
-
-        self.assertIn('workflow="Cost Explorer"', account_health_text)
-        self.assertIn('"cc_explorer_lens": "User / Role"', account_health_text)
-        self.assertNotIn('workflow="Cortex AI",\n                        )', account_health_text)
-
-
 if __name__ == "__main__":
     unittest.main()

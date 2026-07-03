@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026.07.03-dead-family-removal
+
+- Removed the orphaned `account_health_*` section family (15 files); the DBA
+  Control Room owns all of that functionality and the "Account Health" route
+  alias still lands there.
+- Removed the unwired `change_drift_*` section family (8 files) and
+  `object_change_monitor`; Workload Operations Change Analysis uses
+  `utils.change_intelligence` directly.
+- Removed the `executive_landing` compatibility facade; the shell in
+  `executive_landing_shell` with lazy per-workflow renderer paths is the only
+  Executive Landing entrypoint. Tests now target the focused modules.
+- Taught `tools/contracts/cleanup_inventory.py` to follow dynamic
+  string-based module loads (importlib / WORKFLOW_MODULES maps) so the
+  reachability inventory no longer misclassifies lazily loaded workflow views.
+- Synced session-open/direct-SQL allowlists, retained runtime module
+  contracts, and the affected test suites.
+
 ## 2026.07.03-review-improvements
 
 - Cache correctness: query cache keys now include schema scope, exceptions-only

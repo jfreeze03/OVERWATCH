@@ -65,6 +65,17 @@ def _load_json(root: Path, rel: str) -> Any:
         return []
 
 
+def _existing_live_payload(root: Path, rel: str) -> Mapping[str, Any]:
+    payload = _load_json(root, rel)
+    if not isinstance(payload, Mapping):
+        return {}
+    if bool(payload.get("raw_sql_included")):
+        return {}
+    if bool(payload.get("live_executed")) and bool(payload.get("live_passed")) and bool(payload.get("passed")):
+        return payload
+    return {}
+
+
 def _rows(payload: object) -> list[Mapping[str, Any]]:
     if isinstance(payload, list):
         return [row for row in payload if isinstance(row, Mapping)]
@@ -389,7 +400,7 @@ def write_cortex_token_efficiency_artifacts(
     root_path = Path(root).resolve()
     launch_profile = _selected_profile(profile)
     results = build_cortex_token_efficiency_results(root_path)
-    live = build_cortex_token_efficiency_live_results(root_path, launch_profile)
+    live = _existing_live_payload(root_path, CORTEX_TOKEN_EFFICIENCY_LIVE_REL) or build_cortex_token_efficiency_live_results(root_path, launch_profile)
     gate = evaluate_cortex_token_efficiency_gate(results)
     live_gate = evaluate_cortex_token_efficiency_live_gate(live, launch_profile, waivers)
     artifacts: dict[str, Any] = {

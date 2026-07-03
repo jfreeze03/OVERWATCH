@@ -14,11 +14,17 @@ import json
 import os
 import subprocess
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from tools.contracts.app_entry_smoke import APP_ENTRY_SMOKE_GATE_REL, write_app_entry_smoke_artifacts
+from tools.contracts.ci_artifact_reality import (
+    CI_ARTIFACT_REALITY_GATE_REL,
+    CI_ARTIFACT_REALITY_RESULTS_REL,
+    evaluate_ci_artifact_reality_gate,
+    write_local_artifact_proof,
+)
 from tools.contracts.full_app_release_sweep import (
     FULL_APP_RELEASE_SWEEP_GATE_REL,
     write_full_app_release_sweep_artifacts,
@@ -38,6 +44,8 @@ from tools.contracts.snowflake_cli_live_validation import (
     CLI_LAUNCH_GATE_REL,
     CLI_PRODUCTION_REHEARSAL_GATE_REL,
     CLI_TEMP_FILE_HYGIENE_GATE_REL,
+    DEFAULT_VALIDATION_DATABASE,
+    DEFAULT_VALIDATION_SCHEMA,
     SnowflakeCliValidationOptions,
     write_snowflake_cli_live_validation_artifacts,
 )
@@ -59,6 +67,7 @@ PRODUCTION_RELEASE_CANDIDATE_GATE_REL = "artifacts/launch_readiness/production_r
 RELEASE_GATE_MATRIX_REL = f"{RELEASE_CANDIDATE_DIR}/release_gate_matrix.json"
 ARTIFACT_MANIFEST_REL = f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json"
 ARTIFACT_HASHES_REL = f"{RELEASE_CANDIDATE_DIR}/artifact_hashes.json"
+RELEASE_CANDIDATE_SUMMARY_REL = f"{RELEASE_CANDIDATE_DIR}/release_candidate_summary.json"
 
 PRODUCER = "production_release_candidate"
 Runner = Callable[[Path], Mapping[str, Any]]
@@ -66,6 +75,17 @@ Runner = Callable[[Path], Mapping[str, Any]]
 
 def _utc_now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _env_or_default(name: str, default: str) -> str:
+    return (os.environ.get(name) or default).strip()
+
+
+def _query_history_enabled_default(profile: str) -> bool:
+    configured = os.environ.get("OVERWATCH_QUERY_PLAN_PROOF")
+    if configured is not None:
+        return configured == "1"
+    return profile in {"internal_live", "prod_candidate"}
 
 
 def _git_sha(root: Path) -> str:
@@ -110,6 +130,24 @@ def _load_artifact_tree(root: Path) -> dict[str, Any]:
         except (OSError, json.JSONDecodeError):
             continue
     return artifacts
+
+
+def _fresh_passing_gate(root: Path, rel: str, *, max_age_minutes: int = 180) -> bool:
+    path = root / rel
+    if not path.exists() or not path.is_file():
+        return False
+    try:
+        age = datetime.now() - datetime.fromtimestamp(path.stat().st_mtime)
+    except OSError:
+        return False
+    if age > timedelta(minutes=max_age_minutes):
+        return False
+    payload = _load_json(root, rel)
+    return (
+        bool(payload.get("passed"))
+        and _as_int(payload.get("failure_count")) == 0
+        and not bool(payload.get("raw_sql_included"))
+    )
 
 
 def _as_int(value: object) -> int:
@@ -181,6 +219,34 @@ def _phase_signature(row: Mapping[str, Any]) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 
+def _artifact_commit_sha(payload: Mapping[str, Any]) -> str:
+    for key in ("commit_sha", "source_commit_sha", "current_commit_sha"):
+        value = str(payload.get(key) or "")
+        if value:
+            return value
+    rows = payload.get("rows")
+    if isinstance(rows, list):
+        for row in rows:
+            if isinstance(row, Mapping):
+                value = str(row.get("commit_sha") or "")
+                if value:
+                    return value
+    return ""
+
+
+def _artifact_row_count(payload: Mapping[str, Any]) -> int:
+    for key in ("row_count", "artifact_count", "phase_count", "object_count"):
+        if key in payload:
+            return _as_int(payload.get(key))
+    rows = payload.get("rows")
+    if isinstance(rows, list):
+        return len(rows)
+    failures = payload.get("failures")
+    if isinstance(failures, list):
+        return len(failures)
+    return 1 if payload else 0
+
+
 def _phase_row(
     root: Path,
     *,
@@ -190,6 +256,82 @@ def _phase_row(
     release_blocking: bool = True,
 ) -> dict[str, Any]:
     passed = bool(gate.get("passed"))
+    artifact_file = root / artifact_path
+    artifact_exists = artifact_file.exists()
+    artifact_sha = _sha256_file(artifact_file)
+    artifact_commit = _artifact_commit_sha(gate)
+    commit_sha = _git_sha(root)
+    token_path_leak_count = max(
+        _as_int(gate.get("token_path_leak_count")),
+        _as_int(gate.get("snowflake_cli_token_path_leak_count")),
+    )
+    temp_sql_path_leak_count = max(
+        _as_int(gate.get("temp_sql_path_leak_count")),
+        _as_int(gate.get("temp_sql_file_leftover_count")),
+    )
+    row = {
+        "producer": PRODUCER,
+        "producer_signature": "",
+        "provenance_origin": "producer",
+        "generated_at": _utc_now(),
+        "commit_sha": commit_sha,
+        "source": "production_release_candidate",
+        "runtime_source": "producer_artifact_gate",
+        "section": "Production Deployment",
+        "workflow": "Release candidate",
+        "phase": phase,
+        "artifact_path": artifact_path,
+        "artifact_exists": artifact_exists,
+        "artifact_sha256": artifact_sha,
+        "artifact_commit_sha": artifact_commit,
+        "artifact_commit_sha_matches": not artifact_commit or artifact_commit == commit_sha,
+        "phase_artifact_producer": str(gate.get("producer") or gate.get("source") or ""),
+        "phase_artifact_producer_signature": str(gate.get("producer_signature") or ""),
+        "phase_artifact_provenance_origin": str(gate.get("provenance_origin") or ""),
+        "token_path_leak_count": token_path_leak_count,
+        "temp_sql_path_leak_count": temp_sql_path_leak_count,
+        "row_count": _artifact_row_count(gate),
+        "referenced_row_ids": gate.get("referenced_row_ids") or gate.get("row_ids") or [],
+        "release_blocking": release_blocking,
+        "passed": passed
+        and artifact_exists
+        and not bool(gate.get("raw_sql_included"))
+        and token_path_leak_count == 0
+        and temp_sql_path_leak_count == 0
+        and (not artifact_commit or artifact_commit == commit_sha),
+        "failure_count": _as_int(gate.get("failure_count")),
+        "failure_reason": ""
+        if (
+            passed
+            and artifact_exists
+            and not bool(gate.get("raw_sql_included"))
+            and token_path_leak_count == 0
+            and temp_sql_path_leak_count == 0
+            and (not artifact_commit or artifact_commit == commit_sha)
+        )
+        else "production release candidate phase failed or artifact dereference failed",
+        "raw_sql_included": False,
+    }
+    row["producer_signature"] = _phase_signature(row)
+    return row
+
+
+def _profile_policy_row(
+    root: Path,
+    options: SnowflakeCliValidationOptions,
+    *,
+    run_launch_readiness: bool,
+) -> dict[str, Any]:
+    profile = options.profile
+    launch_required = profile in {"internal_live", "prod_candidate"}
+    live_required = profile in {"internal_live", "prod_candidate"}
+    browser_required = profile == "prod_candidate"
+    waiver_required = False
+    failures: list[str] = []
+    if launch_required and not run_launch_readiness:
+        failures.append("Launch readiness is required for internal_live and prod_candidate.")
+    if profile == "prod_candidate" and not run_launch_readiness:
+        failures.append("--no-launch-readiness is forbidden for prod_candidate.")
     row = {
         "producer": PRODUCER,
         "producer_signature": "",
@@ -197,16 +339,23 @@ def _phase_row(
         "generated_at": _utc_now(),
         "commit_sha": _git_sha(root),
         "source": "production_release_candidate",
-        "runtime_source": "producer_artifact_gate",
+        "runtime_source": "profile_policy",
         "section": "Production Deployment",
         "workflow": "Release candidate",
-        "phase": phase,
-        "artifact_path": artifact_path,
-        "artifact_exists": (root / artifact_path).exists(),
-        "release_blocking": release_blocking,
-        "passed": passed,
-        "failure_count": _as_int(gate.get("failure_count")),
-        "failure_reason": "" if passed else "production release candidate phase failed",
+        "phase": "profile_policy",
+        "artifact_path": PRODUCTION_RELEASE_CANDIDATE_RESULTS_REL,
+        "artifact_exists": True,
+        "release_blocking": True,
+        "launch_profile": profile,
+        "launch_readiness_required": launch_required,
+        "live_proof_required": live_required,
+        "browser_proof_required": browser_required,
+        "waiver_required": waiver_required,
+        "waiver_present": False,
+        "run_launch_readiness": run_launch_readiness,
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failure_reason": "; ".join(failures),
         "raw_sql_included": False,
     }
     row["producer_signature"] = _phase_signature(row)
@@ -279,6 +428,58 @@ def _failed_gate(*, source: str, reason: str) -> dict[str, Any]:
     }
 
 
+def _progress_payloads(root: Path, phase_rows: Sequence[Mapping[str, Any]], options: SnowflakeCliValidationOptions) -> dict[str, Any]:
+    failures = [
+        dict(row)
+        for row in phase_rows
+        if bool(row.get("release_blocking", True)) and not bool(row.get("passed"))
+    ]
+    generated_at = _utc_now()
+    results = {
+        "source": "production_release_candidate_results",
+        "producer": PRODUCER,
+        "provenance_origin": "producer",
+        "generated_at": generated_at,
+        "commit_sha": _git_sha(root),
+        "launch_profile": options.profile,
+        "completed": False,
+        "passed": False,
+        "all_passed": False,
+        "production_deployable": False,
+        "failure_count": len(failures),
+        "hard_gate_failure_count": len(failures),
+        "phase_count": len(phase_rows),
+        "token_auth_used": options.authenticator.upper() == "PROGRAMMATIC_ACCESS_TOKEN",
+        "token_file_supplied": bool(options.token_file_path),
+        "rows": [dict(row) for row in phase_rows],
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+    failures_payload = {
+        "source": "production_release_candidate_failures",
+        "producer": PRODUCER,
+        "generated_at": generated_at,
+        "completed": False,
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+    return {
+        PRODUCTION_RELEASE_CANDIDATE_RESULTS_REL: results,
+        PRODUCTION_RELEASE_CANDIDATE_FAILURES_REL: failures_payload,
+    }
+
+
+def _write_progress_artifacts(
+    root: Path,
+    phase_rows: Sequence[Mapping[str, Any]],
+    options: SnowflakeCliValidationOptions,
+) -> None:
+    for rel, payload in _progress_payloads(root, phase_rows, options).items():
+        _write_json(root / rel, payload)
+
+
 def build_production_release_candidate_gate(payload: object) -> dict[str, Any]:
     results = payload if isinstance(payload, Mapping) else {}
     failures = list(results.get("failures") or [])
@@ -302,6 +503,62 @@ def build_production_release_candidate_gate(payload: object) -> dict[str, Any]:
     }
 
 
+def _final_release_candidate_summary(root: Path, results: Mapping[str, Any]) -> dict[str, Any]:
+    launch_summary = dict(_load_json(root, "artifacts/launch_readiness/launch_readiness_summary.json"))
+    ci_gate = _load_json(root, CI_ARTIFACT_REALITY_GATE_REL)
+    full_sweep = _load_json(root, FULL_APP_RELEASE_SWEEP_GATE_REL)
+    snowflake_cli = _load_json(root, CLI_LAUNCH_GATE_REL)
+    rehearsal = _load_json(root, CLI_PRODUCTION_REHEARSAL_GATE_REL)
+    current_failures = list(results.get("failures") or [])
+    production_deployable = bool(results.get("production_deployable")) and bool(
+        launch_summary.get("production_deployable", True)
+    )
+    passed = bool(results.get("passed")) and bool(launch_summary.get("passed", True))
+    summary = {
+        **launch_summary,
+        "source": "release_candidate_summary",
+        "producer": PRODUCER,
+        "provenance_origin": "producer",
+        "generated_at": _utc_now(),
+        "commit_sha": _git_sha(root),
+        "passed": passed,
+        "all_passed": passed,
+        "production_deployable": production_deployable,
+        "failure_count": len(current_failures),
+        "hard_gate_failure_count": len(current_failures),
+        "production_release_candidate_passed": bool(results.get("passed")),
+        "production_release_candidate_phase_count": _as_int(results.get("phase_count")),
+        "production_release_candidate_artifact": PRODUCTION_RELEASE_CANDIDATE_RESULTS_REL,
+        "ci_artifact_reality_passed": bool(ci_gate.get("passed", launch_summary.get("ci_artifact_reality_passed"))),
+        "local_artifact_signature": str(
+            results.get("local_artifact_signature") or ci_gate.get("local_artifact_signature") or ""
+        ),
+        "snowflake_cli_gate_passed": bool(
+            snowflake_cli.get("snowflake_cli_gate_passed", snowflake_cli.get("passed", launch_summary.get("snowflake_cli_gate_passed")))
+        ),
+        "snowflake_cli_live_passed": bool(snowflake_cli.get("snowflake_cli_live_passed", launch_summary.get("snowflake_cli_live_passed"))),
+        "deployment_rehearsal_passed": bool(rehearsal.get("passed", launch_summary.get("deployment_rehearsal_passed"))),
+        "full_app_release_sweep_passed": bool(full_sweep.get("passed", launch_summary.get("full_app_release_sweep_passed"))),
+        "token_path_leak_count": max(
+            _as_int(results.get("token_path_leak_count")),
+            _as_int(ci_gate.get("token_path_leak_count")),
+            _as_int(launch_summary.get("token_path_leak_count")),
+        ),
+        "temp_sql_file_leftover_count": max(
+            _as_int(results.get("temp_sql_file_leftover_count")),
+            _as_int(launch_summary.get("temp_sql_file_leftover_count")),
+        ),
+        "hard_gate_failures": current_failures,
+        "failures": current_failures,
+        "raw_sql_included": False,
+    }
+    if current_failures:
+        summary["production_deployable"] = False
+        summary["all_passed"] = False
+        summary["passed"] = False
+    return summary
+
+
 def run_production_release_candidate(
     root: Path | str = ".",
     *,
@@ -312,6 +569,8 @@ def run_production_release_candidate(
     _apply_options_to_env(options)
     payloads: dict[str, Any] = {}
     phase_rows: list[dict[str, Any]] = []
+    phase_rows.append(_profile_policy_row(root_path, options, run_launch_readiness=run_launch_readiness))
+    _write_progress_artifacts(root_path, phase_rows, options)
 
     def add(
         phase: str,
@@ -320,17 +579,28 @@ def run_production_release_candidate(
         *,
         gate_rel: str | None = None,
         release_blocking: bool = True,
+        reuse_fresh_gate: bool = False,
     ) -> None:
+        reused = False
+        effective_gate_rel = gate_rel or artifact_path
+        effective_runner = runner
+        if reuse_fresh_gate and _fresh_passing_gate(root_path, effective_gate_rel):
+            reused = True
+            effective_runner = _load_artifact_tree
         row, artifacts, _gate = _run_phase(
             root_path,
             phase,
             artifact_path,
-            runner,
+            effective_runner,
             gate_rel=gate_rel,
             release_blocking=release_blocking,
         )
+        if reused:
+            row["consumed_existing_artifact"] = True
+            row["runtime_source"] = "fresh_producer_artifact_gate"
         payloads.update(artifacts)
         phase_rows.append(row)
+        _write_progress_artifacts(root_path, phase_rows, options)
 
     add("app_entry_smoke", APP_ENTRY_SMOKE_GATE_REL, write_app_entry_smoke_artifacts, gate_rel=APP_ENTRY_SMOKE_GATE_REL)
     add("import_laziness_runtime_graph", IMPORT_LAZINESS_GATE_REL, write_import_laziness_artifacts, gate_rel=IMPORT_LAZINESS_GATE_REL)
@@ -354,10 +624,17 @@ def run_production_release_candidate(
         CLI_LAUNCH_GATE_REL,
         lambda r: write_snowflake_cli_live_validation_artifacts(r, options=options),
         gate_rel=CLI_LAUNCH_GATE_REL,
+        reuse_fresh_gate=True,
     )
     add("temp_sql_file_hygiene", CLI_TEMP_FILE_HYGIENE_GATE_REL, lambda _r: payloads, gate_rel=CLI_TEMP_FILE_HYGIENE_GATE_REL)
     add("setup_migration_live_validation", "artifacts/launch_readiness/setup_migration_live_gate_results.json", lambda _r: payloads)
-    add("snowflake_object_drift_validation", SNOWFLAKE_OBJECT_DRIFT_GATE_REL, lambda r: write_snowflake_object_drift_validation_artifacts(r, profile=options.profile), gate_rel=SNOWFLAKE_OBJECT_DRIFT_GATE_REL)
+    add(
+        "snowflake_object_drift_validation",
+        SNOWFLAKE_OBJECT_DRIFT_GATE_REL,
+        lambda r: write_snowflake_object_drift_validation_artifacts(r, profile=options.profile),
+        gate_rel=SNOWFLAKE_OBJECT_DRIFT_GATE_REL,
+        reuse_fresh_gate=True,
+    )
     add(
         "production_deployment_rehearsal",
         CLI_PRODUCTION_REHEARSAL_GATE_REL,
@@ -394,6 +671,12 @@ def run_production_release_candidate(
             }
         payloads.update(launch_artifacts)
         payloads.update(_load_artifact_tree(root_path))
+        add(
+            "ci_artifact_reality",
+            CI_ARTIFACT_REALITY_GATE_REL,
+            lambda _r: payloads,
+            gate_rel=CI_ARTIFACT_REALITY_GATE_REL,
+        )
         phase_rows.append(
             _phase_row(
                 root_path,
@@ -417,7 +700,13 @@ def run_production_release_candidate(
             lambda _r: payloads,
             gate_rel=CLI_PRODUCTION_REHEARSAL_GATE_REL,
         )
-        add("post_launch_object_drift_validation", SNOWFLAKE_OBJECT_DRIFT_GATE_REL, lambda r: write_snowflake_object_drift_validation_artifacts(r, profile=options.profile), gate_rel=SNOWFLAKE_OBJECT_DRIFT_GATE_REL)
+        add(
+            "post_launch_object_drift_validation",
+            SNOWFLAKE_OBJECT_DRIFT_GATE_REL,
+            lambda r: write_snowflake_object_drift_validation_artifacts(r, profile=options.profile),
+            gate_rel=SNOWFLAKE_OBJECT_DRIFT_GATE_REL,
+            reuse_fresh_gate=True,
+        )
         add(
             "post_launch_post_deploy_smoke",
             POST_DEPLOY_SMOKE_GATE_REL,
@@ -425,6 +714,12 @@ def run_production_release_candidate(
             gate_rel=POST_DEPLOY_SMOKE_GATE_REL,
         )
         add("post_launch_full_app_release_sweep", FULL_APP_RELEASE_SWEEP_GATE_REL, lambda r: write_full_app_release_sweep_artifacts(r, payloads), gate_rel=FULL_APP_RELEASE_SWEEP_GATE_REL)
+    else:
+        write_local_artifact_proof(
+            root_path,
+            profile=options.profile,
+            allow_in_progress_launch_readiness=True,
+        )
 
     add(
         "production_deployment_manifest_final",
@@ -452,6 +747,12 @@ def run_production_release_candidate(
         "generated_at": _utc_now(),
         "commit_sha": _git_sha(root_path),
         "launch_profile": options.profile,
+        "profile_policy": dict(phase_rows[0]) if phase_rows else {},
+        "launch_readiness_required": options.profile in {"internal_live", "prod_candidate"},
+        "live_proof_required": options.profile in {"internal_live", "prod_candidate"},
+        "browser_proof_required": options.profile == "prod_candidate",
+        "waiver_required": False,
+        "waiver_present": False,
         "passed": not failures,
         "all_passed": not failures,
         "production_deployable": not failures,
@@ -460,6 +761,9 @@ def run_production_release_candidate(
         "phase_count": len(phase_rows),
         "token_auth_used": options.authenticator.upper() == "PROGRAMMATIC_ACCESS_TOKEN",
         "token_file_supplied": bool(options.token_file_path),
+        "local_artifact_signature": str(
+            _load_json(root_path, CI_ARTIFACT_REALITY_GATE_REL).get("local_artifact_signature") or ""
+        ),
         "token_path_leak_count": token_leak_count,
         "temp_sql_file_leftover_count": temp_leftover_count,
         "rows": phase_rows,
@@ -494,6 +798,15 @@ def run_production_release_candidate(
         ],
         "raw_sql_included": False,
     }
+    final_summary = _final_release_candidate_summary(root_path, results)
+    for rel, payload in {
+        PRODUCTION_RELEASE_CANDIDATE_RESULTS_REL: results,
+        PRODUCTION_RELEASE_CANDIDATE_FAILURES_REL: failures_payload,
+        PRODUCTION_RELEASE_CANDIDATE_GATE_REL: gate,
+        RELEASE_GATE_MATRIX_REL: gate_matrix,
+        RELEASE_CANDIDATE_SUMMARY_REL: final_summary,
+    }.items():
+        _write_json(root_path / rel, payload)
     artifact_manifest = _artifact_manifest(root_path)
     artifact_hashes = _artifact_hashes(artifact_manifest)
     artifacts = {
@@ -501,6 +814,7 @@ def run_production_release_candidate(
         PRODUCTION_RELEASE_CANDIDATE_FAILURES_REL: failures_payload,
         PRODUCTION_RELEASE_CANDIDATE_GATE_REL: gate,
         RELEASE_GATE_MATRIX_REL: gate_matrix,
+        RELEASE_CANDIDATE_SUMMARY_REL: final_summary,
         ARTIFACT_MANIFEST_REL: artifact_manifest,
         ARTIFACT_HASHES_REL: artifact_hashes,
     }
@@ -515,9 +829,9 @@ def options_from_args(argv: Sequence[str] | None = None) -> SnowflakeCliValidati
     parser.add_argument("--connection", default=os.environ.get("OVERWATCH_SNOWFLAKE_CLI_CONNECTION", ""))
     parser.add_argument("--authenticator", default=os.environ.get("OVERWATCH_SNOWFLAKE_CLI_AUTHENTICATOR", ""))
     parser.add_argument("--token-file-path", default=os.environ.get("OVERWATCH_SNOWFLAKE_CLI_TOKEN_FILE_PATH", ""))
-    parser.add_argument("--database", default=os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_DATABASE", ""))
-    parser.add_argument("--schema", default=os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_SCHEMA", ""))
-    parser.add_argument("--warehouse", default=os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE", ""))
+    parser.add_argument("--database", default=_env_or_default("OVERWATCH_SNOWFLAKE_VALIDATION_DATABASE", DEFAULT_VALIDATION_DATABASE))
+    parser.add_argument("--schema", default=_env_or_default("OVERWATCH_SNOWFLAKE_VALIDATION_SCHEMA", DEFAULT_VALIDATION_SCHEMA))
+    parser.add_argument("--warehouse", default=_env_or_default("OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE", ""))
     parser.add_argument("--company", default=os.environ.get("OVERWATCH_COMPANY", "ALFA"))
     parser.add_argument("--environment", default=os.environ.get("OVERWATCH_ENVIRONMENT", "ALL"))
     parser.add_argument("--window-days", type=int, default=int(os.environ.get("OVERWATCH_WINDOW_DAYS", "7") or "7"))
@@ -525,9 +839,10 @@ def options_from_args(argv: Sequence[str] | None = None) -> SnowflakeCliValidati
     parser.add_argument("--run-fast-refresh", action="store_true", default=os.environ.get("OVERWATCH_RUN_FAST_REFRESH_VALIDATION") == "1")
     parser.add_argument("--no-launch-readiness", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    profile = args.profile.strip() or "internal_fixture"
     return SnowflakeCliValidationOptions(
         connection=args.connection,
-        profile=args.profile,
+        profile=profile,
         authenticator=args.authenticator,
         token_file_path=args.token_file_path,
         database=args.database,
@@ -538,7 +853,7 @@ def options_from_args(argv: Sequence[str] | None = None) -> SnowflakeCliValidati
         window_days=args.window_days,
         skip_refresh=args.skip_refresh,
         run_fast_refresh=args.run_fast_refresh,
-        query_history_enabled=os.environ.get("OVERWATCH_QUERY_PLAN_PROOF") == "1",
+        query_history_enabled=_query_history_enabled_default(profile),
     )
 
 
@@ -579,6 +894,7 @@ __all__ = [
     "PRODUCTION_RELEASE_CANDIDATE_FAILURES_REL",
     "PRODUCTION_RELEASE_CANDIDATE_GATE_REL",
     "PRODUCTION_RELEASE_CANDIDATE_RESULTS_REL",
+    "RELEASE_CANDIDATE_SUMMARY_REL",
     "RELEASE_GATE_MATRIX_REL",
     "build_production_release_candidate_gate",
     "options_from_args",

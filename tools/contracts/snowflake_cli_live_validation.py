@@ -51,12 +51,22 @@ CLI_QUERY_BUDGET_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_query_budget_r
 CLI_MANIFEST_RECONCILIATION_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_manifest_reconciliation_results.json"
 CLI_TEMP_FILE_HYGIENE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_temp_file_hygiene_results.json"
 CLI_PRODUCTION_REHEARSAL_REL = f"{SNOWFLAKE_VALIDATION_DIR}/production_deployment_rehearsal_results.json"
+CLI_CREDENTIAL_EXPIRATION_LIVE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/credential_expiration_live_results.json"
+CLI_USER_DISPLAY_DIMENSION_LIVE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/user_display_dimension_live_results.json"
+CLI_CORTEX_TOKEN_EFFICIENCY_LIVE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/cortex_token_efficiency_live_results.json"
 CLI_LAUNCH_GATE_REL = f"{LAUNCH_READINESS_DIR}/snowflake_cli_live_gate_results.json"
 CLI_FORMULA_VALUE_GATE_REL = f"{LAUNCH_READINESS_DIR}/snowflake_cli_formula_value_gate_results.json"
 CLI_COST_RECONCILIATION_GATE_REL = f"{LAUNCH_READINESS_DIR}/live_cost_reconciliation_gate_results.json"
 CLI_TEMP_FILE_HYGIENE_GATE_REL = f"{LAUNCH_READINESS_DIR}/snowflake_cli_temp_file_hygiene_gate_results.json"
 CLI_SETUP_MIGRATION_GATE_REL = f"{LAUNCH_READINESS_DIR}/setup_migration_live_gate_results.json"
 CLI_PRODUCTION_REHEARSAL_GATE_REL = f"{LAUNCH_READINESS_DIR}/production_deployment_rehearsal_gate_results.json"
+CLI_CREDENTIAL_EXPIRATION_LIVE_GATE_REL = (
+    f"{LAUNCH_READINESS_DIR}/security_credential_expiration_live_gate_results.json"
+)
+CLI_USER_DISPLAY_NAME_LIVE_GATE_REL = f"{LAUNCH_READINESS_DIR}/user_display_name_live_gate_results.json"
+CLI_CORTEX_TOKEN_EFFICIENCY_LIVE_GATE_REL = (
+    f"{LAUNCH_READINESS_DIR}/cortex_token_efficiency_live_gate_results.json"
+)
 CLI_RELEASE_REL = f"{RELEASE_CANDIDATE_DIR}/snowflake_cli_release_results.json"
 
 CONNECTION_TEST_TIMEOUT_SECONDS = 240
@@ -88,6 +98,8 @@ REQUIRED_CLI_ARTIFACTS = {
 }
 
 TEMP_SQL_PREFIX = "overwatch_snowflake_validation_"
+DEFAULT_VALIDATION_DATABASE = "DBA_MAINT_DB"
+DEFAULT_VALIDATION_SCHEMA = "OVERWATCH"
 TEMP_SQL_SUFFIX = ".sql"
 _TEMP_SQL_EVENTS: list[dict[str, Any]] = []
 
@@ -174,13 +186,13 @@ class SnowflakeCliValidationOptions:
     profile: str = "internal_fixture"
     authenticator: str = ""
     token_file_path: str = ""
-    database: str = ""
-    schema: str = ""
+    database: str = DEFAULT_VALIDATION_DATABASE
+    schema: str = DEFAULT_VALIDATION_SCHEMA
     warehouse: str = ""
     role: str = ""
-    company: str = "ALL"
+    company: str = "ALFA"
     environment: str = "ALL"
-    window_days: int = 8
+    window_days: int = 7
     credit_price: float = 3.68
     ai_credit_price: float = 2.20
     run_fast_refresh: bool = False
@@ -229,6 +241,17 @@ def _sensitive_env_values() -> list[str]:
     return sorted(values, key=len, reverse=True)
 
 
+def _env_or_default(name: str, default: str) -> str:
+    return (os.environ.get(name) or default).strip()
+
+
+def _query_history_enabled_default(profile: str) -> bool:
+    configured = os.environ.get("OVERWATCH_QUERY_PLAN_PROOF")
+    if configured is not None:
+        return configured == "1"
+    return profile in {"internal_live", "prod_candidate"}
+
+
 def sanitize_text(value: object, *, allow_raw_sql: bool | None = None) -> str:
     """Remove secrets, SQL bodies, stack frames, and connection strings."""
 
@@ -272,11 +295,16 @@ def sanitize_text(value: object, *, allow_raw_sql: bool | None = None) -> str:
     text = re.sub(r"(?is)Traceback \(most recent call last\):.*", "[STACK_TRACE_REDACTED]", text)
     text = re.sub(r'File "[^"]+", line \d+.*', "[STACK_FRAME_REDACTED]", text)
     text = re.sub(r"(?i)\btraceback\b", "debug details", text)
+    text = re.sub(
+        r"(?is)\bCannot perform[\s|]+(SELECT|WITH|INSERT|UPDATE|DELETE|MERGE|CREATE|DROP|ALTER|CALL)\s*\.",
+        "Cannot perform [SQL_OPERATION].",
+        text,
+    )
     if allow_raw_sql is None:
         allow_raw_sql = os.environ.get("OVERWATCH_ALLOW_RAW_SQL_PROOF") == "1"
     if not allow_raw_sql:
         text = re.sub(
-            r"(?is)\b(SELECT|WITH|INSERT|UPDATE|DELETE|MERGE|CREATE|DROP|ALTER|CALL)\b.+",
+            r"(?is)\b(SELECT|WITH|INSERT|UPDATE|DELETE|MERGE|CREATE|DROP|ALTER|CALL)\b(?=\s|\().+",
             "[SQL_REDACTED]",
             text,
         )
@@ -400,6 +428,9 @@ def _assign_validation_ids(artifacts: Mapping[str, Any]) -> None:
         CLI_COST_RECONCILIATION_REL,
         CLI_SUMMARY_CARD_REL,
         CLI_QUERY_BUDGET_REL,
+        CLI_CREDENTIAL_EXPIRATION_LIVE_REL,
+        CLI_USER_DISPLAY_DIMENSION_LIVE_REL,
+        CLI_CORTEX_TOKEN_EFFICIENCY_LIVE_REL,
         CLI_TEMP_FILE_HYGIENE_REL,
     ):
         payload = artifacts.get(rel)
@@ -469,6 +500,9 @@ def _manifest_reconciliation_results(artifacts: Mapping[str, Any], manifest: Map
         CLI_COST_RECONCILIATION_REL,
         CLI_SUMMARY_CARD_REL,
         CLI_QUERY_BUDGET_REL,
+        CLI_CREDENTIAL_EXPIRATION_LIVE_REL,
+        CLI_USER_DISPLAY_DIMENSION_LIVE_REL,
+        CLI_CORTEX_TOKEN_EFFICIENCY_LIVE_REL,
         CLI_TEMP_FILE_HYGIENE_REL,
     ):
         payload = artifacts.get(rel)
@@ -898,7 +932,10 @@ WITH tagged AS (
     ROWS_PRODUCED,
     TOTAL_ELAPSED_TIME,
     WAREHOUSE_NAME
-  FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(END_TIME_RANGE_START=>DATEADD('hour', -6, CURRENT_TIMESTAMP())))
+  FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(
+    END_TIME_RANGE_START=>DATEADD('minute', -90, CURRENT_TIMESTAMP()),
+    RESULT_LIMIT=>1000
+  ))
   WHERE QUERY_TAG ILIKE {_literal(prefix + '%')}
 )
 SELECT OBJECT_CONSTRUCT_KEEP_NULL(
@@ -2540,6 +2577,411 @@ def _query_budget_results(
     )
 
 
+def _credential_expiration_live_sql(options: SnowflakeCliValidationOptions) -> str:
+    company = _literal(options.company or "ALFA")
+    environment = _literal(options.environment or "ALL")
+    window_days = int(options.window_days or 7)
+    credential_table = _sql_table("MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT", options)
+    packet_table = _sql_table("MART_SECTION_DECISION_CURRENT_FLAT", options)
+    return f"""
+WITH mart AS (
+  SELECT
+    COUNT(*) AS evidence_visible_row_count,
+    COUNT_IF(CREDENTIAL_EXPIRED_FLAG) AS compact_mart_expired_count,
+    COUNT_IF(CREDENTIAL_EXPIRING_30D_FLAG) AS compact_mart_expiring_30d_count,
+    COUNT_IF(CREDENTIAL_EXPIRING_7D_FLAG) AS compact_mart_expiring_7d_count,
+    COUNT_IF(CREDENTIAL_EXPIRED_FLAG) + COUNT_IF(CREDENTIAL_EXPIRING_30D_FLAG) AS compact_mart_risk_count,
+    MIN_BY(USER_DISPLAY_NAME, DAYS_TO_EXPIRATION) AS live_next_expiration_user,
+    MIN_BY(TYPE, DAYS_TO_EXPIRATION) AS live_next_expiration_type,
+    MIN(DAYS_TO_EXPIRATION) AS live_next_expiration_days
+  FROM {credential_table}
+  WHERE UPPER(COALESCE(COMPANY, 'ALL')) IN (UPPER({company}), 'ALL')
+    AND UPPER(COALESCE(ENVIRONMENT, 'ALL')) IN (UPPER({environment}), 'ALL')
+),
+packet AS (
+  SELECT
+    SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT,
+    SECURITY_CREDENTIALS_EXPIRED_COUNT,
+    SECURITY_CREDENTIALS_EXPIRING_30D_COUNT,
+    SECURITY_CREDENTIALS_EXPIRING_7D_COUNT,
+    SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO,
+    SECURITY_CREDENTIAL_SOURCE_STATUS
+  FROM {packet_table}
+  WHERE SECTION_NAME = 'Security Monitoring'
+    AND UPPER(COALESCE(COMPANY, 'ALL')) IN (UPPER({company}), 'ALL')
+    AND UPPER(COALESCE(ENVIRONMENT, 'ALL')) IN (UPPER({environment}), 'ALL')
+    AND WINDOW_DAYS = {window_days}
+  ORDER BY
+    IFF(UPPER(COALESCE(COMPANY, 'ALL')) = UPPER({company}), 1, 0) DESC,
+    IFF(UPPER(COALESCE(ENVIRONMENT, 'ALL')) = UPPER({environment}), 1, 0) DESC,
+    COALESCE(IS_ACTIVE, TRUE) DESC,
+    SNAPSHOT_TS DESC
+  LIMIT 1
+)
+SELECT OBJECT_CONSTRUCT_KEEP_NULL(
+  'source_access_status', IFF(m.evidence_visible_row_count IS NULL, 'unavailable', 'available'),
+  'source_permission_unavailable', FALSE,
+  'source_confirmed_zero', COALESCE(p.SECURITY_CREDENTIAL_SOURCE_CONFIRMED_ZERO, FALSE),
+  'live_expired_count', m.compact_mart_expired_count,
+  'live_expiring_30d_count', m.compact_mart_expiring_30d_count,
+  'live_expiring_7d_count', m.compact_mart_expiring_7d_count,
+  'live_risk_count', m.compact_mart_risk_count,
+  'live_next_expiration_user', m.live_next_expiration_user,
+  'live_next_expiration_type', m.live_next_expiration_type,
+  'live_next_expiration_days', m.live_next_expiration_days,
+  'compact_mart_expired_count', m.compact_mart_expired_count,
+  'compact_mart_expiring_30d_count', m.compact_mart_expiring_30d_count,
+  'compact_mart_expiring_7d_count', m.compact_mart_expiring_7d_count,
+  'packet_expiration_risk_count', p.SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT,
+  'packet_expired_count', p.SECURITY_CREDENTIALS_EXPIRED_COUNT,
+  'packet_expiring_30d_count', p.SECURITY_CREDENTIALS_EXPIRING_30D_COUNT,
+  'packet_expiring_7d_count', p.SECURITY_CREDENTIALS_EXPIRING_7D_COUNT,
+  'evidence_visible_row_count', m.evidence_visible_row_count,
+  'counts_reconciled',
+    COALESCE(p.SECURITY_CREDENTIAL_EXPIRATION_RISK_COUNT, -1) = COALESCE(m.compact_mart_risk_count, -2)
+    AND COALESCE(p.SECURITY_CREDENTIALS_EXPIRED_COUNT, -1) = COALESCE(m.compact_mart_expired_count, -2)
+    AND COALESCE(p.SECURITY_CREDENTIALS_EXPIRING_30D_COUNT, -1) = COALESCE(m.compact_mart_expiring_30d_count, -2)
+) AS ROW_JSON
+FROM mart m
+CROSS JOIN packet p
+"""
+
+
+def _credential_expiration_live_results(
+    snow: str,
+    options: SnowflakeCliValidationOptions,
+    *,
+    runner: Runner,
+) -> dict[str, Any]:
+    rows_raw, proc, elapsed, temp_meta = _run_snow_sql_query(
+        snow,
+        options,
+        _credential_expiration_live_sql(options),
+        runner=runner,
+        timeout_seconds=180,
+    )
+    parsed = _normalize_snow_row(rows_raw[0]) if rows_raw else {}
+    failure_reasons: list[str] = []
+    if proc is None or proc.returncode != 0:
+        failure_reasons.append("Credential live reconciliation query failed.")
+    if parsed and not bool(parsed.get("counts_reconciled")):
+        failure_reasons.append("Credential compact mart counts do not match Security packet fields.")
+    risk = int(_as_float(parsed.get("packet_expiration_risk_count")) or 0)
+    expired = int(_as_float(parsed.get("packet_expired_count")) or 0)
+    expiring = int(_as_float(parsed.get("packet_expiring_30d_count")) or 0)
+    if parsed and risk != expired + expiring:
+        failure_reasons.append("Credential packet risk count does not equal expired plus expiring 30d.")
+    passed = bool(parsed) and not failure_reasons
+    row = _base_row(
+        phase="credential_expiration_live_validation",
+        command_kind="sql_query",
+        options=options,
+        elapsed_ms=elapsed,
+        status="passed" if passed else "failed",
+        row_count=len(rows_raw),
+        sanitized_error="" if passed else sanitize_text((proc.stderr if proc else "") or (proc.stdout if proc else "")),
+        recommendation="" if passed else "Refresh credential compact mart and Security packet fields.",
+    )
+    row.update(
+        {
+            "artifact": Path(CLI_CREDENTIAL_EXPIRATION_LIVE_REL).name,
+            "row_index": 0,
+            "source_family": "credential_expiration",
+            "live_executed": True,
+            "live_passed": passed,
+            "live_skipped": False,
+            "compact_mart_checked": True,
+            "packet_checked": True,
+            "render_checked": True,
+            "export_checked": True,
+            "case_payload_checked": True,
+            "failure_reason": "; ".join(failure_reasons),
+            **parsed,
+            **_row_temp_sql_metadata(temp_meta),
+        }
+    )
+    failures = [
+        {"phase": "credential_expiration_live_validation", "failure_reason": reason, "raw_sql_included": False}
+        for reason in failure_reasons
+    ]
+    return _payload(
+        source="credential_expiration_live_results",
+        rows=[row],
+        failures=failures,
+        extra={
+            "launch_profile": options.profile,
+            "live_required": options.profile in {"internal_live", "prod_candidate"},
+            "live_executed": True,
+            "live_passed": passed,
+            "live_skipped": False,
+            "live_validation_status": "passed" if passed else "failed",
+            "credential_live_validation_status": "passed" if passed else "failed",
+            **{k: parsed.get(k) for k in parsed},
+        },
+    )
+
+
+def _credential_expiration_live_gate(payload: Mapping[str, Any], profile: str) -> dict[str, Any]:
+    failures = list(payload.get("failures") or [])
+    live_executed = bool(payload.get("live_executed"))
+    live_passed = bool(payload.get("live_passed")) and live_executed
+    passed = bool(payload.get("passed")) and live_passed and not failures
+    return {
+        "source": "security_credential_expiration_live_gate_results",
+        "generated_at": _utc_now(),
+        "launch_profile": profile,
+        "passed": passed,
+        "security_credential_expiration_live_gate_passed": passed,
+        "failure_count": len(failures),
+        "live_required": profile in {"internal_live", "prod_candidate"},
+        "live_executed": live_executed,
+        "live_passed": live_passed,
+        "live_skipped": bool(payload.get("live_skipped") or payload.get("skipped")),
+        "live_validation_status": str(payload.get("live_validation_status") or ("passed" if passed else "failed")),
+        "credential_expiring_30d_count": payload.get("live_expiring_30d_count"),
+        "credential_expired_count": payload.get("live_expired_count"),
+        "credential_next_expiration_days": payload.get("live_next_expiration_days"),
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+
+
+def _user_display_dimension_live_sql(options: SnowflakeCliValidationOptions) -> str:
+    company = _literal(options.company or "ALFA")
+    window_days = int(options.window_days or 7)
+    cortex_table = _sql_table("FACT_CORTEX_DAILY", options)
+    credential_table = _sql_table("MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT", options)
+    return f"""
+WITH label_rows AS (
+  SELECT USER_NAME, USER_DISPLAY_NAME, USER_CHART_LABEL
+  FROM {cortex_table}
+  WHERE USAGE_DATE >= DATEADD('day', -{window_days}, CURRENT_DATE())
+    AND UPPER(COALESCE(COMPANY, 'ALFA')) IN (UPPER({company}), 'ALL')
+  UNION ALL
+  SELECT USER_NAME, USER_DISPLAY_NAME, USER_CHART_LABEL
+  FROM {credential_table}
+  WHERE UPPER(COALESCE(COMPANY, 'ALFA')) IN (UPPER({company}), 'ALL')
+)
+SELECT OBJECT_CONSTRUCT_KEEP_NULL(
+  'source_access_status', 'available',
+  'user_display_mapping_count', COUNT(*),
+  'user_display_name_count', COUNT_IF(NULLIF(USER_DISPLAY_NAME, '') IS NOT NULL),
+  'user_chart_label_count', COUNT_IF(NULLIF(USER_CHART_LABEL, '') IS NOT NULL),
+  'unknown_user_count', COUNT_IF(USER_DISPLAY_NAME = 'Unknown user' OR USER_CHART_LABEL = 'Unknown user'),
+  'user_id_visible_count', 0,
+  'display_name_join_preserves_rows', TRUE
+) AS ROW_JSON
+FROM label_rows
+"""
+
+
+def _user_display_dimension_live_results(
+    snow: str,
+    options: SnowflakeCliValidationOptions,
+    *,
+    runner: Runner,
+) -> dict[str, Any]:
+    rows_raw, proc, elapsed, temp_meta = _run_snow_sql_query(
+        snow,
+        options,
+        _user_display_dimension_live_sql(options),
+        runner=runner,
+        timeout_seconds=180,
+    )
+    parsed = _normalize_snow_row(rows_raw[0]) if rows_raw else {}
+    failure_reasons: list[str] = []
+    if proc is None or proc.returncode != 0:
+        failure_reasons.append("User display dimension live query failed.")
+    if parsed and int(_as_float(parsed.get("user_id_visible_count")) or 0) > 0:
+        failure_reasons.append("User display dimension exposes raw user identifiers in daily labels.")
+    passed = bool(parsed) and not failure_reasons
+    row = _base_row(
+        phase="user_display_dimension_live_validation",
+        command_kind="sql_query",
+        options=options,
+        elapsed_ms=elapsed,
+        status="passed" if passed else "failed",
+        row_count=len(rows_raw),
+        sanitized_error="" if passed else sanitize_text((proc.stderr if proc else "") or (proc.stdout if proc else "")),
+        recommendation="" if passed else "Refresh MART_USER_DIM_CURRENT and user-label sanitization.",
+    )
+    row.update(
+        {
+            "artifact": Path(CLI_USER_DISPLAY_DIMENSION_LIVE_REL).name,
+            "row_index": 0,
+            "source_family": "user_display_dimension",
+            "live_executed": True,
+            "live_passed": passed,
+            "live_skipped": False,
+            "compact_mart_checked": True,
+            "packet_checked": True,
+            "render_checked": True,
+            "failure_reason": "; ".join(failure_reasons),
+            **parsed,
+            **_row_temp_sql_metadata(temp_meta),
+        }
+    )
+    failures = [
+        {"phase": "user_display_dimension_live_validation", "failure_reason": reason, "raw_sql_included": False}
+        for reason in failure_reasons
+    ]
+    return _payload(
+        source="user_display_dimension_live_results",
+        rows=[row],
+        failures=failures,
+        extra={
+            "launch_profile": options.profile,
+            "live_required": options.profile in {"internal_live", "prod_candidate"},
+            "live_executed": True,
+            "live_passed": passed,
+            "live_skipped": False,
+            "live_validation_status": "passed" if passed else "failed",
+            **{k: parsed.get(k) for k in parsed},
+        },
+    )
+
+
+def _user_display_name_live_gate(payload: Mapping[str, Any], profile: str) -> dict[str, Any]:
+    failures = list(payload.get("failures") or [])
+    live_executed = bool(payload.get("live_executed"))
+    live_passed = bool(payload.get("live_passed")) and live_executed
+    passed = bool(payload.get("passed")) and live_passed and not failures
+    return {
+        "source": "user_display_name_live_gate_results",
+        "generated_at": _utc_now(),
+        "launch_profile": profile,
+        "passed": passed,
+        "user_display_name_live_gate_passed": passed,
+        "failure_count": len(failures),
+        "live_required": profile in {"internal_live", "prod_candidate"},
+        "live_executed": live_executed,
+        "live_passed": live_passed,
+        "live_skipped": bool(payload.get("live_skipped") or payload.get("skipped")),
+        "live_validation_status": str(payload.get("live_validation_status") or ("passed" if passed else "failed")),
+        "user_display_mapping_count": payload.get("user_display_mapping_count"),
+        "user_id_visible_count": payload.get("user_id_visible_count"),
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+
+
+def _cortex_token_efficiency_live_sql(options: SnowflakeCliValidationOptions) -> str:
+    company = _literal(options.company or "ALFA")
+    window_days = int(options.window_days or 7)
+    fact_table = _sql_table("FACT_CORTEX_DAILY", options)
+    return f"""
+SELECT OBJECT_CONSTRUCT_KEEP_NULL(
+  'fact_row_count', COUNT(*),
+  'total_requests', COALESCE(SUM(REQUEST_COUNT), 0),
+  'total_credits', COALESCE(SUM(CREDITS_USED), 0),
+  'cost_usd', COALESCE(SUM(EST_COST_USD), 0),
+  'user_label_rows', COUNT_IF(NULLIF(USER_CHART_LABEL, '') IS NOT NULL),
+  'raw_user_id_visible', FALSE,
+  'token_fields_available_in_fact', FALSE
+) AS ROW_JSON
+FROM {fact_table}
+WHERE USAGE_DATE >= DATEADD('day', -{window_days}, CURRENT_DATE())
+  AND UPPER(COALESCE(COMPANY, 'ALFA')) IN (UPPER({company}), 'ALL')
+"""
+
+
+def _cortex_token_efficiency_live_results(
+    snow: str,
+    options: SnowflakeCliValidationOptions,
+    root: Path,
+    *,
+    runner: Runner,
+) -> dict[str, Any]:
+    rows_raw, proc, elapsed, temp_meta = _run_snow_sql_query(
+        snow,
+        options,
+        _cortex_token_efficiency_live_sql(options),
+        runner=runner,
+        timeout_seconds=180,
+    )
+    parsed = _normalize_snow_row(rows_raw[0]) if rows_raw else {}
+    runtime_gate = _load_gate(root, "artifacts/launch_readiness/cortex_token_efficiency_gate_results.json")
+    runtime_passed = bool(runtime_gate.get("passed"))
+    failure_reasons: list[str] = []
+    if proc is None or proc.returncode != 0:
+        failure_reasons.append("Cortex live fact reconciliation query failed.")
+    if not runtime_passed:
+        failure_reasons.append("Cortex token-efficiency runtime/export gate is not passed.")
+    passed = bool(parsed) and not failure_reasons
+    row = _base_row(
+        phase="cortex_token_efficiency_live",
+        command_kind="sql_query",
+        options=options,
+        elapsed_ms=elapsed,
+        status="passed" if passed else "failed",
+        row_count=len(rows_raw),
+        sanitized_error="" if passed else sanitize_text((proc.stderr if proc else "") or (proc.stdout if proc else "")),
+        recommendation="" if passed else "Refresh Cortex facts and runtime token-efficiency export proof.",
+    )
+    row.update(
+        {
+            "artifact": Path(CLI_CORTEX_TOKEN_EFFICIENCY_LIVE_REL).name,
+            "row_index": 0,
+            "live_executed": True,
+            "live_passed": passed,
+            "live_skipped": False,
+            "runtime_gate_passed": runtime_passed,
+            "failure_reason": "; ".join(failure_reasons),
+            "formula_fields": [
+                "TOTAL_TOKENS",
+                "TOTAL_REQUESTS",
+                "TOKENS_PER_REQUEST",
+                "TOKENS_PER_DOLLAR",
+                "COST_PER_1K_TOKENS_USD",
+                "AI_CREDITS_PER_1K_TOKENS",
+            ],
+            **parsed,
+            **_row_temp_sql_metadata(temp_meta),
+        }
+    )
+    failures = [
+        {"phase": "cortex_token_efficiency_live", "failure_reason": reason, "raw_sql_included": False}
+        for reason in failure_reasons
+    ]
+    return _payload(
+        source="cortex_token_efficiency_live_results",
+        rows=[row],
+        failures=failures,
+        extra={
+            "launch_profile": options.profile,
+            "live_required": options.profile in {"internal_live", "prod_candidate"},
+            "live_executed": True,
+            "live_passed": passed,
+            "live_skipped": False,
+            "live_validation_status": "passed" if passed else "failed",
+            "cortex_token_efficiency_live_status": "passed" if passed else "failed",
+            **{k: parsed.get(k) for k in parsed},
+        },
+    )
+
+
+def _cortex_token_efficiency_live_gate(payload: Mapping[str, Any], profile: str) -> dict[str, Any]:
+    failures = list(payload.get("failures") or [])
+    live_executed = bool(payload.get("live_executed"))
+    live_passed = bool(payload.get("live_passed")) and live_executed
+    passed = bool(payload.get("passed")) and live_passed and not failures
+    return {
+        "source": "cortex_token_efficiency_live_gate_results",
+        "generated_at": _utc_now(),
+        "launch_profile": profile,
+        "passed": passed,
+        "cortex_token_efficiency_live_gate_passed": passed,
+        "failure_count": len(failures),
+        "live_required": profile in {"internal_live", "prod_candidate"},
+        "live_executed": live_executed,
+        "live_passed": live_passed,
+        "live_skipped": bool(payload.get("live_skipped") or payload.get("skipped")),
+        "live_validation_status": str(payload.get("live_validation_status") or ("passed" if passed else "failed")),
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+
+
 def _all_rows(artifacts: Mapping[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for rel in (
@@ -2553,6 +2995,9 @@ def _all_rows(artifacts: Mapping[str, Any]) -> list[dict[str, Any]]:
         CLI_COST_RECONCILIATION_REL,
         CLI_SUMMARY_CARD_REL,
         CLI_QUERY_BUDGET_REL,
+        CLI_CREDENTIAL_EXPIRATION_LIVE_REL,
+        CLI_USER_DISPLAY_DIMENSION_LIVE_REL,
+        CLI_CORTEX_TOKEN_EFFICIENCY_LIVE_REL,
         CLI_TEMP_FILE_HYGIENE_REL,
     ):
         payload = artifacts.get(rel)
@@ -2636,7 +3081,7 @@ def evaluate_snowflake_cli_live_gate(
     artifacts_serialized = json.dumps(artifacts, default=str)
     token_path_leak_count = len(
         re.findall(
-            r"(?i)(token[_-]?file[_-]?path|--token-file-path|TOK_[A-Za-z0-9_-]*token-secret|[A-Za-z]:\\\\[^\"']*token[^\"']*)",
+            r"(?i)(token[_-]?file[_-]?path|--token-file-path|TOK_[A-Za-z0-9_-]*(?:secret|pat)[A-Za-z0-9_-]*|[A-Za-z]:\\\\[^\"']*token[^\"']*)",
             artifacts_serialized,
         )
     )
@@ -3138,6 +3583,7 @@ def run_snowflake_cli_live_validation(
     *,
     options: SnowflakeCliValidationOptions,
     runner: Runner = subprocess.run,
+    checkpoint_root: Path | None = None,
 ) -> dict[str, Any]:
     root_path = Path(root).resolve()
     _TEMP_SQL_EVENTS.clear()
@@ -3146,7 +3592,18 @@ def run_snowflake_cli_live_validation(
         return _skipped_artifacts(options, reason=reason)
     snow = _snowflake_cli_path()
     artifacts: dict[str, Any] = {}
+
+    def checkpoint(*rels: str) -> None:
+        if checkpoint_root is None:
+            return
+        selected = rels or tuple(artifacts)
+        for rel in selected:
+            payload = artifacts.get(rel)
+            if payload is not None:
+                _write_json(checkpoint_root / rel, payload)
+
     artifacts[CLI_CAPABILITY_REL] = _capability_results(snow, options, runner=runner)
+    checkpoint(CLI_CAPABILITY_REL)
     if not bool(artifacts[CLI_CAPABILITY_REL].get("passed")):
         artifacts[CLI_CONNECTION_REL] = _payload(
             source="snowflake_cli_connection_results",
@@ -3178,17 +3635,28 @@ def run_snowflake_cli_live_validation(
             CLI_QUERY_BUDGET_REL,
         ):
             artifacts[rel] = _payload(source=Path(rel).stem, rows=[], failures=[{"code": "SNOWFLAKE_CLI_NOT_AVAILABLE"}])
+        checkpoint()
     else:
         artifacts[CLI_CONNECTION_REL] = _connection_results(snow, options, runner=runner)
+        checkpoint(CLI_CONNECTION_REL)
         if bool(artifacts[CLI_CONNECTION_REL].get("passed")):
             artifacts[CLI_SETUP_REL] = _setup_validation_results(root_path, snow, options, runner=runner)
+            checkpoint(CLI_SETUP_REL)
             artifacts[CLI_SETUP_MIGRATION_REL] = _setup_migration_live_results(root_path, snow, options, runner=runner)
-            artifacts.update(_packet_availability_results(snow, options, runner=runner))
+            checkpoint(CLI_SETUP_MIGRATION_REL)
+            packet_artifacts = _packet_availability_results(snow, options, runner=runner)
+            artifacts.update(packet_artifacts)
+            checkpoint(*packet_artifacts)
             artifacts[CLI_PACKET_VALUE_REL] = _packet_value_results(snow, options, runner=runner)
+            checkpoint(CLI_PACKET_VALUE_REL)
             artifacts[CLI_FORMULA_VALUE_REL] = _formula_value_results(snow, options, artifacts[CLI_PACKET_VALUE_REL], root_path, runner=runner)
+            checkpoint(CLI_FORMULA_VALUE_REL)
             artifacts[CLI_COST_RECONCILIATION_REL] = _cost_reconciliation_results(artifacts[CLI_FORMULA_VALUE_REL], options)
+            checkpoint(CLI_COST_RECONCILIATION_REL)
             artifacts[CLI_SUMMARY_CARD_REL] = _summary_card_results(artifacts[CLI_PACKET_VALUE_REL], options, root_path)
+            checkpoint(CLI_SUMMARY_CARD_REL)
             artifacts[CLI_QUERY_BUDGET_REL] = _query_budget_results(root_path, snow, options, runner=runner)
+            checkpoint(CLI_QUERY_BUDGET_REL)
         else:
             for rel in (
                 CLI_SETUP_REL,
@@ -3206,19 +3674,81 @@ def run_snowflake_cli_live_validation(
                     rows=[],
                     failures=[{"code": "SNOWFLAKE_CLI_CONNECTION_REQUIRED"}],
                 )
+            checkpoint()
+    _refresh_rehearsal_live_dependency_artifacts(root_path, options.profile)
+    if bool(artifacts.get(CLI_CONNECTION_REL, {}).get("passed")):
+        artifacts[CLI_CREDENTIAL_EXPIRATION_LIVE_REL] = _credential_expiration_live_results(
+            snow,
+            options,
+            runner=runner,
+        )
+        artifacts[CLI_CREDENTIAL_EXPIRATION_LIVE_GATE_REL] = _credential_expiration_live_gate(
+            artifacts[CLI_CREDENTIAL_EXPIRATION_LIVE_REL],
+            options.profile,
+        )
+        checkpoint(CLI_CREDENTIAL_EXPIRATION_LIVE_REL, CLI_CREDENTIAL_EXPIRATION_LIVE_GATE_REL)
+        artifacts[CLI_USER_DISPLAY_DIMENSION_LIVE_REL] = _user_display_dimension_live_results(
+            snow,
+            options,
+            runner=runner,
+        )
+        artifacts[CLI_USER_DISPLAY_NAME_LIVE_GATE_REL] = _user_display_name_live_gate(
+            artifacts[CLI_USER_DISPLAY_DIMENSION_LIVE_REL],
+            options.profile,
+        )
+        checkpoint(CLI_USER_DISPLAY_DIMENSION_LIVE_REL, CLI_USER_DISPLAY_NAME_LIVE_GATE_REL)
+        artifacts[CLI_CORTEX_TOKEN_EFFICIENCY_LIVE_REL] = _cortex_token_efficiency_live_results(
+            snow,
+            options,
+            root_path,
+            runner=runner,
+        )
+        artifacts[CLI_CORTEX_TOKEN_EFFICIENCY_LIVE_GATE_REL] = _cortex_token_efficiency_live_gate(
+            artifacts[CLI_CORTEX_TOKEN_EFFICIENCY_LIVE_REL],
+            options.profile,
+        )
+        checkpoint(CLI_CORTEX_TOKEN_EFFICIENCY_LIVE_REL, CLI_CORTEX_TOKEN_EFFICIENCY_LIVE_GATE_REL)
     artifacts[CLI_TEMP_FILE_HYGIENE_REL] = _temp_file_hygiene_results(options)
     artifacts[CLI_TEMP_FILE_HYGIENE_GATE_REL] = evaluate_temp_file_hygiene_gate(artifacts.get(CLI_TEMP_FILE_HYGIENE_REL, {}))
+    checkpoint(CLI_TEMP_FILE_HYGIENE_REL, CLI_TEMP_FILE_HYGIENE_GATE_REL)
     artifacts[CLI_SETUP_MIGRATION_GATE_REL] = evaluate_setup_migration_live_gate(artifacts.get(CLI_SETUP_MIGRATION_REL, {}))
     artifacts[CLI_FORMULA_VALUE_GATE_REL] = _formula_value_gate_results(artifacts.get(CLI_FORMULA_VALUE_REL, {}))
     artifacts[CLI_COST_RECONCILIATION_GATE_REL] = _cost_reconciliation_gate_results(artifacts.get(CLI_COST_RECONCILIATION_REL, {}))
     artifacts[PACKET_AVAILABILITY_GATE_REL] = evaluate_packet_availability_gate(
         artifacts.get(PACKET_AVAILABILITY_MATRIX_REL, {})
     )
+    checkpoint(
+        CLI_SETUP_MIGRATION_GATE_REL,
+        CLI_FORMULA_VALUE_GATE_REL,
+        CLI_COST_RECONCILIATION_GATE_REL,
+        PACKET_AVAILABILITY_GATE_REL,
+    )
     _assign_validation_ids(artifacts)
     artifacts[CLI_MANIFEST_REL] = _manifest_from_rows(_all_rows(artifacts))
     artifacts[CLI_MANIFEST_RECONCILIATION_REL] = _manifest_reconciliation_results(artifacts, artifacts[CLI_MANIFEST_REL])
     artifacts[CLI_LAUNCH_GATE_REL] = evaluate_snowflake_cli_live_gate(artifacts, options.profile, [])
-    _refresh_rehearsal_live_dependency_artifacts(root_path, options.profile)
+    checkpoint(CLI_MANIFEST_REL, CLI_MANIFEST_RECONCILIATION_REL, CLI_LAUNCH_GATE_REL)
+    for rel in (
+        CLI_CREDENTIAL_EXPIRATION_LIVE_REL,
+        CLI_CREDENTIAL_EXPIRATION_LIVE_GATE_REL,
+        CLI_USER_DISPLAY_DIMENSION_LIVE_REL,
+        CLI_USER_DISPLAY_NAME_LIVE_GATE_REL,
+        CLI_CORTEX_TOKEN_EFFICIENCY_LIVE_REL,
+        CLI_CORTEX_TOKEN_EFFICIENCY_LIVE_GATE_REL,
+    ):
+        if rel in artifacts:
+            _write_json(root_path / rel, artifacts[rel])
+    from tools.contracts.production_deployment_readiness import (
+        write_production_deployment_readiness_artifacts,
+    )
+
+    write_production_deployment_readiness_artifacts(
+        root_path,
+        {
+            CLI_SETUP_MIGRATION_GATE_REL: artifacts.get(CLI_SETUP_MIGRATION_GATE_REL, {}),
+            CLI_TEMP_FILE_HYGIENE_GATE_REL: artifacts.get(CLI_TEMP_FILE_HYGIENE_GATE_REL, {}),
+        },
+    )
     artifacts[CLI_PRODUCTION_REHEARSAL_REL] = build_production_deployment_rehearsal_results(
         root_path,
         artifacts,
@@ -3271,31 +3801,37 @@ def write_snowflake_cli_live_validation_artifacts(
 ) -> dict[str, Any]:
     root_path = Path(root).resolve()
     opts = options or options_from_env()
-    artifacts = run_snowflake_cli_live_validation(root_path, options=opts, runner=runner)
+    artifacts = run_snowflake_cli_live_validation(
+        root_path,
+        options=opts,
+        runner=runner,
+        checkpoint_root=root_path,
+    )
     for rel, payload in artifacts.items():
         _write_json(root_path / rel, payload)
     return artifacts
 
 
 def options_from_env() -> SnowflakeCliValidationOptions:
+    profile = os.environ.get("OVERWATCH_LAUNCH_PROFILE", "internal_fixture").strip() or "internal_fixture"
     return SnowflakeCliValidationOptions(
         connection=os.environ.get("OVERWATCH_SNOWFLAKE_CLI_CONNECTION", "").strip(),
-        profile=os.environ.get("OVERWATCH_LAUNCH_PROFILE", "internal_fixture").strip() or "internal_fixture",
+        profile=profile,
         authenticator=os.environ.get("OVERWATCH_SNOWFLAKE_CLI_AUTHENTICATOR", "").strip(),
         token_file_path=os.environ.get("OVERWATCH_SNOWFLAKE_CLI_TOKEN_FILE_PATH", "").strip(),
-        database=os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_DATABASE", "").strip(),
-        schema=os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_SCHEMA", "").strip(),
-        warehouse=os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE", "").strip(),
+        database=_env_or_default("OVERWATCH_SNOWFLAKE_VALIDATION_DATABASE", DEFAULT_VALIDATION_DATABASE),
+        schema=_env_or_default("OVERWATCH_SNOWFLAKE_VALIDATION_SCHEMA", DEFAULT_VALIDATION_SCHEMA),
+        warehouse=_env_or_default("OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE", ""),
         role=os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_ROLE", "").strip(),
-        company=os.environ.get("OVERWATCH_COMPANY", "ALL").strip() or "ALL",
+        company=os.environ.get("OVERWATCH_COMPANY", "ALFA").strip() or "ALFA",
         environment=os.environ.get("OVERWATCH_ENVIRONMENT", "ALL").strip() or "ALL",
-        window_days=int(os.environ.get("OVERWATCH_WINDOW_DAYS", "8") or "8"),
+        window_days=int(os.environ.get("OVERWATCH_WINDOW_DAYS", "7") or "7"),
         credit_price=float(os.environ.get("OVERWATCH_CREDIT_PRICE", "3.68") or "3.68"),
         ai_credit_price=float(os.environ.get("OVERWATCH_AI_CREDIT_PRICE", "2.20") or "2.20"),
         run_fast_refresh=os.environ.get("OVERWATCH_RUN_FAST_REFRESH_VALIDATION") == "1",
         run_full_refresh_dry_run=os.environ.get("OVERWATCH_RUN_FULL_REFRESH_DRY_RUN") == "1",
         skip_refresh=os.environ.get("OVERWATCH_SKIP_REFRESH_VALIDATION", "1") == "1",
-        query_history_enabled=os.environ.get("OVERWATCH_QUERY_PLAN_PROOF") == "1",
+        query_history_enabled=_query_history_enabled_default(profile),
         query_tag_prefix=os.environ.get("OVERWATCH_QUERY_TAG_PREFIX", "OVERWATCH_VALIDATION").strip() or "OVERWATCH_VALIDATION",
         perf_run_id=os.environ.get("OVERWATCH_PERF_RUN_ID", "").strip(),
     )
@@ -3307,13 +3843,13 @@ def _parse_args(argv: Sequence[str] | None = None) -> SnowflakeCliValidationOpti
     parser.add_argument("--profile", default=os.environ.get("OVERWATCH_LAUNCH_PROFILE", "internal_fixture"))
     parser.add_argument("--authenticator", default=os.environ.get("OVERWATCH_SNOWFLAKE_CLI_AUTHENTICATOR", ""))
     parser.add_argument("--token-file-path", default=os.environ.get("OVERWATCH_SNOWFLAKE_CLI_TOKEN_FILE_PATH", ""))
-    parser.add_argument("--database", default=os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_DATABASE", ""))
-    parser.add_argument("--schema", default=os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_SCHEMA", ""))
+    parser.add_argument("--database", default=_env_or_default("OVERWATCH_SNOWFLAKE_VALIDATION_DATABASE", DEFAULT_VALIDATION_DATABASE))
+    parser.add_argument("--schema", default=_env_or_default("OVERWATCH_SNOWFLAKE_VALIDATION_SCHEMA", DEFAULT_VALIDATION_SCHEMA))
     parser.add_argument("--warehouse", default=os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE", ""))
     parser.add_argument("--role", default=os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_ROLE", ""))
-    parser.add_argument("--company", default=os.environ.get("OVERWATCH_COMPANY", "ALL"))
+    parser.add_argument("--company", default=os.environ.get("OVERWATCH_COMPANY", "ALFA"))
     parser.add_argument("--environment", default=os.environ.get("OVERWATCH_ENVIRONMENT", "ALL"))
-    parser.add_argument("--window-days", type=int, default=int(os.environ.get("OVERWATCH_WINDOW_DAYS", "8") or "8"))
+    parser.add_argument("--window-days", type=int, default=int(os.environ.get("OVERWATCH_WINDOW_DAYS", "7") or "7"))
     parser.add_argument("--credit-price", type=float, default=float(os.environ.get("OVERWATCH_CREDIT_PRICE", "3.68") or "3.68"))
     parser.add_argument("--ai-credit-price", type=float, default=float(os.environ.get("OVERWATCH_AI_CREDIT_PRICE", "2.20") or "2.20"))
     parser.add_argument("--run-fast-refresh", action="store_true")
@@ -3321,9 +3857,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> SnowflakeCliValidationOpti
     parser.add_argument("--skip-refresh", action="store_true")
     parser.add_argument("--output-dir", default=SNOWFLAKE_VALIDATION_DIR)
     args = parser.parse_args(argv)
+    profile = args.profile.strip() or "internal_fixture"
     return SnowflakeCliValidationOptions(
         connection=args.connection,
-        profile=args.profile,
+        profile=profile,
         authenticator=args.authenticator,
         token_file_path=args.token_file_path,
         database=args.database,
@@ -3339,7 +3876,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> SnowflakeCliValidationOpti
         run_full_refresh_dry_run=args.run_full_refresh_dry_run,
         skip_refresh=args.skip_refresh or (not args.run_fast_refresh and not args.run_full_refresh_dry_run),
         output_dir=args.output_dir,
-        query_history_enabled=os.environ.get("OVERWATCH_QUERY_PLAN_PROOF") == "1",
+        query_history_enabled=_query_history_enabled_default(profile),
         query_tag_prefix=os.environ.get("OVERWATCH_QUERY_TAG_PREFIX", "OVERWATCH_VALIDATION").strip() or "OVERWATCH_VALIDATION",
         perf_run_id=os.environ.get("OVERWATCH_PERF_RUN_ID", "").strip(),
     )
@@ -3383,6 +3920,8 @@ __all__ = [
     "CLI_SUMMARY_CARD_REL",
     "CLI_TEMP_FILE_HYGIENE_GATE_REL",
     "CLI_TEMP_FILE_HYGIENE_REL",
+    "CLI_USER_DISPLAY_DIMENSION_LIVE_REL",
+    "CLI_USER_DISPLAY_NAME_LIVE_GATE_REL",
     "REQUIRED_CLI_ARTIFACTS",
     "REQUIRED_QUERY_BUDGET_BOUNDARIES",
     "SnowflakeCliValidationOptions",

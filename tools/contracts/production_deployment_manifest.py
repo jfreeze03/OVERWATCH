@@ -120,7 +120,6 @@ def _token_leak_count(payload: Mapping[str, Any]) -> int:
     serialized = json.dumps(payload, sort_keys=True, default=str)
     token_path = os.environ.get("OVERWATCH_SNOWFLAKE_CLI_TOKEN_FILE_PATH", "")
     markers = [
-        "TOK_CJ-token-secret",
         "overwatch_pat.txt",
         token_path,
         Path(token_path).name if token_path else "",

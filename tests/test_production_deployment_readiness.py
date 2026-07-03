@@ -2,6 +2,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,14 +67,16 @@ class ProductionDeploymentReadinessTests(unittest.TestCase):
     def test_token_path_leak_in_artifact_payload_fails(self):
         from tools.contracts.production_deployment_readiness import build_production_deployment_readiness_results
 
+        token_path = "C:/secure/private_pat_file.txt"
         payloads = {
             "artifacts/launch_readiness/setup_migration_live_gate_results.json": {"passed": True},
             "artifacts/launch_readiness/snowflake_cli_temp_file_hygiene_gate_results.json": {"passed": True},
             "artifacts/snowflake_validation/snowflake_cli_connection_results.json": {
-                "sanitized_error": "opened C:/secure/TOK_CJ-token-secret.txt"
+                "sanitized_error": f"opened {token_path}"
             },
         }
-        results = build_production_deployment_readiness_results(ROOT, payloads)
+        with patch.dict("os.environ", {"OVERWATCH_SNOWFLAKE_CLI_TOKEN_FILE_PATH": token_path}, clear=False):
+            results = build_production_deployment_readiness_results(ROOT, payloads)
 
         self.assertFalse(results["passed"])
         self.assertGreater(results["token_path_leak_count"], 0)

@@ -67,6 +67,35 @@ class SnowflakeObjectDriftValidationTests(unittest.TestCase):
         self.assertTrue(artifacts[SNOWFLAKE_OBJECT_DRIFT_RESULTS_REL]["passed"])
         self.assertTrue(artifacts[SNOWFLAKE_OBJECT_DRIFT_GATE_REL]["passed"])
 
+    def test_live_setup_artifact_accepts_status_passed_rows(self):
+        from tools.contracts.snowflake_object_drift_validation import build_snowflake_object_drift_results
+        from tools.contracts.snowflake_cli_live_validation import CLI_SETUP_MIGRATION_REL
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            setup_path = root / CLI_SETUP_MIGRATION_REL
+            setup_path.parent.mkdir(parents=True, exist_ok=True)
+            setup_path.write_text(
+                json.dumps(
+                    {
+                        "passed": True,
+                        "rows": [
+                            {
+                                "phase": "setup_migration_object_probe",
+                                "status": "passed",
+                                "validation_id": "object_probe",
+                                "missing_required_object_count": 0,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            results = build_snowflake_object_drift_results(root, profile="internal_live")
+
+        self.assertTrue(results["passed"], results)
+
 
 if __name__ == "__main__":
     unittest.main()

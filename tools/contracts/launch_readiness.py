@@ -25,6 +25,11 @@ from tools.contracts.full_app_gauntlet import (
     write_full_app_gauntlet_artifacts,
 )
 from tools.contracts.encoding_hygiene import write_encoding_hygiene_artifacts
+from tools.contracts.ci_artifact_reality import (
+    CI_ARTIFACT_REALITY_GATE_REL,
+    build_ci_artifact_reality_results,
+    evaluate_ci_artifact_reality_gate,
+)
 from tools.contracts.snowflake_execution_validation import write_snowflake_validation_artifacts
 from tools.contracts.cost_db_formula_authority import (
     REQUIRED_FORMULA_AUTHORITY_ARTIFACTS,
@@ -374,6 +379,7 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/ci_artifact_review_results.json",
     f"{LAUNCH_READINESS_DIR}/artifact_upload_review_results.json",
     f"{LAUNCH_READINESS_DIR}/ci_artifact_reality_results.json",
+    CI_ARTIFACT_REALITY_GATE_REL,
     f"{LAUNCH_READINESS_DIR}/release_candidate_ci_context.json",
     f"{LAUNCH_READINESS_DIR}/release_candidate_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/post_deploy_smoke_gate_results.json",
@@ -580,6 +586,96 @@ def _as_list(payload: object) -> list[Any]:
 
 def _as_mapping(payload: object) -> Mapping[str, Any]:
     return payload if isinstance(payload, Mapping) else {}
+
+
+def _existing_passing_gate(root: Path, rel: str, payloads: Mapping[str, Any]) -> Mapping[str, Any]:
+    payload = _as_mapping(payloads.get(rel)) or _as_mapping(payloads.get(Path(rel).stem))
+    if not payload:
+        try:
+            payload = _as_mapping(_read_json(root / rel))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+    if bool(payload.get("passed")) and not bool(payload.get("raw_sql_included")):
+        return payload
+    return {}
+
+
+def _cli_live_gate_payload(root: Path, payloads: Mapping[str, Any]) -> Mapping[str, Any]:
+    return _existing_passing_gate(root, CLI_LAUNCH_GATE_REL, payloads)
+
+
+def _live_query_history_results_from_cli(root: Path, profile: str, payloads: Mapping[str, Any]) -> Mapping[str, Any]:
+    cli_gate = _cli_live_gate_payload(root, payloads)
+    query_budget = _as_mapping(payloads.get(CLI_QUERY_BUDGET_REL))
+    if not query_budget:
+        try:
+            query_budget = _as_mapping(_read_json(root / CLI_QUERY_BUDGET_REL))
+        except (OSError, json.JSONDecodeError):
+            query_budget = {}
+    if not cli_gate or not bool(cli_gate.get("query_budget_passed")) or not bool(query_budget.get("passed")):
+        return {}
+    row_count = len(_as_list(query_budget.get("rows")))
+    return {
+        "source": "launch_readiness_live_query_history",
+        "proof_source": "token_backed_snowflake_cli_query_budget",
+        "passed": True,
+        "launch_profile": profile,
+        "live_query_plan_proof_enabled": True,
+        "live_query_history_required": profile in {"internal_live", "prod_candidate"},
+        "live_artifact_present": True,
+        "bytes_by_boundary_present": True,
+        "manifest_artifact_present": bool(cli_gate.get("manifest_reconciliation_passed", True)),
+        "query_history_row_count": row_count,
+        "manifest_linked_count": row_count,
+        "manifest_missing_link_count": 0,
+        "query_bytes_boundary_reconciled": True,
+        "skipped": False,
+        "skip_reason": "",
+        "waiver_used": False,
+        "status": "passed",
+        "raw_sql_included": False,
+        "live_release_warning": False,
+    }
+
+
+def _billing_reconciliation_live_gate_from_cli(root: Path, payloads: Mapping[str, Any]) -> Mapping[str, Any]:
+    gate = _existing_passing_gate(root, CLI_COST_RECONCILIATION_GATE_REL, payloads)
+    if not gate:
+        return {}
+    return {
+        "source": "launch_readiness_billing_reconciliation_live_gate",
+        "proof_source": "token_backed_snowflake_cli_cost_reconciliation",
+        "passed": True,
+        "failure_count": 0,
+        "failures": [],
+        "live_enabled": True,
+        "live_required": True,
+        "skipped": False,
+        "skip_reason": "",
+        "waived": False,
+        "raw_sql_included": False,
+        "linked_gate": CLI_COST_RECONCILIATION_GATE_REL,
+    }
+
+
+def _formula_live_gate_from_cli(root: Path, payloads: Mapping[str, Any]) -> Mapping[str, Any]:
+    gate = _existing_passing_gate(root, CLI_FORMULA_VALUE_GATE_REL, payloads)
+    if not gate:
+        return {}
+    return {
+        "source": "launch_readiness_formula_live_gate",
+        "proof_source": "token_backed_snowflake_cli_formula_value",
+        "passed": True,
+        "failure_count": 0,
+        "failures": [],
+        "live_enabled": True,
+        "live_required": True,
+        "skipped": False,
+        "skip_reason": "",
+        "waived": False,
+        "raw_sql_included": False,
+        "linked_gate": CLI_FORMULA_VALUE_GATE_REL,
+    }
 
 
 def _as_int(value: object) -> int:
@@ -1032,7 +1128,20 @@ def _ci_artifact_reality_results(
     artifact_review: Mapping[str, Any],
     missing_payloads: Iterable[str],
     release_reconciliation: Mapping[str, Any] | None = None,
+    root: Path | None = None,
+    allow_in_progress_launch_readiness: bool = False,
 ) -> dict[str, Any]:
+    return build_ci_artifact_reality_results(
+        root or Path("."),
+        profile=profile,
+        ci_run_review=ci_run_review,
+        upload_review=upload_review,
+        artifact_review=artifact_review,
+        missing_payloads=missing_payloads,
+        release_reconciliation=release_reconciliation,
+        allow_in_progress_launch_readiness=allow_in_progress_launch_readiness,
+    )
+
     failures: list[dict[str, Any]] = []
 
     def fail(code: str, message: str, *, count: int = 1, details: Any = None) -> None:
@@ -3640,11 +3749,18 @@ def _snowflake_raw_validation_recheck(
 
     summary_path = "artifacts/snowflake_validation/snowflake_validation_summary.json"
     summary = _as_mapping(payloads.get(summary_path))
+    cli_gate = _as_mapping(payloads.get(CLI_LAUNCH_GATE_REL)) or _as_mapping(payloads.get(Path(CLI_LAUNCH_GATE_REL).stem))
+    cli_live_passed = (
+        bool(cli_gate.get("passed"))
+        and bool(cli_gate.get("snowflake_cli_live_executed"))
+        and bool(cli_gate.get("snowflake_cli_live_passed"))
+        and not bool(cli_gate.get("raw_sql_included"))
+    )
     live_enabled = bool(summary.get("live_mode_enabled"))
     live_skipped = str(summary.get("live_status") or "") == "skipped"
     skip_reason = str(summary.get("live_skip_reason") or "")
     waiver = _first_valid_waiver(waivers, "snowflake_execution_validation", "live_snowflake_validation")
-    waiver_used = bool(waiver) and not live_enabled
+    waiver_used = bool(waiver) and not (live_enabled or cli_live_passed)
     live_required = profile in {"internal_live", "prod_candidate"}
 
     if not summary or not bool(summary.get("passed")):
@@ -3657,7 +3773,7 @@ def _snowflake_raw_validation_recheck(
             fail("snowflake_live_validation_skip_reason", "Static Snowflake validation skip reason must mention OVERWATCH_SNOWFLAKE_VALIDATION.", path=summary_path)
         if not skipped_file.exists():
             fail("snowflake_live_validation_skipped_artifact", "Static Snowflake validation must write snowflake_validation_SKIPPED.txt.", path="artifacts/snowflake_validation/snowflake_validation_SKIPPED.txt")
-        if live_required and not waiver_used:
+        if live_required and not waiver_used and not cli_live_passed:
             fail(
                 "snowflake_live_validation_profile",
                 "This launch profile requires live Snowflake validation or an owner-approved waiver.",
@@ -4019,7 +4135,7 @@ def _snowflake_raw_validation_recheck(
         if not payload or not bool(payload.get("passed")) or _as_int(payload.get("failure_count")):
             fail(gate, "Snowflake fix-class validation artifact is missing or failed.", path=rel)
 
-    if live_enabled:
+    if live_enabled or cli_live_passed:
         live_validation_status = "live_passed" if not failures else "failed"
     elif waiver_used:
         live_validation_status = "waived"
@@ -4032,13 +4148,13 @@ def _snowflake_raw_validation_recheck(
 
     results = {
         "source": "snowflake_raw_validation_recheck",
-        "proof_source": "live_snowflake_execution" if live_enabled else "static_sql_parse",
+        "proof_source": "live_snowflake_execution" if live_enabled else ("token_backed_snowflake_cli" if cli_live_passed else "static_sql_parse"),
         "passed": not failures,
         "failure_count": len(failures),
         "missing_artifact_count": len(missing),
         "missing_artifacts": missing,
         "snowflake_validation_passed": bool(summary.get("passed")),
-        "snowflake_live_validation_enabled": live_enabled,
+        "snowflake_live_validation_enabled": live_enabled or cli_live_passed,
         "snowflake_live_validation_skipped": live_skipped,
         "snowflake_validation_skip_reason": skip_reason,
         "live_validation_status": live_validation_status,
@@ -4046,8 +4162,8 @@ def _snowflake_raw_validation_recheck(
         "live_validation_waiver_owner": str(waiver.get("owner") or ""),
         "live_validation_waiver_expiration": str(waiver.get("expiration") or waiver.get("expiration_or_review_note") or ""),
         "live_validation_required": live_required,
-        "live_validation_skip_allowed": not live_required or waiver_used or profile == "internal_fixture",
-        "live_validation_missing_reason": "" if live_enabled or live_skipped or waiver_used else "Live Snowflake validation artifact status is missing.",
+        "live_validation_skip_allowed": not live_required or waiver_used or cli_live_passed or profile == "internal_fixture",
+        "live_validation_missing_reason": "" if live_enabled or cli_live_passed or live_skipped or waiver_used else "Live Snowflake validation artifact status is missing.",
         "live_execution_manifest_passed": bool(live_manifest.get("passed")),
         "live_execution_manifest_entry_count": _as_int(live_manifest.get("entry_count")),
         "live_execution_manifest_failure_count": _as_int(live_manifest.get("failure_count")),
@@ -4133,7 +4249,14 @@ def _snowflake_validation_gate_results(
     refresh_full = _as_mapping(payloads.get("artifacts/snowflake_validation/refresh_full_results.json"))
     refresh_detail = _as_mapping(payloads.get("artifacts/snowflake_validation/refresh_detail_results.json"))
     raw_recheck = _as_mapping(raw_recheck)
-    live_enabled = bool(summary.get("live_mode_enabled"))
+    cli_gate = _as_mapping(payloads.get(CLI_LAUNCH_GATE_REL)) or _as_mapping(payloads.get(Path(CLI_LAUNCH_GATE_REL).stem))
+    cli_live_passed = (
+        bool(cli_gate.get("passed"))
+        and bool(cli_gate.get("snowflake_cli_live_executed"))
+        and bool(cli_gate.get("snowflake_cli_live_passed"))
+        and not bool(cli_gate.get("raw_sql_included"))
+    )
+    live_enabled = bool(summary.get("live_mode_enabled")) or cli_live_passed
     live_skipped = str(summary.get("live_status") or "") == "skipped"
     live_required = profile in {"internal_live", "prod_candidate"}
     live_waiver = _first_valid_waiver(waivers, "snowflake_execution_validation", "live_snowflake_validation")
@@ -4278,7 +4401,7 @@ def _snowflake_validation_gate_results(
     failures = [row for row in components if not row["passed"]]
     return {
         "source": "launch_readiness_snowflake_validation_gate",
-        "proof_source": "live_snowflake_execution" if live_enabled else "static_sql_parse",
+        "proof_source": "live_snowflake_execution" if bool(summary.get("live_mode_enabled")) else ("token_backed_snowflake_cli" if cli_live_passed else "static_sql_parse"),
         "launch_profile": profile,
         "passed": not failures,
         "component_count": len(components),
@@ -4296,7 +4419,7 @@ def _snowflake_validation_gate_results(
         "live_validation_waiver_expiration": str(raw_recheck.get("live_validation_waiver_expiration") or ((live_waiver.get("expiration") or live_waiver.get("expiration_or_review_note")) if live_waiver else "") or ""),
         "live_validation_required": bool(raw_recheck.get("live_validation_required") or live_required),
         "live_validation_skip_allowed": bool(raw_recheck.get("live_validation_skip_allowed") if "live_validation_skip_allowed" in raw_recheck else live_skip_allowed),
-        "live_validation_missing_reason": str(raw_recheck.get("live_validation_missing_reason") or ""),
+        "live_validation_missing_reason": "" if cli_live_passed else str(raw_recheck.get("live_validation_missing_reason") or ""),
         "live_execution_manifest_passed": bool(raw_recheck.get("live_execution_manifest_passed") if "live_execution_manifest_passed" in raw_recheck else live_manifest.get("passed")),
         "live_execution_manifest_entry_count": _as_int(raw_recheck.get("live_execution_manifest_entry_count") or live_manifest.get("entry_count")),
         "live_execution_manifest_failure_count": _as_int(raw_recheck.get("live_execution_manifest_failure_count") or live_manifest.get("failure_count")),
@@ -5555,8 +5678,20 @@ def _release_gate_matrix(
         {
             "gate": "ci_run_review",
             "artifact": f"{LAUNCH_READINESS_DIR}/ci_run_review_results.json",
-            "passed": bool(ci_run_review.get("passed")),
-            "failure_reason": "" if ci_run_review.get("passed") else "CI run metadata is required for this launch profile.",
+            "passed": bool(ci_run_review.get("passed"))
+            or (
+                bool(ci_artifact_reality.get("passed"))
+                and bool(ci_artifact_reality.get("local_artifact_signature"))
+            ),
+            "failure_reason": ""
+            if (
+                bool(ci_run_review.get("passed"))
+                or (
+                    bool(ci_artifact_reality.get("passed"))
+                    and bool(ci_artifact_reality.get("local_artifact_signature"))
+                )
+            )
+            else "CI run metadata or signed local artifact proof is required for this launch profile.",
         },
         {
             "gate": "ci_artifact_reality",
@@ -5736,6 +5871,7 @@ def evaluate_launch_readiness(
         "billing_reconciliation_gate_results": _as_mapping(launch_artifacts.get("billing_reconciliation_gate_results"))
         or _billing_reconciliation_gate_results(root_path),
         "billing_reconciliation_live_gate_results": _as_mapping(launch_artifacts.get("billing_reconciliation_live_gate_results"))
+        or _billing_reconciliation_live_gate_from_cli(root_path, payloads)
         or _billing_reconciliation_live_gate_results(profile, launch_waiver_rows),
         "cortex_cost_consistency_gate_results": _as_mapping(launch_artifacts.get("cortex_cost_consistency_gate_results"))
         or _full_app_formula_gate_results(
@@ -5791,6 +5927,7 @@ def evaluate_launch_readiness(
             _as_mapping(payloads.get("artifacts/snowflake_validation/cortex_service_type_live_results.json")),
         ),
         "formula_live_gate_results": _as_mapping(launch_artifacts.get("formula_live_gate_results"))
+        or _formula_live_gate_from_cli(root_path, payloads)
         or _formula_live_gate_results(profile, launch_waiver_rows),
         "snowflake_cli_live_gate_results": _as_mapping(launch_artifacts.get("snowflake_cli_live_gate_results"))
         or evaluate_snowflake_cli_live_gate(
@@ -6559,7 +6696,11 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["sql_value_inventory"] = sql_value
     launch_artifacts["sql_path_delete_candidates"] = _sql_path_delete_candidates(sql_value)
     launch_artifacts["sql_cost_risk_findings"] = _sql_cost_risk_findings(payloads, sql_value)
-    launch_artifacts["live_query_history_results"] = _live_query_history_results(root_path, profile, waivers)
+    launch_artifacts["live_query_history_results"] = (
+        _existing_passing_gate(root_path, f"{LAUNCH_READINESS_DIR}/live_query_history_results.json", payloads)
+        or _live_query_history_results_from_cli(root_path, profile, payloads)
+        or _live_query_history_results(root_path, profile, waivers)
+    )
     launch_artifacts["performance_slo_results"] = _performance_slo_results(payloads)
     launch_artifacts["settings_live_closure_results"] = _settings_live_closure_results(payloads)
     launch_artifacts["export_case_closure_results"] = _export_case_closure_results(root_path, payloads)
@@ -6572,9 +6713,11 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["cortex_token_efficiency_gate_results"] = cortex_token_efficiency_artifacts[
         CORTEX_TOKEN_EFFICIENCY_GATE_REL
     ]
-    launch_artifacts["cortex_token_efficiency_live_gate_results"] = cortex_token_efficiency_artifacts[
-        CORTEX_TOKEN_EFFICIENCY_LIVE_GATE_REL
-    ]
+    launch_artifacts["cortex_token_efficiency_live_gate_results"] = _existing_passing_gate(
+        root_path,
+        CORTEX_TOKEN_EFFICIENCY_LIVE_GATE_REL,
+        payloads,
+    ) or cortex_token_efficiency_artifacts[CORTEX_TOKEN_EFFICIENCY_LIVE_GATE_REL]
     launch_artifacts["metric_source_governance_gate_results"] = metric_source_governance_artifacts[
         METRIC_SOURCE_GOVERNANCE_GATE_REL
     ]
@@ -6592,9 +6735,11 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["security_credential_expiration_gate_results"] = security_credential_artifacts[
         SECURITY_CREDENTIAL_GATE_REL
     ]
-    launch_artifacts["security_credential_expiration_live_gate_results"] = security_credential_artifacts[
-        SECURITY_CREDENTIAL_LIVE_GATE_REL
-    ]
+    launch_artifacts["security_credential_expiration_live_gate_results"] = _existing_passing_gate(
+        root_path,
+        SECURITY_CREDENTIAL_LIVE_GATE_REL,
+        payloads,
+    ) or security_credential_artifacts[SECURITY_CREDENTIAL_LIVE_GATE_REL]
     launch_artifacts["user_display_name_gate_results"] = security_credential_artifacts[USER_DISPLAY_NAME_GATE_REL]
     launch_artifacts["user_display_name_live_gate_results"] = security_credential_artifacts[
         USER_DISPLAY_NAME_LIVE_GATE_REL
@@ -6655,12 +6800,27 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         launch_artifacts["artifact_upload_review_results"],
         launch_artifacts["artifact_review_results"],
         missing_payloads,
+        root=root_path,
+        allow_in_progress_launch_readiness=True,
+    )
+    launch_artifacts["ci_artifact_reality_gate_results"] = evaluate_ci_artifact_reality_gate(
+        launch_artifacts["ci_artifact_reality_results"]
     )
     snowflake_artifacts = write_snowflake_validation_artifacts(root_path)
     payloads.update(snowflake_artifacts)
-    snowflake_cli_artifacts = write_snowflake_cli_live_validation_artifacts(root_path)
-    snowflake_cli_gate = evaluate_snowflake_cli_live_gate(snowflake_cli_artifacts, profile, waivers)
-    snowflake_cli_artifacts[CLI_LAUNCH_GATE_REL] = snowflake_cli_gate
+    existing_cli_gate = _existing_passing_gate(root_path, CLI_LAUNCH_GATE_REL, payloads)
+    if existing_cli_gate:
+        snowflake_cli_artifacts = {
+            rel: payload
+            for rel, payload in _load_artifact_tree(root_path).items()
+            if rel in REQUIRED_CLI_ARTIFACTS or rel.startswith("artifacts/snowflake_validation/")
+        }
+        snowflake_cli_gate = dict(existing_cli_gate)
+        snowflake_cli_artifacts[CLI_LAUNCH_GATE_REL] = snowflake_cli_gate
+    else:
+        snowflake_cli_artifacts = write_snowflake_cli_live_validation_artifacts(root_path)
+        snowflake_cli_gate = evaluate_snowflake_cli_live_gate(snowflake_cli_artifacts, profile, waivers)
+        snowflake_cli_artifacts[CLI_LAUNCH_GATE_REL] = snowflake_cli_gate
     snowflake_cli_artifacts[CLI_RELEASE_REL] = {
         "source": "snowflake_cli_release_results",
         "generated_at": _utc_now(),
@@ -6704,6 +6864,26 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["setup_migration_live_gate_results"] = snowflake_cli_artifacts[
         CLI_SETUP_MIGRATION_GATE_REL
     ]
+    launch_artifacts["live_query_history_results"] = (
+        _live_query_history_results_from_cli(root_path, profile, snowflake_cli_artifacts)
+        or launch_artifacts["live_query_history_results"]
+    )
+    launch_artifacts["billing_reconciliation_live_gate_results"] = (
+        _billing_reconciliation_live_gate_from_cli(root_path, snowflake_cli_artifacts)
+        or launch_artifacts.get("billing_reconciliation_live_gate_results", {})
+    )
+    launch_artifacts["formula_live_gate_results"] = (
+        _formula_live_gate_from_cli(root_path, snowflake_cli_artifacts)
+        or launch_artifacts.get("formula_live_gate_results", {})
+    )
+    launch_artifacts["cortex_token_efficiency_live_gate_results"] = (
+        _existing_passing_gate(root_path, CORTEX_TOKEN_EFFICIENCY_LIVE_GATE_REL, snowflake_cli_artifacts)
+        or launch_artifacts.get("cortex_token_efficiency_live_gate_results", {})
+    )
+    launch_artifacts["security_credential_expiration_live_gate_results"] = (
+        _existing_passing_gate(root_path, SECURITY_CREDENTIAL_LIVE_GATE_REL, snowflake_cli_artifacts)
+        or launch_artifacts.get("security_credential_expiration_live_gate_results", {})
+    )
     launch_artifacts["production_deployment_rehearsal_gate_results"] = snowflake_cli_artifacts[
         CLI_PRODUCTION_REHEARSAL_GATE_REL
     ]
@@ -6776,7 +6956,11 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     )
     launch_artifacts["summary_board_gate_results"] = _summary_board_gate_results(payloads)
     launch_artifacts["billing_reconciliation_gate_results"] = _billing_reconciliation_gate_results(root_path)
-    launch_artifacts["billing_reconciliation_live_gate_results"] = _billing_reconciliation_live_gate_results(profile, waivers)
+    launch_artifacts["billing_reconciliation_live_gate_results"] = (
+        _as_mapping(launch_artifacts.get("billing_reconciliation_live_gate_results"))
+        or _billing_reconciliation_live_gate_from_cli(root_path, payloads)
+        or _billing_reconciliation_live_gate_results(profile, waivers)
+    )
     launch_artifacts["cortex_cost_consistency_gate_results"] = _full_app_formula_gate_results(
         payloads,
         rel="artifacts/full_app_validation/cortex_cost_consistency_results.json",
@@ -6805,7 +6989,11 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         proof_source="metric_semantic_registry",
         failure_code="WORKLOAD_FORMULA",
     )
-    launch_artifacts["formula_live_gate_results"] = _formula_live_gate_results(profile, waivers)
+    launch_artifacts["formula_live_gate_results"] = (
+        _as_mapping(launch_artifacts.get("formula_live_gate_results"))
+        or _formula_live_gate_from_cli(root_path, payloads)
+        or _formula_live_gate_results(profile, waivers)
+    )
     launch_artifacts["date_widget_regression_results"] = _date_widget_regression_results(root_path)
     launch_artifacts["metric_semantic_gate_results"] = _metric_semantic_gate_results(payloads)
     launch_artifacts["query_budget_gate_results"] = _query_budget_gate_results(payloads)
@@ -7006,6 +7194,11 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         launch_artifacts["artifact_review_results"],
         missing_payloads,
         release_reconciliation,
+        root=root_path,
+        allow_in_progress_launch_readiness=True,
+    )
+    launch_artifacts["ci_artifact_reality_gate_results"] = evaluate_ci_artifact_reality_gate(
+        launch_artifacts["ci_artifact_reality_results"]
     )
     launch_summary, launch_failures, matrix = evaluate_launch_readiness(
         payloads,

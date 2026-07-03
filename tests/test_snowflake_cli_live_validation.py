@@ -423,7 +423,7 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
             seen_args.append([str(arg) for arg in args])
             return base_runner(args, capture_output=capture_output, text=text, timeout=timeout, check=check)
 
-        token_path = r"C:\secrets\TOK_CJ-token-secret.txt"
+        token_path = r"C:\secrets\private_pat_file.txt"
         with _root_with_validation_sql() as temp:
             artifacts = write_snowflake_cli_live_validation_artifacts(
                 temp,
@@ -696,7 +696,7 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
         from tools.contracts import snowflake_cli_live_validation as module
 
         sql = module._packet_availability_sql(SnowflakeCliValidationOptions(connection="dev", profile="internal_live"))
-        command_branch = sql.split("FROM MART_SECTION_COMMAND_BRIEF", 1)[0]
+        command_branch = sql.split("MART_SECTION_COMMAND_BRIEF", 1)[0]
 
         self.assertIn("TRUE AS is_active", command_branch)
         self.assertNotIn("COALESCE(IS_ACTIVE, TRUE) AS is_active", command_branch)
@@ -775,6 +775,44 @@ class SnowflakeCliLiveValidationTests(unittest.TestCase):
         self.assertNotIn("site-packages", sanitized)
         self.assertNotIn("config.py", sanitized)
         self.assertNotIn("warnings.warn", sanitized)
+
+    def test_sanitizer_preserves_safe_context_after_snowflake_operation_error(self):
+        sanitized = sanitize_text(
+            "090105 (22000): request id: Cannot perform SELECT. "
+            "This session does not have a current database."
+        )
+
+        self.assertIn("Cannot perform [SQL_OPERATION].", sanitized)
+        self.assertIn("current database", sanitized)
+        self.assertNotIn("SELECT", sanitized)
+
+    def test_cli_options_default_to_repo_validation_scope(self):
+        from tools.contracts.snowflake_cli_live_validation import options_from_env
+
+        with patch.dict(
+            os.environ,
+            {
+                "OVERWATCH_SNOWFLAKE_VALIDATION_DATABASE": "",
+                "OVERWATCH_SNOWFLAKE_VALIDATION_SCHEMA": "",
+            },
+            clear=False,
+        ):
+            options = options_from_env()
+
+        self.assertEqual(options.database, "DBA_MAINT_DB")
+        self.assertEqual(options.schema, "OVERWATCH")
+
+    def test_internal_live_enables_query_budget_proof_by_default(self):
+        from tools.contracts.snowflake_cli_live_validation import options_from_env
+
+        with patch.dict(
+            os.environ,
+            {"OVERWATCH_LAUNCH_PROFILE": "internal_live"},
+            clear=True,
+        ):
+            options = options_from_env()
+
+        self.assertTrue(options.query_history_enabled)
 
     def test_runbook_mentions_connection_test_artifacts_and_live_profile_policy(self):
         text = (ROOT / "docs" / "snowflake_cli_live_validation.md").read_text(encoding="utf-8")

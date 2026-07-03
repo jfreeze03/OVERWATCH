@@ -92,6 +92,11 @@ def _setup_object_probe(setup_payload: Mapping[str, Any]) -> Mapping[str, Any]:
     return {}
 
 
+def _row_passed(row: Mapping[str, Any]) -> bool:
+    status = str(row.get("status") or "").strip().lower()
+    return bool(row.get("passed")) or status == "passed"
+
+
 def build_snowflake_object_drift_results(
     root: Path | str = ".",
     *,
@@ -104,7 +109,7 @@ def build_snowflake_object_drift_results(
     setup_payload = _load_json(root_path, CLI_SETUP_MIGRATION_REL)
     setup_probe = _setup_object_probe(setup_payload)
     setup_present = bool(setup_payload)
-    setup_passed = bool(setup_payload.get("passed")) and bool(setup_probe.get("passed"))
+    setup_passed = bool(setup_payload.get("passed")) and _row_passed(setup_probe)
     missing_required_count = _as_int(setup_probe.get("missing_required_object_count"))
     all_required_present = setup_passed and missing_required_count == 0
     allowed_names = {str(row.get("object_name") or "").upper() for row in EXPECTED_OBJECTS}

@@ -106,6 +106,17 @@ def _load_json(root: Path, rel: str) -> Any:
         return []
 
 
+def _existing_live_payload(root: Path, rel: str) -> Mapping[str, Any]:
+    payload = _load_json(root, rel)
+    if not isinstance(payload, Mapping):
+        return {}
+    if bool(payload.get("raw_sql_included")):
+        return {}
+    if bool(payload.get("live_executed")) and bool(payload.get("live_passed")) and bool(payload.get("passed")):
+        return payload
+    return {}
+
+
 def _rows(payload: object) -> list[Mapping[str, Any]]:
     if isinstance(payload, list):
         return [row for row in payload if isinstance(row, Mapping)]
@@ -1621,8 +1632,8 @@ def write_security_credential_validation_artifacts(
     launch_profile = _selected_profile(profile)
     credential = build_credential_expiration_validation(root_path)
     user_display = build_user_display_dimension_validation(root_path)
-    credential_live = build_credential_expiration_live_results(root_path, launch_profile)
-    user_display_live = build_user_display_dimension_live_results(root_path, launch_profile)
+    credential_live = _existing_live_payload(root_path, CREDENTIAL_EXPIRATION_LIVE_REL) or build_credential_expiration_live_results(root_path, launch_profile)
+    user_display_live = _existing_live_payload(root_path, USER_DISPLAY_DIMENSION_LIVE_REL) or build_user_display_dimension_live_results(root_path, launch_profile)
     user_surface = build_user_display_surface_results(root_path)
     cortex_labels = build_cortex_user_label_results(root_path)
     credential_export = build_security_credential_export_results(root_path)

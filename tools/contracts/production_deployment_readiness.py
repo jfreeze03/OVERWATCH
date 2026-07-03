@@ -69,7 +69,6 @@ REQUIRED_SETUP_OBJECTS = (
     "OVERWATCH_DECISION_SETUP_HEALTH",
 )
 TOKEN_PATH_MARKERS = (
-    "TOK_CJ-token-secret",
     "overwatch_pat.txt",
 )
 

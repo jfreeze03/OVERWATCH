@@ -17,6 +17,7 @@ class AGradeExecutionMatrixTests(unittest.TestCase):
         "artifacts/launch_readiness/action_click_gate_results.json",
         "artifacts/launch_readiness/import_laziness_gate_results.json",
         "artifacts/launch_readiness/ci_artifact_reality_gate_results.json",
+        "artifacts/launch_readiness/metric_source_governance_gate_results.json",
     ]
 
     def _write_gate(self, root: Path, rel: str, passed: bool = True, **extra) -> None:
@@ -37,6 +38,22 @@ class AGradeExecutionMatrixTests(unittest.TestCase):
 
         self.assertTrue(results["passed"], results.get("failures"))
         self.assertTrue(results["a_grade_ready"], results)
+
+    def test_matrix_includes_release_blocking_metric_governance(self):
+        from tools.contracts.a_grade_execution_matrix import build_a_grade_execution_matrix
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in self.REQUIRED_GATES:
+                self._write_gate(root, rel)
+            results = build_a_grade_execution_matrix(root)
+
+        metric_rows = [
+            row for row in results["rows"] if row["required_gate"].endswith("metric_source_governance_gate_results.json")
+        ]
+        self.assertEqual(len(metric_rows), 1)
+        self.assertTrue(metric_rows[0]["release_blocking"])
+        self.assertEqual(metric_rows[0]["target_dimension"], "packet-backed high-impact metrics")
 
     def test_release_blocking_failure_blocks_matrix(self):
         from tools.contracts.a_grade_execution_matrix import build_a_grade_execution_matrix

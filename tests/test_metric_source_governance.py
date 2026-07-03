@@ -10,9 +10,20 @@ if str(APP_ROOT) not in sys.path:
 
 
 class MetricSourceGovernanceTests(unittest.TestCase):
+    REQUIRED_SECTION_FAMILIES = {
+        "decision_readiness",
+        "dba_critical_path",
+        "alert_quality",
+        "retained_storage_waste",
+        "query_optimization_score",
+        "sensitive_data_access_exposure",
+        "release_proof_freshness",
+    }
+
     def test_high_value_metric_families_are_governed(self):
         from tools.contracts.metric_source_governance import (
             METRIC_FAMILY_GATE_RELS,
+            SECTION_DECISION_METRIC_FAMILIES,
             build_metric_source_governance_results,
             evaluate_metric_source_governance_gate,
         )
@@ -22,12 +33,38 @@ class MetricSourceGovernanceTests(unittest.TestCase):
 
         self.assertTrue(results["passed"], results["failures"][:5])
         self.assertTrue(gate["passed"], gate["failures"][:5])
+        self.assertEqual(set(SECTION_DECISION_METRIC_FAMILIES), self.REQUIRED_SECTION_FAMILIES)
+        self.assertTrue(self.REQUIRED_SECTION_FAMILIES.issubset(METRIC_FAMILY_GATE_RELS))
         self.assertEqual(results["new_metric_family_count"], len(METRIC_FAMILY_GATE_RELS))
-        self.assertGreaterEqual(results["new_metric_packet_field_count"], 90)
-        self.assertGreaterEqual(results["new_metric_evidence_action_count"], len(METRIC_FAMILY_GATE_RELS))
+        self.assertGreaterEqual(results["new_metric_packet_field_count"], 150)
+        self.assertGreaterEqual(results["new_metric_evidence_action_count"], len(SECTION_DECISION_METRIC_FAMILIES))
         self.assertEqual(results["new_metric_first_paint_violation_count"], 0)
         self.assertEqual(results["new_metric_raw_leak_count"], 0)
         self.assertTrue(results["app_health_gate_passed"])
+        self.assertEqual(gate["new_metric_gate_failure_count"], 0)
+        self.assertEqual(gate["new_metric_export_failure_count"], 0)
+        self.assertEqual(gate["decision_readiness_status"], "metric_governed_packet_pending")
+
+    def test_new_section_metric_rows_have_source_status_freshness_and_zero_contracts(self):
+        from tools.contracts.metric_source_governance import build_metric_source_governance_results
+
+        results = build_metric_source_governance_results(ROOT)
+        scoped = [
+            row for row in results["rows"] if row["metric_family"] in self.REQUIRED_SECTION_FAMILIES
+        ]
+        self.assertGreaterEqual(len(scoped), 60)
+        for row in scoped:
+            with self.subTest(metric_family=row["metric_family"], metric_key=row["metric_key"]):
+                self.assertTrue(row["packet_field"])
+                self.assertTrue(row["source_status_field"])
+                self.assertTrue(row["freshness_field"])
+                self.assertTrue(row["source_confirmed_zero_field"])
+                self.assertIn("source_confirmed_zero", row["zero_policy"])
+                self.assertRegex(row["unavailable_policy"].lower(), "pending|unavailable")
+                self.assertFalse(row["first_paint_allowed"])
+                self.assertTrue(row["evidence_action_key"])
+                self.assertTrue(row["export_fields"])
+                self.assertTrue(row["case_payload_fields"])
 
     def test_every_family_gate_has_packet_export_and_evidence_metadata(self):
         from tools.contracts.metric_source_governance import (

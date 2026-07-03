@@ -436,6 +436,62 @@ def _supplemental_overwatch_rows(root: Path) -> list[dict[str, Any]]:
     )
     high_value_metric_paths = (
         (
+            "decision_readiness_refresh_source",
+            "Refresh compact decision-readiness components from packet health, SLO, drift, and release proof summaries.",
+            "Decision readiness",
+            "decision_readiness",
+            "none",
+            "Feeds Executive packet-backed readiness status without adding page-entry diagnostics.",
+        ),
+        (
+            "dba_critical_path_refresh_source",
+            "Refresh compact DBA critical-path delay and downstream impact rows.",
+            "DBA critical path",
+            "dba_critical_path",
+            "refresh/setup/live only",
+            "Feeds DBA packet-backed critical-path delay and explicit evidence.",
+        ),
+        (
+            "alert_quality_refresh_source",
+            "Refresh compact alert quality, dedupe, flapping, stale, and routing rows.",
+            "Alert quality",
+            "alert_quality",
+            "none",
+            "Feeds Alert Center packet-backed queue quality metrics and explicit alert quality evidence.",
+        ),
+        (
+            "retained_storage_waste_refresh_source",
+            "Refresh compact retained-storage waste rows from storage and read-recency summaries.",
+            "Retained storage waste",
+            "retained_storage_waste",
+            "refresh/setup/live only",
+            "Feeds Cost packet-backed storage waste metrics without overview storage-source scans.",
+        ),
+        (
+            "query_optimization_score_refresh_source",
+            "Refresh compact query optimization opportunity scores from query insight summaries.",
+            "Query optimization score",
+            "query_optimization_score",
+            "refresh/setup/live only",
+            "Feeds Workload packet-backed query optimization metrics and explicit evidence.",
+        ),
+        (
+            "sensitive_access_exposure_refresh_source",
+            "Refresh compact sensitive data access exposure rows from access and policy coverage summaries.",
+            "Sensitive data access exposure",
+            "sensitive_data_access_exposure",
+            "refresh/setup/live only",
+            "Feeds Security packet-backed sensitive access metrics without first-paint access-history scans.",
+        ),
+        (
+            "release_proof_freshness_admin_source",
+            "Refresh admin-only release proof freshness status from release candidate and launch readiness artifacts.",
+            "Settings/Admin Setup Health release proof freshness",
+            "release_proof_freshness",
+            "none",
+            "Feeds Setup Health release freshness status while keeping daily Settings clean.",
+        ),
+        (
             "query_insights_refresh_source",
             "Refresh compact query optimization opportunities from query insight sources.",
             "Query optimization opportunities",
@@ -541,13 +597,14 @@ def _supplemental_overwatch_rows(root: Path) -> list[dict[str, Any]]:
         ),
     )
     for path_id, purpose, feature, table_family, account_usage, value_to_app in high_value_metric_paths:
+        setup_admin_metric = table_family in {"overwatch_app_health", "release_proof_freshness"}
         add(
             path_id,
             purpose=purpose,
             user_visible_feature=feature,
-            source_family="refresh_fast" if table_family != "overwatch_app_health" else "setup_admin",
+            source_family="setup_admin" if setup_admin_metric else "refresh_fast",
             account_usage_use=account_usage,
-            admin_only=account_usage != "none" or table_family == "overwatch_app_health",
+            admin_only=account_usage != "none" or setup_admin_metric,
             daily_safe=True,
             owner="Decision Workspace metric governance",
             table_family=table_family,

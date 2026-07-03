@@ -17,7 +17,18 @@ METRIC_SOURCE_GOVERNANCE_GATE_REL = (
     f"{LAUNCH_READINESS_DIR}/metric_source_governance_gate_results.json"
 )
 
+SECTION_DECISION_METRIC_FAMILIES: Mapping[str, str] = {
+    "decision_readiness": f"{LAUNCH_READINESS_DIR}/decision_readiness_metric_gate_results.json",
+    "dba_critical_path": f"{LAUNCH_READINESS_DIR}/dba_critical_path_metric_gate_results.json",
+    "alert_quality": f"{LAUNCH_READINESS_DIR}/alert_quality_metric_gate_results.json",
+    "retained_storage_waste": f"{LAUNCH_READINESS_DIR}/storage_waste_metric_gate_results.json",
+    "query_optimization_score": f"{LAUNCH_READINESS_DIR}/query_optimization_metric_gate_results.json",
+    "sensitive_data_access_exposure": f"{LAUNCH_READINESS_DIR}/sensitive_access_metric_gate_results.json",
+    "release_proof_freshness": f"{LAUNCH_READINESS_DIR}/release_proof_freshness_gate_results.json",
+}
+
 METRIC_FAMILY_GATE_RELS: Mapping[str, str] = {
+    **SECTION_DECISION_METRIC_FAMILIES,
     "query_optimization_opportunities": f"{LAUNCH_READINESS_DIR}/query_optimization_metrics_gate_results.json",
     "query_cost_attribution": f"{LAUNCH_READINESS_DIR}/query_cost_attribution_gate_results.json",
     "storage_waste": f"{LAUNCH_READINESS_DIR}/storage_waste_gate_results.json",
@@ -34,6 +45,13 @@ METRIC_FAMILY_GATE_RELS: Mapping[str, str] = {
 }
 
 FAMILY_SQL_PATH_IDS: Mapping[str, tuple[str, ...]] = {
+    "decision_readiness": ("decision_readiness_refresh_source",),
+    "dba_critical_path": ("dba_critical_path_refresh_source",),
+    "alert_quality": ("alert_quality_refresh_source",),
+    "retained_storage_waste": ("retained_storage_waste_refresh_source",),
+    "query_optimization_score": ("query_optimization_score_refresh_source",),
+    "sensitive_data_access_exposure": ("sensitive_access_exposure_refresh_source",),
+    "release_proof_freshness": ("release_proof_freshness_admin_source",),
     "query_optimization_opportunities": ("query_insights_refresh_source",),
     "query_cost_attribution": ("query_cost_attribution_refresh_source",),
     "storage_waste": ("storage_waste_refresh_source",),
@@ -140,7 +158,10 @@ def _row_failures(row: Mapping[str, Any]) -> list[str]:
         "zero_policy",
         "unavailable_policy",
         "freshness_policy",
+        "freshness_field",
         "latency_note",
+        "source_status_field",
+        "source_confirmed_zero_field",
         "launch_gate",
     )
     for field in required:
@@ -198,7 +219,11 @@ def build_metric_source_governance_results(root: Path | str = ".") -> dict[str, 
                 "zero_policy": metric.get("zero_policy", ""),
                 "unavailable_policy": metric.get("unavailable_policy", ""),
                 "freshness_policy": metric.get("freshness_policy", ""),
+                "freshness_field": metric.get("freshness_field", ""),
                 "latency_note": metric.get("latency_note", ""),
+                "source_status_field": metric.get("source_status_field", ""),
+                "source_confirmed_zero_field": metric.get("source_confirmed_zero_field", ""),
+                "higher_is_worse": bool(metric.get("higher_is_worse")),
                 "evidence_action_key": metric.get("evidence_action_key", ""),
                 "export_fields": list(_as_tuple(metric.get("export_fields"))),
                 "case_payload_fields": list(_as_tuple(metric.get("case_payload_fields"))),
@@ -268,6 +293,21 @@ def build_metric_source_governance_results(root: Path | str = ".") -> dict[str, 
         ),
         "new_metric_raw_leak_count": len([row for row in rows if "raw_source_token" in row["failure_reason"]]),
         "new_metric_sql_inventory_failure_count": 0,
+        "decision_readiness_score": None,
+        "decision_readiness_status": "metric_governed_packet_pending",
+        "dba_critical_path_delay_minutes": None,
+        "dba_blast_radius_object_count": None,
+        "alert_quality_score": None,
+        "alert_flapping_count": None,
+        "retained_storage_waste_usd": None,
+        "query_optimization_score": None,
+        "sensitive_access_count": None,
+        "release_proof_age_hours": None,
+        "new_metric_gate_failure_count": len(failures),
+        "new_metric_export_failure_count": len(
+            [row for row in family_rows if _as_tuple(row.get("failures")) and not row.get("export_count")]
+        ),
+        "new_metric_live_validation_status": "profile_dependent_live_or_fixture_pending",
         "app_health_gate_passed": any(
             row["metric_family"] == "overwatch_app_health" and row["passed"] for row in family_rows
         ),
@@ -296,6 +336,19 @@ def evaluate_metric_source_governance_gate(payload: Mapping[str, Any]) -> dict[s
         "new_metric_first_paint_violation_count": payload.get("new_metric_first_paint_violation_count", 0),
         "new_metric_raw_leak_count": payload.get("new_metric_raw_leak_count", 0),
         "new_metric_sql_inventory_failure_count": payload.get("new_metric_sql_inventory_failure_count", 0),
+        "decision_readiness_score": payload.get("decision_readiness_score"),
+        "decision_readiness_status": payload.get("decision_readiness_status", ""),
+        "dba_critical_path_delay_minutes": payload.get("dba_critical_path_delay_minutes"),
+        "dba_blast_radius_object_count": payload.get("dba_blast_radius_object_count"),
+        "alert_quality_score": payload.get("alert_quality_score"),
+        "alert_flapping_count": payload.get("alert_flapping_count"),
+        "retained_storage_waste_usd": payload.get("retained_storage_waste_usd"),
+        "query_optimization_score": payload.get("query_optimization_score"),
+        "sensitive_access_count": payload.get("sensitive_access_count"),
+        "release_proof_age_hours": payload.get("release_proof_age_hours"),
+        "new_metric_gate_failure_count": payload.get("new_metric_gate_failure_count", len(failures)),
+        "new_metric_export_failure_count": payload.get("new_metric_export_failure_count", 0),
+        "new_metric_live_validation_status": payload.get("new_metric_live_validation_status", ""),
         "app_health_gate_passed": bool(payload.get("app_health_gate_passed")),
         "raw_sql_included": False,
     }
@@ -357,6 +410,7 @@ __all__ = [
     "METRIC_FAMILY_GATE_RELS",
     "METRIC_SOURCE_GOVERNANCE_GATE_REL",
     "METRIC_SOURCE_GOVERNANCE_REL",
+    "SECTION_DECISION_METRIC_FAMILIES",
     "build_metric_source_governance_results",
     "evaluate_metric_family_gate",
     "evaluate_metric_source_governance_gate",

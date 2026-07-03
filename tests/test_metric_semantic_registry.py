@@ -10,6 +10,16 @@ if str(APP_ROOT) not in sys.path:
 
 
 class MetricSemanticRegistryTests(unittest.TestCase):
+    REQUIRED_SECTION_METRICS = {
+        ("Executive Landing", "decision_readiness_score", "EXEC_DECISION_READINESS_SCORE"),
+        ("DBA Control Room", "dba_critical_path_delay_minutes", "DBA_CRITICAL_PATH_DELAY_MINUTES"),
+        ("Alert Center", "alert_quality_score", "ALERT_QUALITY_SCORE"),
+        ("Cost & Contract", "cost_retained_storage_waste_usd", "COST_RETAINED_STORAGE_WASTE_USD"),
+        ("Workload Operations", "workload_query_optimization_score", "WORKLOAD_QUERY_OPTIMIZATION_SCORE"),
+        ("Security Monitoring", "security_sensitive_access_count", "SECURITY_SENSITIVE_ACCESS_COUNT"),
+        ("Settings/Admin Setup Health", "admin_release_proof_age_hours", "ADMIN_RELEASE_PROOF_AGE_HOURS"),
+    }
+
     def test_all_primary_metrics_have_semantic_entries(self):
         from sections.metric_semantic_registry import PRIMARY_METRIC_KEYS, get_metric_semantic
 
@@ -20,6 +30,45 @@ class MetricSemanticRegistryTests(unittest.TestCase):
             if get_metric_semantic(section, metric_key) is None
         ]
         self.assertEqual(missing, [])
+
+    def test_high_impact_section_metrics_have_packet_and_source_governance(self):
+        from sections.metric_semantic_registry import get_metric_semantic
+
+        for section, metric_key, packet_field in self.REQUIRED_SECTION_METRICS:
+            with self.subTest(section=section, metric_key=metric_key):
+                semantic = get_metric_semantic(section, metric_key)
+                self.assertIsNotNone(semantic)
+                assert semantic is not None
+                self.assertEqual(semantic.packet_field, packet_field)
+                self.assertFalse(semantic.first_paint_allowed)
+                self.assertTrue(semantic.evidence_action_key)
+                self.assertTrue(semantic.export_fields)
+                self.assertTrue(semantic.case_payload_fields)
+                self.assertTrue(semantic.freshness_field)
+                self.assertTrue(semantic.source_status_field)
+                self.assertTrue(semantic.source_confirmed_zero_field)
+                self.assertIn("source_confirmed_zero", semantic.zero_policy)
+                self.assertRegex(semantic.unavailable_policy.lower(), "pending|unavailable")
+
+    def test_section_metric_families_do_not_use_raw_source_labels(self):
+        from sections.metric_semantic_registry import all_metric_semantics
+
+        families = {
+            "decision_readiness",
+            "dba_critical_path",
+            "alert_quality",
+            "retained_storage_waste",
+            "query_optimization_score",
+            "sensitive_data_access_exposure",
+            "release_proof_freshness",
+        }
+        forbidden_daily_tokens = ("ACCOUNT_USAGE", "INFORMATION_SCHEMA", "MART_", "FACT_", "SP_", "USER_ID")
+        rows = [row for row in all_metric_semantics() if row.metric_family in families]
+        self.assertTrue(rows)
+        for row in rows:
+            daily_text = f"{row.label} {row.description} {row.render_surface}".upper()
+            with self.subTest(metric_family=row.metric_family, metric_key=row.metric_key):
+                self.assertFalse(any(token in daily_text for token in forbidden_daily_tokens), daily_text)
 
     def test_workload_pipeline_failure_outlier_is_blocked(self):
         from sections.section_command_brief import SectionCommandMetric

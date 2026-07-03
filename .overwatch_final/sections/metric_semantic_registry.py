@@ -753,8 +753,22 @@ def _high_value_decision_metric_rows() -> tuple[MetricSemantic, ...]:
                     denominator_field=str(metric.get("denominator_field", "")),
                     render_surface=render_surface,
                     export_surface=export_surface,
+                    export_domain=str(metric.get("export_domain", metric_family)),
                     freshness_policy="packet source freshness must be present or the tile renders pending",
+                    freshness_field=str(
+                        metric.get("freshness_field")
+                        or f"{str(metric_family).upper()}_FRESHNESS_TS"
+                    ),
                     latency_note=f"{metric_family} source latency is summarized through Data Trust",
+                    source_status_field=str(
+                        metric.get("source_status_field")
+                        or f"{str(metric_family).upper()}_SOURCE_STATUS"
+                    ),
+                    source_confirmed_zero_field=str(
+                        metric.get("source_confirmed_zero_field")
+                        or f"{str(metric_family).upper()}_SOURCE_CONFIRMED_ZERO"
+                    ),
+                    higher_is_worse=bool(metric.get("higher_is_worse", False)),
                     evidence_action_key=evidence_action_key,
                     export_fields=export_fields,
                     case_payload_fields=case_payload_fields,
@@ -2170,7 +2184,333 @@ def _high_value_decision_metric_rows() -> tuple[MetricSemantic, ...]:
     return tuple(rows)
 
 
-_ROWS = (*_ROWS, *_high_value_decision_metric_rows())
+def _section_decision_metric_rows() -> tuple[MetricSemantic, ...]:
+    """Highest-impact section metrics governed by packet/evidence contracts."""
+
+    def family(
+        *,
+        metric_family: str,
+        section: str,
+        source_family: str,
+        source_object: str,
+        launch_gate: str,
+        render_surface: str,
+        evidence_action_key: str,
+        export_surface: str,
+        source_status_field: str,
+        freshness_field: str,
+        source_confirmed_zero_field: str,
+        metrics: tuple[dict[str, object], ...],
+        export_fields: tuple[str, ...],
+        case_payload_fields: tuple[str, ...],
+        admin_only_raw_fields: tuple[str, ...] = (),
+        account_usage_source: bool = False,
+        refresh_boundary: str = "refresh_fast",
+        daily_safe: bool = True,
+    ) -> list[MetricSemantic]:
+        rows: list[MetricSemantic] = []
+        for metric in metrics:
+            unit = str(metric["unit"])
+            rows.append(
+                _sem(
+                    section,
+                    str(metric["key"]),
+                    str(metric["label"]),
+                    metric_family=metric_family,
+                    description=str(metric["description"]),
+                    source_family=source_family,
+                    source_object=source_object,
+                    source_view_or_mart=source_object,
+                    refresh_boundary=refresh_boundary,
+                    aggregation=str(metric.get("aggregation", "latest packet value from compact source")),
+                    value_unit=unit,
+                    unit=unit,
+                    metric_format=str(metric["format"]),
+                    expected_min=metric.get("expected_min", 0),  # type: ignore[arg-type]
+                    expected_max=metric.get("expected_max"),  # type: ignore[arg-type]
+                    expected_max_reason=str(metric.get("expected_max_reason", "Customer and window dependent.")),
+                    packet_field=str(metric["packet_field"]),
+                    proxy_metric=bool(metric.get("proxy_metric", False)),
+                    zero_policy=str(
+                        metric.get(
+                            "zero_policy",
+                            "zero requires source_confirmed_zero=true; missing source renders pending",
+                        )
+                    ),
+                    unavailable_policy=str(
+                        metric.get(
+                            "unavailable_policy",
+                            "render pending/unavailable state without fake zero",
+                        )
+                    ),
+                    live_validation_source=f"{metric_family}_live_or_fixture",
+                    cost_db_mapping=str(metric.get("cost_db_mapping", "")),
+                    numerator_field=str(metric.get("numerator_field", "")),
+                    denominator_field=str(metric.get("denominator_field", "")),
+                    render_surface=render_surface,
+                    export_surface=export_surface,
+                    export_domain=metric_family,
+                    freshness_policy="source freshness must be present or the metric renders pending",
+                    freshness_field=freshness_field,
+                    latency_note=f"{metric_family} source latency is summarized through Data Trust",
+                    source_status_field=source_status_field,
+                    source_confirmed_zero_field=source_confirmed_zero_field,
+                    higher_is_worse=bool(metric.get("higher_is_worse", False)),
+                    evidence_action_key=evidence_action_key,
+                    export_fields=export_fields,
+                    case_payload_fields=case_payload_fields,
+                    admin_only_raw_fields=admin_only_raw_fields,
+                    first_paint_allowed=False,
+                    account_usage_source=account_usage_source,
+                    daily_safe=daily_safe,
+                    launch_gate=launch_gate,
+                )
+            )
+        return rows
+
+    count = "integer"
+    text = "text"
+    timestamp = "timestamp"
+    currency = "compact_currency"
+    percent = "percentage"
+    score = "score"
+    minutes = "duration_minutes"
+    bytes_fmt = "bytes"
+
+    common_case = (
+        "section",
+        "workflow",
+        "metric_family",
+        "scope",
+        "target",
+        "freshness",
+        "source_family",
+        "summary",
+        "row_count",
+        "visible_row_count",
+        "recommended_action",
+        "source_status",
+        "confidence",
+    )
+    specs: tuple[dict[str, object], ...] = (
+        {
+            "metric_family": "decision_readiness",
+            "section": "Executive Landing",
+            "source_family": "decision_readiness",
+            "source_object": "MART_EXECUTIVE_DECISION_READINESS_CURRENT",
+            "launch_gate": "decision_readiness_metric_gate",
+            "render_surface": "Executive Landing / CommandBrief",
+            "evidence_action_key": "load_decision_readiness_evidence",
+            "export_surface": "decision_readiness.csv",
+            "source_status_field": "EXEC_DECISION_READINESS_SOURCE_STATUS",
+            "freshness_field": "EXEC_DECISION_READINESS_FRESHNESS_TS",
+            "source_confirmed_zero_field": "EXEC_DECISION_READINESS_SOURCE_CONFIRMED_ZERO",
+            "export_fields": (
+                "COMPONENT",
+                "STATUS",
+                "SCORE_DELTA",
+                "FRESHNESS",
+                "CONFIDENCE",
+                "RECOMMENDED_ACTION",
+            ),
+            "case_payload_fields": (*common_case, "decision_readiness_score", "top_readiness_blocker"),
+            "metrics": (
+                {"key": "decision_readiness_score", "label": "Decision readiness", "packet_field": "EXEC_DECISION_READINESS_SCORE", "unit": "score", "format": score, "expected_max": 100, "description": "Readiness score for trusting the Executive overview now."},
+                {"key": "decision_readiness_status", "label": "Readiness status", "packet_field": "EXEC_DECISION_READINESS_STATUS", "unit": "status", "format": text, "expected_min": None, "description": "Daily-safe readiness state such as Ready, Watch, Degraded, Stale, or Blocked."},
+                {"key": "required_source_health_count", "label": "Healthy required sources", "packet_field": "EXEC_REQUIRED_SOURCE_HEALTH_COUNT", "unit": "count", "format": count, "description": "Required packet sources currently healthy."},
+                {"key": "required_source_failure_count", "label": "Required source failures", "packet_field": "EXEC_REQUIRED_SOURCE_FAILURE_COUNT", "unit": "count", "format": count, "higher_is_worse": True, "description": "Required packet sources currently failing or unavailable."},
+                {"key": "last_good_fallback_active", "label": "Last-good fallback active", "packet_field": "EXEC_LAST_GOOD_FALLBACK_ACTIVE", "unit": "boolean", "format": text, "expected_min": None, "higher_is_worse": True, "description": "Whether the current overview uses last-good packet fallback."},
+                {"key": "last_good_fallback_age_minutes", "label": "Last-good fallback age", "packet_field": "EXEC_LAST_GOOD_FALLBACK_AGE_MINUTES", "unit": "minutes", "format": minutes, "higher_is_worse": True, "description": "Age of the last-good fallback packet when fallback is active."},
+                {"key": "trend_quality_status", "label": "Trend quality", "packet_field": "EXEC_TREND_QUALITY_STATUS", "unit": "status", "format": text, "expected_min": None, "description": "Daily-safe trend quality status."},
+                {"key": "first_paint_slo_passed", "label": "First-paint SLO", "packet_field": "EXEC_FIRST_PAINT_SLO_PASSED", "unit": "boolean", "format": text, "expected_min": None, "description": "Whether first-paint SLO proof is passing."},
+                {"key": "live_proof_freshness_status", "label": "Live proof freshness", "packet_field": "EXEC_LIVE_PROOF_FRESHNESS_STATUS", "unit": "status", "format": text, "expected_min": None, "description": "Daily-safe status for live proof freshness."},
+                {"key": "release_proof_age_hours", "label": "Release proof age", "packet_field": "EXEC_RELEASE_PROOF_AGE_HOURS", "unit": "hours", "format": "duration_hours", "higher_is_worse": True, "description": "Hours since the relevant release proof was generated."},
+                {"key": "top_readiness_blocker", "label": "Top readiness blocker", "packet_field": "EXEC_TOP_READINESS_BLOCKER", "unit": "text", "format": text, "expected_min": None, "description": "Daily-safe name of the strongest readiness blocker."},
+            ),
+        },
+        {
+            "metric_family": "dba_critical_path",
+            "section": "DBA Control Room",
+            "source_family": "dba_critical_path",
+            "source_object": "MART_DBA_CRITICAL_PATH_CURRENT",
+            "launch_gate": "dba_critical_path_metric_gate",
+            "render_surface": "DBA Control Room / CommandBrief",
+            "evidence_action_key": "load_critical_path_evidence",
+            "export_surface": "dba_critical_path.csv",
+            "source_status_field": "DBA_CRITICAL_PATH_SOURCE_STATUS",
+            "freshness_field": "DBA_CRITICAL_PATH_FRESHNESS_TS",
+            "source_confirmed_zero_field": "DBA_CRITICAL_PATH_SOURCE_CONFIRMED_ZERO",
+            "account_usage_source": True,
+            "export_fields": ("ENTITY", "ENTITY_TYPE", "DELAY_MINUTES", "DOWNSTREAM_OBJECTS", "WORKFLOWS", "SLA_STATE", "RECOMMENDED_FIRST_MOVE"),
+            "case_payload_fields": (*common_case, "critical_path_delay_minutes", "blast_radius_object_count"),
+            "admin_only_raw_fields": ("TASK_NAME", "PROCEDURE_NAME", "RAW_ERROR"),
+            "metrics": (
+                {"key": "dba_critical_path_delay_minutes", "label": "Critical path delay", "packet_field": "DBA_CRITICAL_PATH_DELAY_MINUTES", "unit": "minutes", "format": minutes, "higher_is_worse": True, "description": "Estimated downstream delay from the highest-impact failing entity."},
+                {"key": "dba_critical_path_entity", "label": "Critical path entity", "packet_field": "DBA_CRITICAL_PATH_ENTITY", "unit": "text", "format": text, "expected_min": None, "description": "Daily-safe label for the highest-impact failing entity."},
+                {"key": "dba_critical_path_entity_type", "label": "Critical path entity type", "packet_field": "DBA_CRITICAL_PATH_ENTITY_TYPE", "unit": "text", "format": text, "expected_min": None, "description": "Entity type for the critical path signal."},
+                {"key": "dba_blast_radius_object_count", "label": "Blast radius objects", "packet_field": "DBA_BLAST_RADIUS_OBJECT_COUNT", "unit": "count", "format": count, "description": "Downstream object count impacted by the critical path entity."},
+                {"key": "dba_blast_radius_workflow_count", "label": "Blast radius workflows", "packet_field": "DBA_BLAST_RADIUS_WORKFLOW_COUNT", "unit": "count", "format": count, "description": "Downstream workflow count impacted by the critical path entity."},
+                {"key": "dba_top_impacted_mart", "label": "Top impacted mart", "packet_field": "DBA_TOP_IMPACTED_MART", "unit": "text", "format": text, "expected_min": None, "description": "Daily-safe label for the most impacted downstream mart."},
+                {"key": "dba_top_impacted_section", "label": "Top impacted section", "packet_field": "DBA_TOP_IMPACTED_SECTION", "unit": "text", "format": text, "expected_min": None, "description": "Decision Workspace section most impacted by the critical path."},
+                {"key": "dba_critical_path_sla_state", "label": "Critical path SLA", "packet_field": "DBA_CRITICAL_PATH_SLA_STATE", "unit": "status", "format": text, "expected_min": None, "description": "SLA state for the critical path entity."},
+                {"key": "dba_recommended_first_move", "label": "Recommended first move", "packet_field": "DBA_RECOMMENDED_FIRST_MOVE", "unit": "text", "format": text, "expected_min": None, "description": "Daily-safe first recovery move."},
+                {"key": "dba_critical_path_source_status", "label": "Critical path source status", "packet_field": "DBA_CRITICAL_PATH_SOURCE_STATUS", "unit": "status", "format": text, "expected_min": None, "description": "Availability status for critical path source."},
+                {"key": "dba_critical_path_freshness_ts", "label": "Critical path freshness", "packet_field": "DBA_CRITICAL_PATH_FRESHNESS_TS", "unit": "timestamp", "format": timestamp, "expected_min": None, "description": "Freshness timestamp for critical path source."},
+            ),
+        },
+        {
+            "metric_family": "alert_quality",
+            "section": "Alert Center",
+            "source_family": "alert_quality",
+            "source_object": "MART_ALERT_QUALITY_CURRENT",
+            "launch_gate": "alert_quality_metric_gate",
+            "render_surface": "Alert Center / CommandBrief",
+            "evidence_action_key": "load_alert_quality_evidence",
+            "export_surface": "alert_quality.csv",
+            "source_status_field": "ALERT_QUALITY_SOURCE_STATUS",
+            "freshness_field": "ALERT_QUALITY_FRESHNESS_TS",
+            "source_confirmed_zero_field": "ALERT_QUALITY_SOURCE_CONFIRMED_ZERO",
+            "export_fields": ("SIGNAL", "SEVERITY", "OWNER", "AGE_MINUTES", "QUALITY_ISSUE", "RECOMMENDED_ACTION"),
+            "case_payload_fields": (*common_case, "alert_quality_score", "flapping_count", "stale_open_count"),
+            "metrics": (
+                {"key": "alert_quality_score", "label": "Alert quality", "packet_field": "ALERT_QUALITY_SCORE", "unit": "score", "format": score, "expected_max": 100, "description": "How workable the current alert queue is."},
+                {"key": "alert_flapping_count", "label": "Flapping alerts", "packet_field": "ALERT_FLAPPING_COUNT", "unit": "count", "format": count, "higher_is_worse": True, "description": "Alerts reopening or repeating above threshold."},
+                {"key": "alert_duplicate_suppressed_count", "label": "Duplicates suppressed", "packet_field": "ALERT_DUPLICATE_SUPPRESSED_COUNT", "unit": "count", "format": count, "description": "Duplicate findings suppressed by dedupe logic."},
+                {"key": "alert_unrouted_critical_count", "label": "Unrouted criticals", "packet_field": "ALERT_UNROUTED_CRITICAL_COUNT", "unit": "count", "format": count, "higher_is_worse": True, "description": "Critical findings without route or owner."},
+                {"key": "alert_notification_ack_p95_minutes", "label": "Ack p95", "packet_field": "ALERT_NOTIFICATION_ACK_P95_MINUTES", "unit": "minutes", "format": minutes, "higher_is_worse": True, "description": "P95 notification acknowledgement latency when available."},
+                {"key": "alert_stale_open_count", "label": "Stale open alerts", "packet_field": "ALERT_STALE_OPEN_COUNT", "unit": "count", "format": count, "higher_is_worse": True, "description": "Open alerts past freshness or action threshold."},
+                {"key": "alert_top_noisy_signal", "label": "Top noisy signal", "packet_field": "ALERT_TOP_NOISY_SIGNAL", "unit": "text", "format": text, "expected_min": None, "description": "Daily-safe label for the noisiest signal."},
+                {"key": "alert_dedupe_effectiveness_pct", "label": "Dedupe effectiveness", "packet_field": "ALERT_DEDUPE_EFFECTIVENESS_PCT", "unit": "percent", "format": percent, "expected_max": 100, "description": "Percent of duplicate alerts suppressed by dedupe."},
+                {"key": "alert_quality_source_status", "label": "Alert quality source status", "packet_field": "ALERT_QUALITY_SOURCE_STATUS", "unit": "status", "format": text, "expected_min": None, "description": "Availability status for alert quality source."},
+                {"key": "alert_quality_freshness_ts", "label": "Alert quality freshness", "packet_field": "ALERT_QUALITY_FRESHNESS_TS", "unit": "timestamp", "format": timestamp, "expected_min": None, "description": "Freshness timestamp for alert quality source."},
+            ),
+        },
+        {
+            "metric_family": "retained_storage_waste",
+            "section": "Cost & Contract",
+            "source_family": "storage_waste",
+            "source_object": "MART_COST_STORAGE_WASTE_CURRENT",
+            "launch_gate": "storage_waste_metric_gate",
+            "render_surface": "Cost & Contract / CommandBrief",
+            "evidence_action_key": "load_storage_waste_evidence",
+            "export_surface": "storage_waste.csv",
+            "source_status_field": "COST_STORAGE_WASTE_SOURCE_STATUS",
+            "freshness_field": "COST_STORAGE_WASTE_FRESHNESS_TS",
+            "source_confirmed_zero_field": "COST_STORAGE_WASTE_SOURCE_CONFIRMED_ZERO",
+            "account_usage_source": True,
+            "export_fields": ("DATABASE", "SCHEMA", "OBJECT", "ACTIVE_BYTES", "RETAINED_BYTES", "EST_MONTHLY_COST_USD", "LAST_READ", "RECOMMENDED_ACTION"),
+            "case_payload_fields": (*common_case, "retained_storage_waste_usd", "storage_rate_assumption"),
+            "admin_only_raw_fields": ("SOURCE_OBJECT",),
+            "metrics": (
+                {"key": "cost_retained_storage_waste_usd", "label": "Retained storage waste", "packet_field": "COST_RETAINED_STORAGE_WASTE_USD", "unit": "usd", "format": currency, "cost_db_mapping": "storage_rate", "higher_is_worse": True, "description": "Estimated monthly cost of retained storage that appears low-value."},
+                {"key": "cost_time_travel_bytes", "label": "Time Travel bytes", "packet_field": "COST_TIME_TRAVEL_BYTES", "unit": "bytes", "format": bytes_fmt, "higher_is_worse": True, "description": "Bytes retained for Time Travel in compact storage rows."},
+                {"key": "cost_failsafe_bytes", "label": "Fail-safe bytes", "packet_field": "COST_FAILSAFE_BYTES", "unit": "bytes", "format": bytes_fmt, "higher_is_worse": True, "description": "Bytes retained by fail-safe where available."},
+                {"key": "cost_retained_for_clone_bytes", "label": "Clone-retained bytes", "packet_field": "COST_RETAINED_FOR_CLONE_BYTES", "unit": "bytes", "format": bytes_fmt, "higher_is_worse": True, "description": "Bytes retained for clones where available."},
+                {"key": "cost_dropped_table_storage_bytes", "label": "Dropped-table bytes", "packet_field": "COST_DROPPED_TABLE_STORAGE_BYTES", "unit": "bytes", "format": bytes_fmt, "higher_is_worse": True, "description": "Bytes associated with dropped-table retention."},
+                {"key": "cost_zero_read_high_storage_table_count", "label": "Zero-read storage tables", "packet_field": "COST_ZERO_READ_HIGH_STORAGE_TABLE_COUNT", "unit": "count", "format": count, "higher_is_worse": True, "description": "High-storage objects with no recent read evidence."},
+                {"key": "cost_top_storage_waste_object", "label": "Top storage waste object", "packet_field": "COST_TOP_STORAGE_WASTE_OBJECT", "unit": "text", "format": text, "expected_min": None, "description": "Daily-safe label for the largest storage waste candidate."},
+                {"key": "cost_storage_waste_recommended_action", "label": "Storage recommendation", "packet_field": "COST_STORAGE_WASTE_RECOMMENDED_ACTION", "unit": "text", "format": text, "expected_min": None, "description": "Daily-safe storage remediation recommendation."},
+                {"key": "cost_storage_waste_source_status", "label": "Storage waste source status", "packet_field": "COST_STORAGE_WASTE_SOURCE_STATUS", "unit": "status", "format": text, "expected_min": None, "description": "Availability status for storage waste source."},
+                {"key": "cost_storage_waste_freshness_ts", "label": "Storage waste freshness", "packet_field": "COST_STORAGE_WASTE_FRESHNESS_TS", "unit": "timestamp", "format": timestamp, "expected_min": None, "description": "Freshness timestamp for storage waste source."},
+            ),
+        },
+        {
+            "metric_family": "query_optimization_score",
+            "section": "Workload Operations",
+            "source_family": "query_optimization",
+            "source_object": "MART_WORKLOAD_QUERY_OPTIMIZATION_CURRENT",
+            "launch_gate": "query_optimization_metric_gate",
+            "render_surface": "Workload Operations / CommandBrief",
+            "evidence_action_key": "load_query_optimization_evidence",
+            "export_surface": "query_optimization.csv",
+            "source_status_field": "WORKLOAD_QUERY_INSIGHT_SOURCE_STATUS",
+            "freshness_field": "WORKLOAD_QUERY_INSIGHT_FRESHNESS_TS",
+            "source_confirmed_zero_field": "WORKLOAD_QUERY_INSIGHT_SOURCE_CONFIRMED_ZERO",
+            "account_usage_source": True,
+            "export_fields": ("QUERY_SIGNATURE", "TOPIC", "OPPORTUNITY_COUNT", "WAREHOUSE", "USER_DISPLAY_NAME", "LAST_SEEN", "SUGGESTION", "RECOMMENDED_ACTION"),
+            "case_payload_fields": (*common_case, "query_optimization_score", "top_query_signature"),
+            "admin_only_raw_fields": ("QUERY_TEXT", "QUERY_ID", "USER_ID"),
+            "metrics": (
+                {"key": "workload_query_optimization_score", "label": "Query optimization score", "packet_field": "WORKLOAD_QUERY_OPTIMIZATION_SCORE", "unit": "score", "format": score, "expected_max": 100, "description": "Opportunity score for fixable query patterns."},
+                {"key": "workload_query_insight_opportunity_count", "label": "Query opportunities", "packet_field": "WORKLOAD_QUERY_INSIGHT_OPPORTUNITY_COUNT", "unit": "count", "format": count, "description": "Refresh-backed count of query optimization opportunities."},
+                {"key": "workload_remote_spill_insight_count", "label": "Remote spill insights", "packet_field": "WORKLOAD_REMOTE_SPILL_INSIGHT_COUNT", "unit": "count", "format": count, "description": "Opportunities tied to remote spill."},
+                {"key": "workload_queued_overload_insight_count", "label": "Queue overload insights", "packet_field": "WORKLOAD_QUEUED_OVERLOAD_INSIGHT_COUNT", "unit": "count", "format": count, "description": "Opportunities tied to queued overload."},
+                {"key": "workload_table_scan_insight_count", "label": "Table scan insights", "packet_field": "WORKLOAD_TABLE_SCAN_INSIGHT_COUNT", "unit": "count", "format": count, "description": "Opportunities tied to inefficient scans."},
+                {"key": "workload_join_explosion_insight_count", "label": "Join explosion insights", "packet_field": "WORKLOAD_JOIN_EXPLOSION_INSIGHT_COUNT", "unit": "count", "format": count, "description": "Opportunities tied to join explosion patterns."},
+                {"key": "workload_top_query_insight_topic", "label": "Top query insight topic", "packet_field": "WORKLOAD_TOP_QUERY_INSIGHT_TOPIC", "unit": "text", "format": text, "expected_min": None, "description": "Daily-safe topic for the most valuable query opportunity."},
+                {"key": "workload_top_query_signature", "label": "Top query signature", "packet_field": "WORKLOAD_TOP_QUERY_SIGNATURE", "unit": "text", "format": text, "expected_min": None, "description": "Sanitized query signature for targeted evidence."},
+                {"key": "workload_top_query_suggestion", "label": "Top query suggestion", "packet_field": "WORKLOAD_TOP_QUERY_SUGGESTION", "unit": "text", "format": text, "expected_min": None, "description": "Daily-safe recommended query optimization."},
+                {"key": "workload_query_insight_source_status", "label": "Query insight source status", "packet_field": "WORKLOAD_QUERY_INSIGHT_SOURCE_STATUS", "unit": "status", "format": text, "expected_min": None, "description": "Availability status for query insight source."},
+                {"key": "workload_query_insight_freshness_ts", "label": "Query insight freshness", "packet_field": "WORKLOAD_QUERY_INSIGHT_FRESHNESS_TS", "unit": "timestamp", "format": timestamp, "expected_min": None, "description": "Freshness timestamp for query insight source."},
+            ),
+        },
+        {
+            "metric_family": "sensitive_data_access_exposure",
+            "section": "Security Monitoring",
+            "source_family": "sensitive_data_access",
+            "source_object": "MART_SECURITY_SENSITIVE_ACCESS_CURRENT",
+            "launch_gate": "sensitive_access_metric_gate",
+            "render_surface": "Security Monitoring / CommandBrief",
+            "evidence_action_key": "load_sensitive_access_evidence",
+            "export_surface": "sensitive_access.csv",
+            "source_status_field": "SECURITY_SENSITIVE_ACCESS_SOURCE_STATUS",
+            "freshness_field": "SECURITY_SENSITIVE_ACCESS_FRESHNESS_TS",
+            "source_confirmed_zero_field": "SECURITY_SENSITIVE_ACCESS_SOURCE_CONFIRMED_ZERO",
+            "account_usage_source": True,
+            "export_fields": ("USER_DISPLAY_NAME", "ROLE", "OBJECT_LABEL", "SENSITIVITY", "POLICY_COVERAGE", "ACCESS_COUNT", "LAST_SEEN", "RECOMMENDED_ACTION"),
+            "case_payload_fields": (*common_case, "sensitive_access_count", "privileged_sensitive_access_count"),
+            "admin_only_raw_fields": ("USER_ID", "QUERY_TEXT", "RAW_OBJECT_ARRAY"),
+            "metrics": (
+                {"key": "security_sensitive_access_count", "label": "Sensitive access", "packet_field": "SECURITY_SENSITIVE_ACCESS_COUNT", "unit": "count", "format": count, "higher_is_worse": True, "description": "Sensitive data access events from compact access evidence."},
+                {"key": "security_unmasked_sensitive_access_count", "label": "Unmasked sensitive access", "packet_field": "SECURITY_UNMASKED_SENSITIVE_ACCESS_COUNT", "unit": "count", "format": count, "higher_is_worse": True, "description": "Sensitive access without expected masking coverage."},
+                {"key": "security_privileged_sensitive_access_count", "label": "Privileged sensitive access", "packet_field": "SECURITY_PRIVILEGED_SENSITIVE_ACCESS_COUNT", "unit": "count", "format": count, "higher_is_worse": True, "description": "Sensitive access by privileged users or roles."},
+                {"key": "security_new_user_sensitive_access_count", "label": "New-user sensitive access", "packet_field": "SECURITY_NEW_USER_SENSITIVE_ACCESS_COUNT", "unit": "count", "format": count, "higher_is_worse": True, "description": "Sensitive access by users new to the object or domain."},
+                {"key": "security_objects_modified_by_privileged_users", "label": "Privileged modifications", "packet_field": "SECURITY_OBJECTS_MODIFIED_BY_PRIVILEGED_USERS", "unit": "count", "format": count, "higher_is_worse": True, "description": "Sensitive objects modified by privileged users."},
+                {"key": "security_top_risky_access_user", "label": "Top risky access user", "packet_field": "SECURITY_TOP_RISKY_ACCESS_USER", "unit": "text", "format": text, "expected_min": None, "description": "Daily-safe display label for the riskiest access user."},
+                {"key": "security_top_risky_access_object", "label": "Top risky access object", "packet_field": "SECURITY_TOP_RISKY_ACCESS_OBJECT", "unit": "text", "format": text, "expected_min": None, "description": "Daily-safe label for the riskiest accessed object."},
+                {"key": "security_access_policy_coverage_status", "label": "Access policy coverage", "packet_field": "SECURITY_ACCESS_POLICY_COVERAGE_STATUS", "unit": "status", "format": text, "expected_min": None, "description": "Masking and policy coverage status for sensitive access."},
+                {"key": "security_sensitive_access_source_status", "label": "Sensitive access source status", "packet_field": "SECURITY_SENSITIVE_ACCESS_SOURCE_STATUS", "unit": "status", "format": text, "expected_min": None, "description": "Availability status for sensitive access source."},
+                {"key": "security_sensitive_access_freshness_ts", "label": "Sensitive access freshness", "packet_field": "SECURITY_SENSITIVE_ACCESS_FRESHNESS_TS", "unit": "timestamp", "format": timestamp, "expected_min": None, "description": "Freshness timestamp for sensitive access source."},
+            ),
+        },
+        {
+            "metric_family": "release_proof_freshness",
+            "section": "Settings/Admin Setup Health",
+            "source_family": "release_proof_freshness",
+            "source_object": "MART_RELEASE_PROOF_FRESHNESS_CURRENT",
+            "refresh_boundary": "setup_admin",
+            "launch_gate": "release_proof_freshness_gate",
+            "render_surface": "Settings/Admin Setup Health",
+            "evidence_action_key": "open_release_proof_details",
+            "export_surface": "release_proof_freshness.json",
+            "source_status_field": "ADMIN_RELEASE_PROOF_SOURCE_STATUS",
+            "freshness_field": "ADMIN_RELEASE_PROOF_FRESHNESS_TS",
+            "source_confirmed_zero_field": "ADMIN_RELEASE_PROOF_SOURCE_CONFIRMED_ZERO",
+            "daily_safe": False,
+            "export_fields": ("GATE", "STATUS", "AGE_HOURS", "FAILURE_COUNT", "SANITIZED_ERROR", "RECOMMENDED_ACTION"),
+            "case_payload_fields": (*common_case, "release_proof_age_hours", "production_deployable_status"),
+            "admin_only_raw_fields": ("ARTIFACT_PATH", "GATE_ID"),
+            "metrics": (
+                {"key": "admin_release_proof_age_hours", "label": "Release proof age", "packet_field": "ADMIN_RELEASE_PROOF_AGE_HOURS", "unit": "hours", "format": "duration_hours", "higher_is_worse": True, "description": "Age of the latest release candidate proof."},
+                {"key": "admin_last_release_candidate_status", "label": "Last release candidate", "packet_field": "ADMIN_LAST_RELEASE_CANDIDATE_STATUS", "unit": "status", "format": text, "expected_min": None, "description": "Sanitized status of the latest release candidate run."},
+                {"key": "admin_live_validation_coverage_pct", "label": "Live validation coverage", "packet_field": "ADMIN_LIVE_VALIDATION_COVERAGE_PCT", "unit": "percent", "format": percent, "expected_max": 100, "description": "Percent of required live validation lanes with current proof."},
+                {"key": "admin_schema_drift_count", "label": "Schema drift", "packet_field": "ADMIN_SCHEMA_DRIFT_COUNT", "unit": "count", "format": count, "higher_is_worse": True, "description": "Object or schema drift findings from release validation."},
+                {"key": "admin_first_paint_slo_failure_count", "label": "First-paint SLO failures", "packet_field": "ADMIN_FIRST_PAINT_SLO_FAILURE_COUNT", "unit": "count", "format": count, "higher_is_worse": True, "description": "First-paint budget failures in release proof."},
+                {"key": "admin_raw_leak_count", "label": "Raw leak count", "packet_field": "ADMIN_RAW_LEAK_COUNT", "unit": "count", "format": count, "higher_is_worse": True, "description": "Raw internal leak findings in release proof."},
+                {"key": "admin_packet_last_good_age_minutes", "label": "Packet last-good age", "packet_field": "ADMIN_PACKET_LAST_GOOD_AGE_MINUTES", "unit": "minutes", "format": minutes, "higher_is_worse": True, "description": "Age of packet last-good fallback state."},
+                {"key": "admin_production_deployable_status", "label": "Production deployable", "packet_field": "ADMIN_PRODUCTION_DEPLOYABLE_STATUS", "unit": "status", "format": text, "expected_min": None, "description": "Sanitized production deployment status."},
+                {"key": "admin_a_grade_ready_status", "label": "A-grade ready", "packet_field": "ADMIN_A_GRADE_READY_STATUS", "unit": "status", "format": text, "expected_min": None, "description": "Sanitized A-grade readiness status."},
+            ),
+        },
+    )
+
+    rows: list[MetricSemantic] = []
+    for spec in specs:
+        rows.extend(family(**spec))  # type: ignore[arg-type]
+    return tuple(rows)
+
+
+_ROWS = (*_ROWS, *_high_value_decision_metric_rows(), *_section_decision_metric_rows())
 
 METRIC_SEMANTICS: Mapping[tuple[str, str], MetricSemantic] = {
     (row.section, row.metric_key): row for row in _ROWS

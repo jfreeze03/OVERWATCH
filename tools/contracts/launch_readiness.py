@@ -2988,6 +2988,19 @@ def _release_candidate_summary_bundle(
         "new_metric_sql_inventory_failure_count": _as_int(
             launch_summary.get("new_metric_sql_inventory_failure_count")
         ),
+        "decision_readiness_score": launch_summary.get("decision_readiness_score"),
+        "decision_readiness_status": str(launch_summary.get("decision_readiness_status") or ""),
+        "dba_critical_path_delay_minutes": launch_summary.get("dba_critical_path_delay_minutes"),
+        "dba_blast_radius_object_count": launch_summary.get("dba_blast_radius_object_count"),
+        "alert_quality_score": launch_summary.get("alert_quality_score"),
+        "alert_flapping_count": launch_summary.get("alert_flapping_count"),
+        "retained_storage_waste_usd": launch_summary.get("retained_storage_waste_usd"),
+        "query_optimization_score": launch_summary.get("query_optimization_score"),
+        "sensitive_access_count": launch_summary.get("sensitive_access_count"),
+        "release_proof_age_hours": launch_summary.get("release_proof_age_hours"),
+        "new_metric_gate_failure_count": _as_int(launch_summary.get("new_metric_gate_failure_count")),
+        "new_metric_export_failure_count": _as_int(launch_summary.get("new_metric_export_failure_count")),
+        "new_metric_live_validation_status": str(launch_summary.get("new_metric_live_validation_status") or ""),
         "app_health_gate_passed": bool(launch_summary.get("app_health_gate_passed")),
         "source_internal_leak_scan_passed": bool(launch_summary.get("source_internal_leak_scan_passed")),
         "credential_expiration_gate_passed": bool(launch_summary.get("credential_expiration_gate_passed")),
@@ -6501,6 +6514,23 @@ def evaluate_launch_readiness(
         "new_metric_raw_leak_count": _as_int(metric_source_governance_gate.get("new_metric_raw_leak_count")),
         "new_metric_sql_inventory_failure_count": _as_int(
             metric_source_governance_gate.get("new_metric_sql_inventory_failure_count")
+        ),
+        "decision_readiness_score": metric_source_governance_gate.get("decision_readiness_score"),
+        "decision_readiness_status": str(metric_source_governance_gate.get("decision_readiness_status") or ""),
+        "dba_critical_path_delay_minutes": metric_source_governance_gate.get("dba_critical_path_delay_minutes"),
+        "dba_blast_radius_object_count": metric_source_governance_gate.get("dba_blast_radius_object_count"),
+        "alert_quality_score": metric_source_governance_gate.get("alert_quality_score"),
+        "alert_flapping_count": metric_source_governance_gate.get("alert_flapping_count"),
+        "retained_storage_waste_usd": metric_source_governance_gate.get("retained_storage_waste_usd"),
+        "query_optimization_score": metric_source_governance_gate.get("query_optimization_score"),
+        "sensitive_access_count": metric_source_governance_gate.get("sensitive_access_count"),
+        "release_proof_age_hours": metric_source_governance_gate.get("release_proof_age_hours"),
+        "new_metric_gate_failure_count": _as_int(metric_source_governance_gate.get("new_metric_gate_failure_count")),
+        "new_metric_export_failure_count": _as_int(
+            metric_source_governance_gate.get("new_metric_export_failure_count")
+        ),
+        "new_metric_live_validation_status": str(
+            metric_source_governance_gate.get("new_metric_live_validation_status") or ""
         ),
         "app_health_gate_passed": bool(metric_source_governance_gate.get("app_health_gate_passed")),
         "credential_expiration_gate_passed": bool(security_credential_gate.get("passed")),

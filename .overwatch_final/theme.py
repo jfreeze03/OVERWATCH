@@ -2285,6 +2285,13 @@ div[class*="st-key-"][class*="_decision_workspace_shell"],
     0% { transform: translateX(-105%); }
     100% { transform: translateX(245%); }
 }
+@media (prefers-reduced-motion: reduce) {
+    .ow-section-transition-bar span {
+        animation: none;
+        width: 100%;
+        background: rgba(var(--accent-rgb), 0.45);
+    }
+}
 .ow-brief-strip {
     border-top: 1px solid var(--border-subtle);
     border-bottom: 1px solid var(--border-subtle);

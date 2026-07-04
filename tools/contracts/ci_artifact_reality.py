@@ -89,6 +89,14 @@ def _as_list(value: object) -> list[Any]:
     return list(value) if isinstance(value, list) else []
 
 
+def _artifact_commit_sha(payload: Mapping[str, Any]) -> str:
+    for key in ("commit_sha", "source_tree_sha", "git_sha"):
+        value = str(payload.get(key) or "")
+        if value:
+            return value
+    return ""
+
+
 def _scan_text_counts(root: Path) -> tuple[int, int, int]:
     """Return token path, temp SQL path, and raw SQL body leak counts."""
 
@@ -211,6 +219,12 @@ def build_ci_artifact_reality_results(
     artifact_review = artifact_review or {}
     release_reconciliation = release_reconciliation or {}
     commit_sha = _git_sha(root_path)
+    release_candidate_summary = _load_json(root_path, f"{RELEASE_CANDIDATE_DIR}/release_candidate_summary.json")
+    launch_readiness_summary = _load_json(root_path, f"{LAUNCH_READINESS_DIR}/launch_readiness_summary.json")
+    artifact_manifest = _load_json(root_path, f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json")
+    artifact_hashes = _load_json(root_path, f"{RELEASE_CANDIDATE_DIR}/artifact_hashes.json")
+    artifact_hash_rows = _as_list(artifact_hashes.get("hashes"))
+    artifact_manifest_rows = _as_list(artifact_manifest.get("files"))
     github_actions = bool(ci_run_review.get("github_actions")) or os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
     workflow_run_id = str(ci_run_review.get("workflow_run_id") or os.environ.get("GITHUB_RUN_ID") or "")
     workflow_run_url = str(ci_run_review.get("workflow_url") or "")
@@ -237,6 +251,19 @@ def build_ci_artifact_reality_results(
     release_reconciliation_passed = True if not release_reconciliation else bool(release_reconciliation.get("passed"))
     release_hash_mismatches = _as_list(release_reconciliation.get("hash_mismatches"))
     release_commit_mismatches = _as_list(release_reconciliation.get("commit_mismatches"))
+    artifact_commit_mismatches: list[dict[str, Any]] = []
+    if commit_sha:
+        for rel, payload in (
+            (f"{RELEASE_CANDIDATE_DIR}/release_candidate_summary.json", release_candidate_summary),
+            (f"{LAUNCH_READINESS_DIR}/launch_readiness_summary.json", launch_readiness_summary),
+            (f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json", artifact_manifest),
+            (f"{RELEASE_CANDIDATE_DIR}/artifact_hashes.json", artifact_hashes),
+        ):
+            artifact_commit = _artifact_commit_sha(payload)
+            if artifact_commit and artifact_commit != commit_sha:
+                artifact_commit_mismatches.append(
+                    {"path": rel, "expected_commit_sha": commit_sha, "artifact_commit_sha": artifact_commit}
+                )
     stale_artifacts = _as_list(artifact_review.get("stale_artifacts"))
     missing_upload_paths = _as_list(upload_review.get("missing_upload_paths"))
     missing_steps = _as_list(upload_review.get("missing_steps"))
@@ -257,6 +284,12 @@ def build_ci_artifact_reality_results(
         fail("ARTIFACT_PROOF_MISSING", "No GitHub Actions artifact proof or signed local artifact proof is available.")
     if required_missing:
         fail("REQUIRED_ARTIFACT_MISSING", "Required release artifacts are missing.", details=required_missing)
+    if (root_path / f"{RELEASE_CANDIDATE_DIR}/artifact_hashes.json").exists() and not artifact_hash_rows:
+        fail("ARTIFACT_HASH_BUNDLE_EMPTY", "Release artifact hash bundle exists but contains no file hashes.")
+    if (root_path / f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json").exists() and not artifact_manifest_rows:
+        fail("ARTIFACT_MANIFEST_EMPTY", "Release artifact manifest exists but contains no files.")
+    if artifact_commit_mismatches:
+        fail("LOCAL_ARTIFACT_COMMIT_MISMATCH", "Local release artifacts do not match the current source commit.", details=artifact_commit_mismatches)
     if github_actions and str(ci_run_review.get("commit_sha") or commit_sha) != commit_sha:
         fail("CI_COMMIT_SHA_MISMATCH", "GitHub Actions commit SHA does not match the current source commit.")
     if stale_artifacts:
@@ -298,6 +331,10 @@ def build_ci_artifact_reality_results(
         or allow_in_progress_launch_readiness,
         "artifact_hashes_exists": (root_path / f"{RELEASE_CANDIDATE_DIR}/artifact_hashes.json").exists(),
         "artifact_manifest_exists": (root_path / f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json").exists(),
+        "artifact_hash_count": len(artifact_hash_rows),
+        "artifact_manifest_file_count": len(artifact_manifest_rows),
+        "artifact_commit_mismatch_count": len(artifact_commit_mismatches),
+        "artifact_commit_mismatches": artifact_commit_mismatches,
         "token_path_leak_count": token_path_leaks,
         "temp_sql_path_leak_count": temp_path_leaks,
         "raw_sql_leak_count": raw_sql_leaks,
@@ -329,6 +366,9 @@ def evaluate_ci_artifact_reality_gate(results: Mapping[str, Any] | None) -> dict
         "token_path_leak_count": _as_int(results.get("token_path_leak_count")),
         "temp_sql_path_leak_count": _as_int(results.get("temp_sql_path_leak_count")),
         "raw_sql_leak_count": _as_int(results.get("raw_sql_leak_count")),
+        "artifact_hash_count": _as_int(results.get("artifact_hash_count")),
+        "artifact_manifest_file_count": _as_int(results.get("artifact_manifest_file_count")),
+        "artifact_commit_mismatch_count": _as_int(results.get("artifact_commit_mismatch_count")),
         "failures": failures,
         "raw_sql_included": False,
     }

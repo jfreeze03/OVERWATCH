@@ -17,6 +17,8 @@ RELEASE_CANDIDATE_DIR = "artifacts/release_candidate"
 A_GRADE_EXECUTION_MATRIX_RESULTS_REL = f"{FULL_APP_DIR}/a_grade_execution_matrix_results.json"
 A_GRADE_EXECUTION_MATRIX_GATE_REL = f"{LAUNCH_READINESS_DIR}/a_grade_execution_matrix_gate_results.json"
 A_GRADE_EXECUTION_MATRIX_SUMMARY_REL = f"{RELEASE_CANDIDATE_DIR}/a_grade_execution_matrix_summary.json"
+ARTIFACT_MANIFEST_REL = f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json"
+ARTIFACT_HASHES_REL = f"{RELEASE_CANDIDATE_DIR}/artifact_hashes.json"
 
 
 def _now() -> str:
@@ -96,6 +98,33 @@ def _proof_row_count(payload: Mapping[str, Any]) -> int:
     return proof_scalars if proof_scalars >= 2 else 0
 
 
+def _proof_rows(payload: Mapping[str, Any]) -> list[str]:
+    proof_rows: list[str] = []
+    row_keys = ("validation_id", "row_id", "id", "stable_key", "gate", "check", "section", "path")
+    for key in ("rows", "checks", "results", "sections", "gates", "artifacts"):
+        value = payload.get(key)
+        items = value.values() if isinstance(value, Mapping) else value if isinstance(value, list) else []
+        for index, row in enumerate(items):
+            if isinstance(row, Mapping):
+                row_id = next((str(row.get(row_key) or "") for row_key in row_keys if row.get(row_key)), "")
+                proof_rows.append(row_id or f"{key}[{index}]")
+            else:
+                proof_rows.append(f"{key}[{index}]")
+    if proof_rows:
+        return proof_rows[:20]
+    scalar_rows = []
+    for key, value in payload.items():
+        if (
+            key.endswith("_count")
+            or key.endswith("_status")
+            or key.endswith("_passed")
+            or key.endswith("_signature")
+            or key in {"artifact", "proof_source", "workflow_run_url", "workflow_run_id"}
+        ):
+            scalar_rows.append(f"scalar::{key}")
+    return scalar_rows[:20]
+
+
 def _git_commit(root: Path) -> str:
     try:
         return subprocess.check_output(
@@ -136,23 +165,70 @@ def _commit_from_payload(payload: Mapping[str, Any]) -> str:
     return ""
 
 
-def _artifact_details(root: Path, rel: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+def _release_artifact_indexes(root: Path) -> dict[str, Any]:
+    manifest = _load_mapping(root / ARTIFACT_MANIFEST_REL)
+    hashes = _load_mapping(root / ARTIFACT_HASHES_REL)
+    manifest_files = manifest.get("files")
+    manifest_paths: set[str] = set()
+    if isinstance(manifest_files, list):
+        for item in manifest_files:
+            if isinstance(item, Mapping):
+                path = str(item.get("path") or "")
+            else:
+                path = str(item or "")
+            if path:
+                manifest_paths.add(path)
+    hash_rows = hashes.get("hashes")
+    hash_index: dict[str, str] = {}
+    if isinstance(hash_rows, list):
+        for row in hash_rows:
+            if isinstance(row, Mapping):
+                path = str(row.get("path") or "")
+                sha = str(row.get("sha256") or "")
+                if path and sha:
+                    hash_index[path] = sha
+    return {
+        "artifact_manifest_exists": (root / ARTIFACT_MANIFEST_REL).exists(),
+        "artifact_hash_manifest_exists": (root / ARTIFACT_HASHES_REL).exists(),
+        "manifest_commit_sha": str(manifest.get("commit_sha") or manifest.get("source_tree_sha") or ""),
+        "hash_manifest_commit_sha": str(hashes.get("commit_sha") or hashes.get("source_tree_sha") or ""),
+        "manifest_paths": manifest_paths,
+        "hash_index": hash_index,
+    }
+
+
+def _artifact_details(root: Path, rel: str, payload: Mapping[str, Any], release_indexes: Mapping[str, Any]) -> dict[str, Any]:
     path = root / rel
     exists = path.exists()
+    artifact_sha = _sha256(path) if exists else ""
     referenced_rel = str(payload.get("artifact") or payload.get("source_artifact") or "")
     referenced_payload = _load_mapping(root / referenced_rel) if referenced_rel else {}
     proof_row_count = max(_proof_row_count(payload), _proof_row_count(referenced_payload))
+    proof_rows = _proof_rows(payload) or _proof_rows(referenced_payload)
     commit_sha = _commit_from_payload(payload) or _commit_from_payload(referenced_payload)
     if not commit_sha and exists and str(payload.get("generated_at") or "") and str(payload.get("source") or payload.get("producer") or ""):
         commit_sha = _git_commit(root)
+    manifest_paths = release_indexes.get("manifest_paths")
+    hash_index = release_indexes.get("hash_index")
+    artifact_manifest_listed = rel in manifest_paths if isinstance(manifest_paths, set) else False
+    expected_sha = hash_index.get(rel, "") if isinstance(hash_index, Mapping) else ""
+    artifact_hash_listed = bool(expected_sha) and bool(artifact_sha) and expected_sha == artifact_sha
     return {
         "artifact_path": rel,
         "artifact_exists": exists,
-        "artifact_sha256": _sha256(path) if exists else "",
+        "artifact_sha256": artifact_sha,
         "artifact_commit_sha": commit_sha,
+        "artifact_manifest_path": ARTIFACT_MANIFEST_REL,
+        "artifact_manifest_exists": bool(release_indexes.get("artifact_manifest_exists")),
+        "artifact_manifest_listed": artifact_manifest_listed,
+        "artifact_hash_manifest_path": ARTIFACT_HASHES_REL,
+        "artifact_hash_manifest_exists": bool(release_indexes.get("artifact_hash_manifest_exists")),
+        "artifact_hash_listed": artifact_hash_listed,
+        "artifact_hash_manifest_sha256": str(expected_sha),
         "producer": str(payload.get("producer") or payload.get("source") or ""),
         "producer_signature": str(payload.get("producer_signature") or payload.get("proof_source") or payload.get("source") or ""),
         "proof_row_count": proof_row_count,
+        "proof_rows": proof_rows,
         "artifact_raw_sql_included": bool(payload.get("raw_sql_included") or referenced_payload.get("raw_sql_included")),
     }
 
@@ -189,6 +265,14 @@ def _row(
     producer: str = "",
     producer_signature: str = "",
     proof_row_count: int = 0,
+    proof_rows: list[str] | None = None,
+    artifact_manifest_path: str = "",
+    artifact_manifest_exists: bool = False,
+    artifact_manifest_listed: bool = False,
+    artifact_hash_manifest_path: str = "",
+    artifact_hash_manifest_exists: bool = False,
+    artifact_hash_manifest_sha256: str = "",
+    artifact_hash_listed: bool = False,
     artifact_raw_sql_included: bool = False,
 ) -> dict[str, Any]:
     return {
@@ -212,6 +296,14 @@ def _row(
         "producer": producer,
         "producer_signature": producer_signature,
         "proof_row_count": proof_row_count,
+        "proof_rows": proof_rows or [],
+        "artifact_manifest_path": artifact_manifest_path,
+        "artifact_manifest_exists": artifact_manifest_exists,
+        "artifact_manifest_listed": artifact_manifest_listed,
+        "artifact_hash_manifest_path": artifact_hash_manifest_path,
+        "artifact_hash_manifest_exists": artifact_hash_manifest_exists,
+        "artifact_hash_manifest_sha256": artifact_hash_manifest_sha256,
+        "artifact_hash_listed": artifact_hash_listed,
         "passed": passed,
         "failure_reason": failure_reason,
         "raw_sql_included": artifact_raw_sql_included,
@@ -225,6 +317,8 @@ def build_a_grade_execution_matrix(
 ) -> dict[str, Any]:
     root_path = Path(root).resolve()
     artifacts = launch_artifacts or {}
+    current_commit = _git_commit(root_path)
+    release_indexes = _release_artifact_indexes(root_path)
     gate_specs = [
         (
             "Query and app performance",
@@ -373,7 +467,7 @@ def build_a_grade_execution_matrix(
             release_blocking,
         ) = spec
         gate = _gate_payload(root_path, artifacts, gate_rel)
-        artifact_details = _artifact_details(root_path, gate_rel, gate)
+        artifact_details = _artifact_details(root_path, gate_rel, gate, release_indexes)
         if not release_blocking and gate:
             passed = bool(gate.get("ui_a_grade_ready", gate.get("passed")))
         else:
@@ -389,8 +483,25 @@ def build_a_grade_execution_matrix(
             proof_reasons.append("release gate artifact lacks producer signature")
         if release_blocking and _as_int(artifact_details["proof_row_count"]) <= 0:
             proof_reasons.append("release gate artifact lacks concrete proof rows")
+        if release_blocking and not artifact_details["proof_rows"]:
+            proof_reasons.append("release gate artifact lacks row ids or proof rows")
         if release_blocking and not str(artifact_details["artifact_commit_sha"]):
             proof_reasons.append("release gate artifact lacks commit SHA")
+        if (
+            release_blocking
+            and current_commit
+            and str(artifact_details["artifact_commit_sha"])
+            and str(artifact_details["artifact_commit_sha"]) != current_commit
+        ):
+            proof_reasons.append("release gate artifact commit SHA does not match current commit")
+        if release_blocking and not artifact_details["artifact_manifest_exists"]:
+            proof_reasons.append("release artifact manifest is missing")
+        if release_blocking and not artifact_details["artifact_manifest_listed"]:
+            proof_reasons.append("release gate artifact is not listed in release artifact manifest")
+        if release_blocking and not artifact_details["artifact_hash_manifest_exists"]:
+            proof_reasons.append("release artifact hash manifest is missing")
+        if release_blocking and not artifact_details["artifact_hash_listed"]:
+            proof_reasons.append("release gate artifact hash is not included in release artifact hashes")
         proof_passed = not proof_reasons
         if release_blocking:
             passed = bool(passed and proof_passed)

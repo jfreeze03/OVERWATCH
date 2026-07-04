@@ -1,8 +1,10 @@
 from pathlib import Path
+import hashlib
 import json
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +40,28 @@ class AGradeExecutionMatrixTests(unittest.TestCase):
         }
         payload.update(extra)
         path.write_text(json.dumps(payload), encoding="utf-8")
+        self._write_release_indexes(root)
+
+    def _write_release_indexes(self, root: Path) -> None:
+        release_dir = root / "artifacts" / "release_candidate"
+        release_dir.mkdir(parents=True, exist_ok=True)
+        files = []
+        hashes = []
+        for rel in self.REQUIRED_GATES:
+            path = root / rel
+            if not path.exists():
+                continue
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            files.append({"path": rel, "sha256": digest})
+            hashes.append({"path": rel, "sha256": digest, "size_bytes": path.stat().st_size})
+        (release_dir / "artifact_manifest.json").write_text(
+            json.dumps({"source": "test_manifest", "commit_sha": "test-commit", "files": files}),
+            encoding="utf-8",
+        )
+        (release_dir / "artifact_hashes.json").write_text(
+            json.dumps({"source": "test_hashes", "commit_sha": "test-commit", "hashes": hashes}),
+            encoding="utf-8",
+        )
 
     def test_matrix_passes_release_blocking_rows_and_reports_a_grade(self):
         from tools.contracts.a_grade_execution_matrix import build_a_grade_execution_matrix
@@ -53,6 +77,9 @@ class AGradeExecutionMatrixTests(unittest.TestCase):
         blocking_rows = [row for row in results["rows"] if row["release_blocking"]]
         self.assertTrue(all(row["artifact_exists"] for row in blocking_rows))
         self.assertTrue(all(row["artifact_sha256"] for row in blocking_rows))
+        self.assertTrue(all(row["artifact_manifest_listed"] for row in blocking_rows))
+        self.assertTrue(all(row["artifact_hash_listed"] for row in blocking_rows))
+        self.assertTrue(all(row["proof_rows"] for row in blocking_rows))
         self.assertTrue(all(row["proof_row_count"] > 0 for row in blocking_rows))
 
     def test_matrix_includes_release_blocking_metric_governance(self):
@@ -99,6 +126,39 @@ class AGradeExecutionMatrixTests(unittest.TestCase):
         reasons = " ".join(row["failure_reason"] for row in results["failures"])
         self.assertIn("producer signature", reasons)
         self.assertIn("concrete proof rows", reasons)
+
+    def test_release_blocking_gate_must_be_in_hash_manifest(self):
+        from tools.contracts.a_grade_execution_matrix import build_a_grade_execution_matrix
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in self.REQUIRED_GATES:
+                self._write_gate(root, rel)
+            hashes = root / "artifacts" / "release_candidate" / "artifact_hashes.json"
+            payload = json.loads(hashes.read_text(encoding="utf-8"))
+            payload["hashes"] = [
+                row for row in payload["hashes"] if row["path"] != "artifacts/launch_readiness/first_paint_slo_gate_results.json"
+            ]
+            hashes.write_text(json.dumps(payload), encoding="utf-8")
+            results = build_a_grade_execution_matrix(root)
+
+        self.assertFalse(results["passed"])
+        reasons = " ".join(row["failure_reason"] for row in results["failures"])
+        self.assertIn("artifact hash", reasons)
+
+    def test_release_blocking_gate_commit_must_match_current_commit(self):
+        from tools.contracts.a_grade_execution_matrix import build_a_grade_execution_matrix
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in self.REQUIRED_GATES:
+                self._write_gate(root, rel)
+            with patch("tools.contracts.a_grade_execution_matrix._git_commit", return_value="current-commit"):
+                results = build_a_grade_execution_matrix(root)
+
+        self.assertFalse(results["passed"])
+        reasons = " ".join(row["failure_reason"] for row in results["failures"])
+        self.assertIn("commit SHA does not match current commit", reasons)
 
     def test_advisory_ui_debt_defers_a_grade_without_blocking_production(self):
         from tools.contracts.a_grade_execution_matrix import build_a_grade_execution_matrix

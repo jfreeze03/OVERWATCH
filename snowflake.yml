@@ -52,6 +52,8 @@ entities:
         dest: shell.py
       - src: .overwatch_final/theme.py
         dest: theme.py
+      - src: .overwatch_final/theme_assets/
+        dest: theme_assets/
       - src: .overwatch_final/version.py
         dest: version.py
       - src: .overwatch_final/workflow_contracts.py

@@ -14,6 +14,7 @@ from utils.deployment import (  # noqa: E402
     STREAMLIT_MANIFEST_CONTRACT_VERSION,
     STREAMLIT_ROOT_MANIFEST_ARTIFACTS,
     STREAMLIT_SNOWFLAKE_ARTIFACTS,
+    STREAMLIT_THEME_ASSETS,
     build_streamlit_deployment_decision,
     build_streamlit_manifest_contract,
 )
@@ -86,6 +87,7 @@ class DeploymentContractTests(unittest.TestCase):
             "Snowflake runtime warehouse",
             "Snowflake caller boundary",
             "Snowflake package artifacts",
+            "Theme asset package",
             "Community Cloud wrapper",
             "Community Cloud config",
             "Deployment guide",
@@ -121,6 +123,27 @@ class DeploymentContractTests(unittest.TestCase):
                 self.assertTrue((APP_ROOT / artifact.rstrip("/")).exists())
 
         self.assertNotIn("execute_as: OWNER", manifest)
+
+    def test_theme_assets_are_packaged_and_non_empty(self):
+        theme_asset_dir = APP_ROOT / "theme_assets"
+        self.assertIn("theme_assets/", STREAMLIT_SNOWFLAKE_ARTIFACTS)
+        self.assertTrue(theme_asset_dir.is_dir())
+        self.assertEqual({path.name for path in theme_asset_dir.glob("*.css")}, set(STREAMLIT_THEME_ASSETS))
+
+        for asset_name in STREAMLIT_THEME_ASSETS:
+            with self.subTest(asset_name=asset_name):
+                asset_text = (theme_asset_dir / asset_name).read_text(encoding="utf-8")
+                self.assertGreater(len(asset_text.strip()), 0)
+
+    def test_streamlit_manifest_contract_reports_theme_asset_package(self):
+        contract = build_streamlit_manifest_contract(ROOT)
+        theme_row = contract.loc[contract["CHECK"] == "Theme asset package"].iloc[0]
+
+        self.assertEqual(theme_row["STATE"], "Ready")
+        self.assertEqual(theme_row["ACTUAL"], "all packaged and non-empty")
+        for asset_name in STREAMLIT_THEME_ASSETS:
+            with self.subTest(asset_name=asset_name):
+                self.assertIn(asset_name, theme_row["EXPECTED"])
 
     def test_snowflake_manifest_uses_entities_streamlit_schema_and_parses_yaml(self):
         manifest = (APP_ROOT / "snowflake.yml").read_text(encoding="utf-8")

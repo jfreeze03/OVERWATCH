@@ -25,12 +25,21 @@ STREAMLIT_SNOWFLAKE_ARTIFACTS = (
     "section_dispatch.py",
     "shell.py",
     "theme.py",
+    "theme_assets/",
     "version.py",
     "workflow_contracts.py",
     "environment.yml",
     "pyproject.toml",
     "utils/",
     "sections/",
+)
+STREAMLIT_THEME_ASSETS = (
+    "carbon.vars.css",
+    "terminal.vars.css",
+    "structural.css",
+    "streamlit_icon_fix.css",
+    "carbon.extra.css",
+    "terminal.extra.css",
 )
 STREAMLIT_ROOT_MANIFEST_ARTIFACTS = tuple(
     {
@@ -103,6 +112,28 @@ def build_streamlit_manifest_contract(root: str | Path | None = None) -> pd.Data
         or f"dest: {artifact['dest']}" not in root_manifest
         or not (repo / artifact["src"].rstrip("/")).exists()
     ]
+    theme_asset_dir = app_root / "theme_assets"
+    actual_theme_assets = {path.name for path in theme_asset_dir.glob("*.css")} if theme_asset_dir.exists() else set()
+    expected_theme_assets = set(STREAMLIT_THEME_ASSETS)
+    missing_theme_assets = sorted(expected_theme_assets - actual_theme_assets)
+    unexpected_theme_assets = sorted(actual_theme_assets - expected_theme_assets)
+    empty_theme_assets = sorted(
+        asset
+        for asset in expected_theme_assets & actual_theme_assets
+        if not (theme_asset_dir / asset).read_text(encoding="utf-8").strip()
+    )
+    theme_assets_ready = not (missing_theme_assets or unexpected_theme_assets or empty_theme_assets)
+    theme_asset_status = "all packaged and non-empty"
+    if not theme_assets_ready:
+        theme_asset_status = "; ".join(
+            part
+            for part in (
+                "missing: " + ", ".join(missing_theme_assets) if missing_theme_assets else "",
+                "empty: " + ", ".join(empty_theme_assets) if empty_theme_assets else "",
+                "unexpected: " + ", ".join(unexpected_theme_assets) if unexpected_theme_assets else "",
+            )
+            if part
+        )
 
     rows = [
         _contract_row(
@@ -175,6 +206,13 @@ def build_streamlit_manifest_contract(root: str | Path | None = None) -> pd.Data
             "missing: " + ", ".join(missing_artifacts) if missing_artifacts else "all listed and present",
             not missing_artifacts,
             "Update snowflake.yml artifacts and repository paths together.",
+        ),
+        _contract_row(
+            "Theme asset package",
+            ", ".join(STREAMLIT_THEME_ASSETS),
+            theme_asset_status,
+            theme_assets_ready,
+            "Keep theme_assets packaged with the exact runtime CSS files used by theme.py.",
         ),
         _contract_row(
             "Community Cloud wrapper",

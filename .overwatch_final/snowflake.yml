@@ -70,6 +70,7 @@ entities:
       - section_dispatch.py
       - shell.py
       - theme.py
+      - theme_assets/
       - version.py
       - workflow_contracts.py
       - environment.yml

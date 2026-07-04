@@ -1,0 +1,44 @@
+
+:root {
+    --bg-app:          linear-gradient(160deg, #0B1117 0%, #101A22 48%, #003545 100%);
+    --bg-sidebar:      linear-gradient(180deg, #071018 0%, #0D1B24 55%, #003545 100%);
+    --bg-card:         rgba(13, 27, 36, 0.82);
+    --bg-card-hover:   rgba(18, 42, 55, 0.96);
+    --bg-input:        rgba(6, 16, 23, 0.92);
+    --bg-tab-list:     rgba(11, 27, 38, 0.66);
+    --bg-expander:     rgba(10, 24, 32, 0.76);
+
+    --border-subtle:   rgba(41, 181, 232, 0.12);
+    --border-normal:   rgba(41, 181, 232, 0.26);
+    --border-strong:   rgba(41, 181, 232, 0.62);
+    --border-sidebar:  rgba(113, 211, 220, 0.16);
+
+    --text-primary:    #eef8fb;
+    --text-secondary:  #9bddea;
+    --text-muted:      #7b9cab;
+    --text-input:      #eef8fb;
+    --text-heading:    transparent;
+
+    --accent:          #29B5E8;
+    --accent-rgb:      41, 181, 232;
+    --accent2:         #71D3DC;
+    --accent3:         #11567F;
+    --h1-gradient:     linear-gradient(90deg, #eef8fb, #71D3DC, #29B5E8);
+
+    --metric-shadow:        0 4px 24px rgba(0,0,0,0.48), inset 0 1px 0 rgba(113,211,220,0.08);
+    --metric-hover-shadow:  0 8px 32px rgba(41,181,232,0.16), inset 0 1px 0 rgba(113,211,220,0.12);
+    --btn-bg:          linear-gradient(135deg, rgba(41,181,232,0.12), rgba(113,211,220,0.10));
+    --btn-bg-hover:    linear-gradient(135deg, rgba(41,181,232,0.28), rgba(113,211,220,0.22));
+    --btn-border:      rgba(41, 181, 232, 0.34);
+    --btn-hover-shadow: 0 0 20px rgba(41,181,232,0.24);
+    --slider-track:    linear-gradient(90deg, #11567F, #29B5E8);
+    --tab-active-bg:   rgba(41, 181, 232, 0.15);
+    --tab-active-col:  #71D3DC;
+    --hr-bg:           linear-gradient(90deg, transparent, rgba(41,181,232,0.32), transparent);
+    --scrollbar-track: rgba(3, 12, 18, 0.70);
+    --scrollbar-thumb: rgba(41, 181, 232, 0.32);
+    --scrollbar-hover: rgba(113, 211, 220, 0.56);
+    --font-body:       'Lato', 'Inter', 'DM Sans', system-ui, sans-serif;
+    --font-mono:       'DM Mono', 'Cascadia Mono', monospace;
+    --extra-css:       '';
+}

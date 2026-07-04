@@ -20,6 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
+import theme as theme_module  # noqa: E402
+
 
 def _section_source(path: Path) -> str:
     """Read a section's source, transparently handling subpackages.
@@ -35,6 +37,11 @@ def _section_source(path: Path) -> str:
                 p.read_text(encoding="utf-8") for p in sorted(pkg.rglob("*.py"))
             )
     return path.read_text(encoding="utf-8")
+
+
+def _theme_css(theme_key: str = "carbon") -> str:
+    return theme_module._combined_theme_css(theme_key)
+
 
 from config import (  # noqa: E402
     ALL_SECTIONS,
@@ -1562,7 +1569,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         layout_text = (APP_ROOT / "layout.py").read_text(encoding="utf-8")
         shell_text = (APP_ROOT / "shell.py").read_text(encoding="utf-8")
         dispatch_text = (APP_ROOT / "section_dispatch.py").read_text(encoding="utf-8")
-        theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
+        theme_text = _theme_css()
 
         self.assertIn("from shell import render_app", app_text)
         self.assertIn("def queue_section_navigation", navigation_text)
@@ -1617,7 +1624,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         layout_text = (APP_ROOT / "layout.py").read_text(encoding="utf-8")
         filters_text = (APP_ROOT / "filters.py").read_text(encoding="utf-8")
         runtime_text = (APP_ROOT / "runtime_state.py").read_text(encoding="utf-8")
-        theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
+        theme_text = _theme_css()
         evidence_mode_text = (APP_ROOT / "utils" / "evidence_mode.py").read_text(encoding="utf-8")
 
         command_bar_index = shell_text.index("active_company = render_global_command_bar(active_company, credit_price=credit_price)")
@@ -2029,7 +2036,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             st.session_state.update(previous)
 
     def test_sidebar_collapse_reopen_control_remains_visible(self):
-        theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
+        theme_text = _theme_css()
 
         self.assertNotIn('[data-testid="stHeader"],\n[data-testid="stToolbar"]', theme_text)
         self.assertIn('[data-testid="stHeader"] {', theme_text)
@@ -2051,7 +2058,7 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_current_sections_have_operating_guides(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
-        theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
+        theme_text = _theme_css()
         guidance_text = (APP_ROOT / "utils" / "section_guidance.py").read_text(encoding="utf-8")
 
         self.assertNotIn("render_section_operating_guide(active_section)", app_text)
@@ -2078,7 +2085,7 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_current_sections_have_evidence_contracts(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
-        theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
+        theme_text = _theme_css()
         guidance_text = (APP_ROOT / "utils" / "section_guidance.py").read_text(encoding="utf-8")
         shell_helpers_text = (APP_ROOT / "sections" / "shell_helpers.py").read_text(encoding="utf-8")
         workflow_text = (APP_ROOT / "utils" / "workflows.py").read_text(encoding="utf-8")
@@ -2168,7 +2175,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         workflows_text = (APP_ROOT / "utils" / "workflows.py").read_text(encoding="utf-8")
         display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")
         stored_proc_text = (APP_ROOT / "sections" / "stored_proc_tracker.py").read_text(encoding="utf-8")
-        theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
+        theme_text = _theme_css()
         self.assertIn("Full detail is loaded only when requested", workflows_text)
         self.assertIn('st.button("Show full detail"', workflows_text)
         self.assertIn('CONTEXT_PRIORITY_COLUMNS = ("ENVIRONMENT", "DATABASE_NAME", "SCHEMA_NAME")', workflows_text)
@@ -2439,7 +2446,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         layout_text = (APP_ROOT / "layout.py").read_text(encoding="utf-8")
         shell_helpers_text = (APP_ROOT / "sections" / "shell_helpers.py").read_text(encoding="utf-8")
-        theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
+        theme_text = _theme_css()
         workflows_text = (APP_ROOT / "utils" / "workflows.py").read_text(encoding="utf-8")
 
         self.assertIn("WORKFLOWS_VERSION", workflows_text)

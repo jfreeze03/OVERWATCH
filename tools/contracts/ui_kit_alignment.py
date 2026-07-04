@@ -116,6 +116,17 @@ def _read(root: Path, rel: str) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def _theme_source_with_assets(root: Path) -> str:
+    asset_dir = root / ".overwatch_final" / "theme_assets"
+    asset_text = ""
+    if asset_dir.exists():
+        asset_text = "\n".join(
+            path.read_text(encoding="utf-8", errors="replace")
+            for path in sorted(asset_dir.glob("*.css"))
+        )
+    return _read(root, ".overwatch_final/theme.py") + "\n" + asset_text
+
+
 def _sha256(value: object) -> str:
     return hashlib.sha256(str(value or "").encode("utf-8", errors="replace")).hexdigest()
 
@@ -358,7 +369,7 @@ def build_ui_kit_alignment_results(root: Path | str = ".") -> dict[str, Any]:
     root_path = Path(root).resolve()
     component_source = _read(root_path, ".overwatch_final/sections/decision_workspace_components.py")
     renderer_source = _read(root_path, ".overwatch_final/sections/section_command_rendering.py")
-    theme_source = _read(root_path, ".overwatch_final/theme.py")
+    theme_source = _theme_source_with_assets(root_path)
     shell_source = _read(root_path, ".overwatch_final/sections/shell_helpers.py")
     display_safety_source = _read(root_path, ".overwatch_final/utils/display_safety.py")
     cortex_source = _read(root_path, ".overwatch_final/sections/cortex_monitor.py")

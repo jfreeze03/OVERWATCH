@@ -32,6 +32,13 @@ def _read(path: Path) -> str:
         return ""
 
 
+def _theme_asset_text(root_path: Path) -> str:
+    asset_dir = root_path / ".overwatch_final" / "theme_assets"
+    if not asset_dir.exists():
+        return ""
+    return "\n".join(_read(path) for path in sorted(asset_dir.glob("*.css")))
+
+
 def _theme_line_count(theme_text: str) -> int:
     return len(theme_text.splitlines())
 
@@ -50,6 +57,7 @@ def evaluate_ui_system_grade(root: Path | str = ".") -> dict[str, Any]:
     shell_path = root_path / ".overwatch_final" / "shell.py"
     config_path = root_path / ".streamlit" / "config.toml"
     theme_text = _read(theme_path)
+    theme_css_text = theme_text + "\n" + _theme_asset_text(root_path)
     shell_text = _read(shell_path)
     config_text = _read(config_path)
     rows: list[dict[str, Any]] = []
@@ -70,13 +78,13 @@ def evaluate_ui_system_grade(root: Path | str = ".") -> dict[str, Any]:
         },
         {
             "check": "reduced_motion_support",
-            "passed": "prefers-reduced-motion" in theme_text,
+            "passed": "prefers-reduced-motion" in theme_css_text,
             "release_blocking": True,
             "failure_reason": "missing reduced-motion CSS support",
         },
         {
             "check": "minimum_operational_label_size",
-            "passed": _low_label_font_count(theme_text) == 0,
+            "passed": _low_label_font_count(theme_css_text) == 0,
             "release_blocking": True,
             "failure_reason": "operational label CSS uses sub-12px font sizes",
         },
@@ -88,7 +96,7 @@ def evaluate_ui_system_grade(root: Path | str = ".") -> dict[str, Any]:
         },
         {
             "check": "command_brief_skeleton_style",
-            "passed": "ow-kit-command-brief" in theme_text or "ow-decision-brief" in theme_text,
+            "passed": "ow-kit-command-brief" in theme_css_text or "ow-decision-brief" in theme_css_text,
             "release_blocking": False,
             "failure_reason": "CommandBrief skeleton style not found",
         },

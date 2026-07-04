@@ -314,6 +314,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "deployment": (
         "OVERWATCH_SCHEMA_VERSION", "MIGRATION_TABLE", "STREAMLIT_DEPLOYMENT_DECISION_VERSION",
         "STREAMLIT_MANIFEST_CONTRACT_VERSION", "STREAMLIT_SNOWFLAKE_ARTIFACTS",
+        "STREAMLIT_THEME_ASSETS",
         "build_streamlit_deployment_decision", "build_streamlit_manifest_contract",
         "build_schema_migration_contract", "build_schema_migration_status_sql",
         "build_schema_migration_ddl",

@@ -9,6 +9,9 @@ if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
 
+import theme as theme_module  # noqa: E402
+
+
 class OverviewVisualContractTests(unittest.TestCase):
     def test_view_all_priorities_is_real_button_contract(self):
         from route_registry import SECTION_WORKFLOW_CONTRACT
@@ -36,7 +39,7 @@ class OverviewVisualContractTests(unittest.TestCase):
             self.assertEqual(contract.expected_snowflake_execution_count, 0)
 
     def test_attention_grid_matches_rendered_cell_count(self):
-        theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
+        theme_text = theme_module._combined_theme_css("carbon")
         self.assertIn("grid-template-columns: 28px 56px minmax(180px, 1fr)", theme_text)
         self.assertIn("white-space: nowrap", theme_text)
 

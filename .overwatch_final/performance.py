@@ -43,7 +43,10 @@ _VALID_CACHE_LAYERS = {"none", "session", "streamlit_cache", "paused", "budget_b
 _VALID_QUERY_BOUNDARIES = {
     "decision_packet",
     "evidence",
+    "evidence_targeted",
     "query_search",
+    "query_search_exact",
+    "query_search_broad_explicit",
     "query_preview",
     "metadata",
     "account_usage",
@@ -55,20 +58,23 @@ _QUERY_BOUNDARY_ALIASES = {
     "first_paint_packet": "decision_packet",
     "warm_first_paint": "decision_packet",
     "route_action": "other",
-    "evidence_action": "evidence",
-    "compact_evidence": "evidence",
-    "detail_mart": "evidence",
+    "evidence_action": "evidence_targeted",
+    "compact_evidence": "evidence_targeted",
+    "detail_mart": "evidence_targeted",
     "query_search_no_click": "query_search",
     "query_search_explicit": "query_search",
-    "cost_workbench": "evidence",
-    "deep_history_fallback": "account_usage",
+    "cost_workbench": "evidence_targeted",
+    "deep_history_fallback": "query_search_broad_explicit",
     "setup_health": "setup_health",
     "live_validation": "admin",
 }
 _FIRST_PAINT_BOUNDARIES = {
     "decision_packet",
     "evidence",
+    "evidence_targeted",
     "query_search",
+    "query_search_exact",
+    "query_search_broad_explicit",
     "query_preview",
     "metadata",
     "account_usage",
@@ -291,20 +297,27 @@ def end_query_budget_context(token: str) -> dict[str, Any]:
             if role_capture_events:
                 failure_reasons.append("route_action captured role metadata")
         if name == "evidence_click":
-            if int(actual_boundaries.get("evidence") or 0) > 1:
+            evidence_count = int(actual_boundaries.get("evidence") or 0) + int(actual_boundaries.get("evidence_targeted") or 0)
+            if evidence_count > 1:
                 failure_reasons.append("evidence_click emitted more than one evidence boundary")
             if metadata_probe_events:
                 failure_reasons.append("evidence_click emitted an unallowlisted metadata probe")
-            if int(actual_boundaries.get("account_usage") or 0):
+            if int(actual_boundaries.get("account_usage") or 0) or int(actual_boundaries.get("query_search_broad_explicit") or 0):
                 failure_reasons.append("evidence_click emitted Account Usage work")
-        if name == "query_search_exact" and int(actual_boundaries.get("query_search") or 0) > 1:
+        query_search_exact_count = int(actual_boundaries.get("query_search") or 0) + int(actual_boundaries.get("query_search_exact") or 0)
+        if name == "query_search_exact" and query_search_exact_count > 1:
             failure_reasons.append("query_search_exact emitted more than one query_search boundary")
         if name == "query_search_related" and int(actual_boundaries.get("query_search") or 0) > 1:
             failure_reasons.append("query_search_related emitted more than one query_search boundary")
-        if name == "query_preview" and int(actual_boundaries.get("query_preview") or 0) > 1:
+        query_preview_count = int(actual_boundaries.get("query_preview") or 0) + int(actual_boundaries.get("query_search_exact") or 0)
+        if name == "query_preview" and query_preview_count > 1:
             failure_reasons.append("query_preview emitted more than one query_preview boundary")
         if name == "account_usage_fallback":
-            account_cost = int(actual_boundaries.get("account_usage") or 0) + metadata_probe_events
+            account_cost = (
+                int(actual_boundaries.get("account_usage") or 0)
+                + int(actual_boundaries.get("query_search_broad_explicit") or 0)
+                + metadata_probe_events
+            )
             if account_cost > budget:
                 failure_reasons.append(f"account_usage_fallback cost {account_cost} exceeded budget {budget}")
         passed = not failure_reasons

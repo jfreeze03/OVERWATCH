@@ -23,7 +23,16 @@ class AGradeExecutionMatrixTests(unittest.TestCase):
     def _write_gate(self, root: Path, rel: str, passed: bool = True, **extra) -> None:
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"passed": passed, "failure_count": 0 if passed else 1}
+        payload = {
+            "source": path.stem,
+            "producer": path.stem,
+            "producer_signature": f"{path.stem}:test",
+            "commit_sha": "test-commit",
+            "passed": passed,
+            "failure_count": 0 if passed else 1,
+            "rows": [{"validation_id": path.stem, "passed": passed}],
+            "raw_sql_included": False,
+        }
         payload.update(extra)
         path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -38,6 +47,10 @@ class AGradeExecutionMatrixTests(unittest.TestCase):
 
         self.assertTrue(results["passed"], results.get("failures"))
         self.assertTrue(results["a_grade_ready"], results)
+        blocking_rows = [row for row in results["rows"] if row["release_blocking"]]
+        self.assertTrue(all(row["artifact_exists"] for row in blocking_rows))
+        self.assertTrue(all(row["artifact_sha256"] for row in blocking_rows))
+        self.assertTrue(all(row["proof_row_count"] > 0 for row in blocking_rows))
 
     def test_matrix_includes_release_blocking_metric_governance(self):
         from tools.contracts.a_grade_execution_matrix import build_a_grade_execution_matrix
@@ -67,6 +80,22 @@ class AGradeExecutionMatrixTests(unittest.TestCase):
 
         self.assertFalse(results["passed"])
         self.assertFalse(results["a_grade_ready"])
+
+    def test_boolean_only_release_gate_does_not_pass_matrix(self):
+        from tools.contracts.a_grade_execution_matrix import build_a_grade_execution_matrix
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in self.REQUIRED_GATES:
+                self._write_gate(root, rel)
+            path = root / "artifacts/launch_readiness/first_paint_slo_gate_results.json"
+            path.write_text(json.dumps({"passed": True, "failure_count": 0}), encoding="utf-8")
+            results = build_a_grade_execution_matrix(root)
+
+        self.assertFalse(results["passed"])
+        reasons = " ".join(row["failure_reason"] for row in results["failures"])
+        self.assertIn("producer signature", reasons)
+        self.assertIn("concrete proof rows", reasons)
 
     def test_advisory_ui_debt_defers_a_grade_without_blocking_production(self):
         from tools.contracts.a_grade_execution_matrix import build_a_grade_execution_matrix

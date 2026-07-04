@@ -1632,8 +1632,17 @@ def write_security_credential_validation_artifacts(
     launch_profile = _selected_profile(profile)
     credential = build_credential_expiration_validation(root_path)
     user_display = build_user_display_dimension_validation(root_path)
-    credential_live = _existing_live_payload(root_path, CREDENTIAL_EXPIRATION_LIVE_REL) or build_credential_expiration_live_results(root_path, launch_profile)
-    user_display_live = _existing_live_payload(root_path, USER_DISPLAY_DIMENSION_LIVE_REL) or build_user_display_dimension_live_results(root_path, launch_profile)
+    live_profile = launch_profile in {"internal_live", "prod_candidate"}
+    credential_live = (
+        _existing_live_payload(root_path, CREDENTIAL_EXPIRATION_LIVE_REL)
+        if live_profile
+        else {}
+    ) or build_credential_expiration_live_results(root_path, launch_profile)
+    user_display_live = (
+        _existing_live_payload(root_path, USER_DISPLAY_DIMENSION_LIVE_REL)
+        if live_profile
+        else {}
+    ) or build_user_display_dimension_live_results(root_path, launch_profile)
     user_surface = build_user_display_surface_results(root_path)
     cortex_labels = build_cortex_user_label_results(root_path)
     credential_export = build_security_credential_export_results(root_path)

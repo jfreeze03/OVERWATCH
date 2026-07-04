@@ -9,7 +9,17 @@ if str(ROOT) not in sys.path:
 
 
 class FirstPaintSloTests(unittest.TestCase):
-    def _rows(self, *, elapsed_ms: int = 50, warm_queries: int = 0):
+    def _rows(
+        self,
+        *,
+        elapsed_ms: int = 50,
+        warm_queries: int = 0,
+        shell_sessions: int = 0,
+        active_session_probes: int = 0,
+        metadata_probe_violations: int = 0,
+        cost_autoload: int = 0,
+        query_search_broad: int = 0,
+    ):
         from tools.contracts.first_paint_slo import PRIMARY_SECTIONS
 
         return {
@@ -26,6 +36,15 @@ class FirstPaintSloTests(unittest.TestCase):
                     "cost_workbench_query_count": 0,
                     "query_search_query_count": 0,
                     "direct_sql_count": 0,
+                    "pre_first_paint_session_open_count": 0,
+                    "shell_session_open_count": shell_sessions,
+                    "active_session_probe_count": active_session_probes,
+                    "metadata_probe_count": 0,
+                    "metadata_probe_violation_count": metadata_probe_violations,
+                    "cost_overview_autoload_violation_count": cost_autoload,
+                    "query_search_broad_autorun_count": query_search_broad,
+                    "packet_cache_hit": True,
+                    "packet_size_bytes": 42_000,
                     "passed": True,
                 }
                 for section in PRIMARY_SECTIONS
@@ -43,7 +62,10 @@ class FirstPaintSloTests(unittest.TestCase):
     def test_missing_packet_size_fails(self):
         from tools.contracts.first_paint_slo import evaluate_first_paint_slo
 
-        gate = evaluate_first_paint_slo(self._rows())
+        payload = self._rows()
+        for row in payload["rows"]:
+            row.pop("packet_size_bytes", None)
+        gate = evaluate_first_paint_slo(payload)
 
         self.assertFalse(gate["passed"])
         self.assertIn("packet size", " ".join(row["failure_reason"] for row in gate["failures"]))
@@ -57,6 +79,50 @@ class FirstPaintSloTests(unittest.TestCase):
         reasons = " ".join(row["failure_reason"] for row in gate["failures"])
         self.assertIn("1.5s", reasons)
         self.assertIn("warm", reasons)
+
+    def test_missing_first_paint_probe_telemetry_fails(self):
+        from tools.contracts.first_paint_slo import PRIMARY_SECTIONS, evaluate_first_paint_slo
+
+        gate = evaluate_first_paint_slo(
+            {
+                "rows": [
+                    {
+                        "section": section,
+                        "workflow": "Overview",
+                        "elapsed_ms": 50,
+                        "cold_first_paint_packet_query_count": 1,
+                        "warm_first_paint_query_count": 0,
+                    }
+                    for section in PRIMARY_SECTIONS
+                ]
+            },
+            packet_size_payload={"max_packet_bytes": 42_000},
+        )
+
+        self.assertFalse(gate["passed"])
+        reasons = " ".join(row["failure_reason"] for row in gate["failures"])
+        self.assertIn("missing first-paint telemetry fields", reasons)
+
+    def test_shell_session_probe_or_autoload_counters_fail(self):
+        from tools.contracts.first_paint_slo import evaluate_first_paint_slo
+
+        gate = evaluate_first_paint_slo(
+            self._rows(
+                shell_sessions=1,
+                active_session_probes=1,
+                metadata_probe_violations=1,
+                cost_autoload=1,
+                query_search_broad=1,
+            ),
+            packet_size_payload={"max_packet_bytes": 42_000},
+        )
+
+        self.assertFalse(gate["passed"])
+        reasons = " ".join(row["failure_reason"] for row in gate["failures"])
+        self.assertIn("shell opened", reasons)
+        self.assertIn("active-session probe", reasons)
+        self.assertIn("Cost Overview", reasons)
+        self.assertIn("Query Search broad", reasons)
 
 
 if __name__ == "__main__":

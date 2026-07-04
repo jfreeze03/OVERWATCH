@@ -2521,7 +2521,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertIn('"I understand this may scan deeper history."', source)
         self.assertIn('"Search deep history fallback"', source)
         self.assertIn("ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED", source)
-        self.assertIn('query_boundary="account_usage"', source)
+        self.assertIn('query_boundary="query_search_broad_explicit"', source)
 
     def test_targeted_evidence_loaders_push_filters_before_rows(self):
         alert_data = (APP_ROOT / "sections" / "alert_center_data.py").read_text(encoding="utf-8")

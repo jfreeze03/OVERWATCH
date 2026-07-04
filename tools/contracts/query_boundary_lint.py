@@ -27,6 +27,50 @@ CRITICAL_QUERY_PATH_SUFFIXES = (
     "utils/alert_triage.py",
 )
 
+ALLOWED_QUERY_BOUNDARIES = {
+    "decision_packet",
+    "evidence_targeted",
+    "query_search",
+    "query_search_exact",
+    "query_search_broad_explicit",
+    "setup_admin",
+    "live_validation",
+    "refresh_fast",
+    "refresh_full",
+    "export_case",
+    "admin_setup_health",
+    "explicit_connection_test",
+    "action_queue",
+    "alert_delivery",
+    "alert_triage",
+    "cost_evidence",
+    "security_evidence",
+    "workload_evidence",
+}
+
+DIRECT_SQL_RELEASE_BLOCKING_SUFFIXES = (
+    "app.py",
+    "shell.py",
+    "navigation.py",
+    "route_registry.py",
+    "runtime_state.py",
+    "section_dispatch.py",
+    "access_control.py",
+    "filters.py",
+    "layout.py",
+    "refresh.py",
+    "perf_trace.py",
+    "performance.py",
+    "app_entry_timing.py",
+    "workflow_contracts.py",
+    "sections/section_command_brief.py",
+    "sections/query_search.py",
+    "sections/decision_workspace_target_filters.py",
+    "sections/cost_contract_evidence.py",
+    "sections/dba_control_room/render.py",
+    "sections/security_posture_privilege_sprawl_view.py",
+)
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -46,13 +90,62 @@ def _is_critical(path: Path, suffixes: Iterable[str] = CRITICAL_QUERY_PATH_SUFFI
     return any(normalized.endswith(suffix) for suffix in suffixes)
 
 
-def _is_run_query_call(node: ast.Call) -> bool:
+def _is_direct_sql_release_blocking(path: Path) -> bool:
+    normalized = _norm(path)
+    return any(normalized.endswith(suffix) for suffix in DIRECT_SQL_RELEASE_BLOCKING_SUFFIXES)
+
+
+def _run_query_aliases(tree: ast.AST) -> set[str]:
+    aliases = {"run_query"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.endswith("utils.query"):
+            for alias in node.names:
+                if alias.name == "run_query":
+                    aliases.add(alias.asname or alias.name)
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Name):
+                continue
+            if node.value.id not in aliases:
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id not in aliases:
+                    aliases.add(target.id)
+                    changed = True
+    return aliases
+
+
+def _is_run_query_call(node: ast.Call, aliases: set[str]) -> bool:
     func = node.func
     if isinstance(func, ast.Name):
-        return func.id == "run_query"
+        return func.id in aliases
     if isinstance(func, ast.Attribute):
         return func.attr == "run_query"
     return False
+
+
+def _is_session_sql_call(node: ast.Call) -> bool:
+    func = node.func
+    if not isinstance(func, ast.Attribute) or func.attr != "sql":
+        return False
+    value = func.value
+    if isinstance(value, ast.Name):
+        return value.id in {"session", "sess", "sf_session"}
+    if isinstance(value, ast.Attribute):
+        return value.attr.lower().endswith("session")
+    return False
+
+
+def _keyword_literal(node: ast.Call, keyword_name: str) -> str:
+    for keyword in node.keywords:
+        if keyword.arg != keyword_name:
+            continue
+        value = keyword.value
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            return value.value
+    return ""
 
 
 def lint_query_boundary_paths(root: Path | str = ".", *, critical_suffixes: Iterable[str] = CRITICAL_QUERY_PATH_SUFFIXES) -> dict[str, Any]:
@@ -61,12 +154,19 @@ def lint_query_boundary_paths(root: Path | str = ".", *, critical_suffixes: Iter
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     scanned_files = 0
+    critical_file_count = 0
+    app_file_count = 0
     run_query_call_count = 0
+    direct_session_sql_call_count = 0
+    direct_session_sql_violation_count = 0
     for path in sorted(app_root.rglob("*.py")):
         rel = path.relative_to(root_path)
-        if not _is_critical(rel, critical_suffixes):
-            continue
+        app_file_count += 1
+        critical = _is_critical(rel, critical_suffixes)
+        direct_sql_release_blocking = _is_direct_sql_release_blocking(rel)
         scanned_files += 1
+        if critical:
+            critical_file_count += 1
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(rel))
         except SyntaxError as exc:
@@ -78,30 +178,65 @@ def lint_query_boundary_paths(root: Path | str = ".", *, critical_suffixes: Iter
             failures.append(failure)
             rows.append({**failure, "passed": False, "raw_sql_included": False})
             continue
+        aliases = _run_query_aliases(tree)
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not _is_run_query_call(node):
+            if not isinstance(node, ast.Call):
                 continue
-            run_query_call_count += 1
-            has_boundary = any(keyword.arg == "query_boundary" for keyword in node.keywords)
-            row = {
-                "file": rel.as_posix(),
-                "line": int(getattr(node, "lineno", 0) or 0),
-                "call": "run_query",
-                "query_boundary_present": has_boundary,
-                "passed": has_boundary,
-                "failure_reason": "" if has_boundary else "critical run_query call lacks query_boundary",
-                "raw_sql_included": False,
-            }
-            rows.append(row)
-            if not has_boundary:
-                failures.append({"file": row["file"], "line": row["line"], "failure_reason": row["failure_reason"]})
+            if _is_run_query_call(node, aliases):
+                run_query_call_count += 1
+                boundary_value = _keyword_literal(node, "query_boundary")
+                has_boundary = any(keyword.arg == "query_boundary" for keyword in node.keywords)
+                invalid_boundary = bool(boundary_value) and boundary_value not in ALLOWED_QUERY_BOUNDARIES
+                release_blocking = critical
+                reasons: list[str] = []
+                if release_blocking and not has_boundary:
+                    reasons.append("critical run_query call lacks query_boundary")
+                if release_blocking and invalid_boundary:
+                    reasons.append(f"critical run_query call uses unapproved query_boundary '{boundary_value}'")
+                row = {
+                    "file": rel.as_posix(),
+                    "line": int(getattr(node, "lineno", 0) or 0),
+                    "call": "run_query",
+                    "aliases_detected": sorted(aliases - {"run_query"}),
+                    "query_boundary_present": has_boundary,
+                    "query_boundary": boundary_value,
+                    "release_blocking_path": release_blocking,
+                    "passed": not reasons,
+                    "failure_reason": "; ".join(reasons),
+                    "raw_sql_included": False,
+                }
+                rows.append(row)
+                if reasons:
+                    failures.append({"file": row["file"], "line": row["line"], "failure_reason": row["failure_reason"]})
+                continue
+            if _is_session_sql_call(node):
+                direct_session_sql_call_count += 1
+                release_blocking = direct_sql_release_blocking
+                reason = "direct session.sql call in first-paint/query-critical path" if release_blocking else ""
+                row = {
+                    "file": rel.as_posix(),
+                    "line": int(getattr(node, "lineno", 0) or 0),
+                    "call": "session.sql",
+                    "release_blocking_path": release_blocking,
+                    "passed": not release_blocking,
+                    "failure_reason": reason,
+                    "raw_sql_included": False,
+                }
+                rows.append(row)
+                if release_blocking:
+                    direct_session_sql_violation_count += 1
+                    failures.append({"file": row["file"], "line": row["line"], "failure_reason": reason})
     return {
         "source": "query_boundary_lint",
         "generated_at": _now(),
         "passed": not failures,
         "failure_count": len(failures),
-        "critical_file_count": scanned_files,
+        "app_file_count": app_file_count,
+        "scanned_file_count": scanned_files,
+        "critical_file_count": critical_file_count,
         "run_query_call_count": run_query_call_count,
+        "direct_session_sql_call_count": direct_session_sql_call_count,
+        "direct_session_sql_violation_count": direct_session_sql_violation_count,
         "missing_query_boundary_count": len(failures),
         "rows": rows,
         "failures": failures,
@@ -119,7 +254,11 @@ def write_query_boundary_lint_artifacts(root: Path | str = ".") -> dict[str, Any
         "failure_count": int(results.get("failure_count") or 0),
         "missing_query_boundary_count": int(results.get("missing_query_boundary_count") or 0),
         "critical_file_count": int(results.get("critical_file_count") or 0),
+        "scanned_file_count": int(results.get("scanned_file_count") or 0),
+        "app_file_count": int(results.get("app_file_count") or 0),
         "run_query_call_count": int(results.get("run_query_call_count") or 0),
+        "direct_session_sql_call_count": int(results.get("direct_session_sql_call_count") or 0),
+        "direct_session_sql_violation_count": int(results.get("direct_session_sql_violation_count") or 0),
         "failures": results.get("failures", []),
         "raw_sql_included": False,
     }
@@ -140,6 +279,7 @@ if __name__ == "__main__":
 __all__ = [
     "QUERY_BOUNDARY_LINT_GATE_REL",
     "QUERY_BOUNDARY_LINT_RESULTS_REL",
+    "ALLOWED_QUERY_BOUNDARIES",
     "lint_query_boundary_paths",
     "write_query_boundary_lint_artifacts",
 ]

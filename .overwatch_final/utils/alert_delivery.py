@@ -518,7 +518,7 @@ def load_alert_delivery_log(
         tier="recent",
         section=section,
         max_rows=limit,
-        query_boundary="evidence",
+        query_boundary="evidence_targeted",
         target_label=target_label,
         target_context_present=bool(target or alert_ids),
         target_columns_used=target_columns,

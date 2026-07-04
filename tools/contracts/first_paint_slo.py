@@ -27,6 +27,18 @@ PRIMARY_SECTIONS = (
     "Security Monitoring",
 )
 
+FIRST_PAINT_REQUIRED_TELEMETRY_FIELDS = (
+    "pre_first_paint_session_open_count",
+    "shell_session_open_count",
+    "active_session_probe_count",
+    "metadata_probe_count",
+    "metadata_probe_violation_count",
+    "cost_overview_autoload_violation_count",
+    "query_search_broad_autorun_count",
+    "packet_cache_hit",
+    "packet_size_bytes",
+)
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -120,6 +132,12 @@ def evaluate_first_paint_slo(
             "first_paint_slo_passed": False,
             "packet_size_bytes": packet_size,
             "packet_size_slo_bytes": PACKET_SIZE_SLO_BYTES,
+            "pre_first_paint_session_open_count": 0,
+            "shell_session_open_count": 0,
+            "active_session_probe_count": 0,
+            "metadata_probe_violation_count": 0,
+            "cost_overview_autoload_violation_count": 0,
+            "query_search_broad_autorun_count": 0,
             "rows": rows,
             "failures": failures,
             "raw_sql_included": False,
@@ -141,7 +159,20 @@ def evaluate_first_paint_slo(
         workbench = _row_count(row, "cost_workbench_query_count", "chart_query_count")
         query_search = _row_count(row, "query_search_query_count")
         direct_sql = _row_count(row, "direct_sql_count", "direct_sql_event_count")
+        pre_first_paint_sessions = _row_count(row, "pre_first_paint_session_open_count")
+        shell_sessions = _row_count(row, "shell_session_open_count")
+        active_session_probes = _row_count(row, "active_session_probe_count")
+        metadata_probes = _row_count(row, "metadata_probe_count")
+        metadata_probe_violations = _row_count(row, "metadata_probe_violation_count")
+        cost_autoload_violations = _row_count(row, "cost_overview_autoload_violation_count")
+        query_search_broad_autoruns = _row_count(row, "query_search_broad_autorun_count")
+        packet_cache_hit = bool(row.get("packet_cache_hit"))
+        row_packet_size = _row_count(row, "packet_size_bytes", "packet_bytes")
         reasons: list[str] = []
+        if section in PRIMARY_SECTIONS:
+            missing_fields = [field for field in FIRST_PAINT_REQUIRED_TELEMETRY_FIELDS if field not in row]
+            if missing_fields:
+                reasons.append("missing first-paint telemetry fields: " + ", ".join(missing_fields))
         if section in PRIMARY_SECTIONS and "elapsed_ms" not in row:
             reasons.append("missing cold first-paint elapsed_ms")
         if section in PRIMARY_SECTIONS and cold_ms > COLD_FIRST_PAINT_SLO_MS:
@@ -164,6 +195,22 @@ def evaluate_first_paint_slo(
             reasons.append("Query Search ran during first paint")
         if direct_sql:
             reasons.append("first paint emitted direct SQL")
+        if pre_first_paint_sessions:
+            reasons.append("session opened before first paint")
+        if shell_sessions:
+            reasons.append("shell opened a Snowflake session")
+        if active_session_probes:
+            reasons.append("shell performed active-session probe")
+        if metadata_probe_violations or metadata_probes > 1:
+            reasons.append("metadata probe exceeded first-paint budget")
+        if cost_autoload_violations:
+            reasons.append("Cost Overview autoloaded non-packet work")
+        if query_search_broad_autoruns:
+            reasons.append("Query Search broad/deep path autoran")
+        if "packet_cache_hit" in row and section in PRIMARY_SECTIONS and not packet_cache_hit and warm_queries == 0:
+            reasons.append("warm first paint did not prove packet cache hit")
+        if "packet_size_bytes" in row and row_packet_size > PACKET_SIZE_SLO_BYTES:
+            reasons.append("row packet size exceeds 100 KB")
         checked = {
             "section": section,
             "workflow": workflow,
@@ -177,6 +224,15 @@ def evaluate_first_paint_slo(
             "cost_workbench_query_count": workbench,
             "query_search_query_count": query_search,
             "direct_sql_count": direct_sql,
+            "pre_first_paint_session_open_count": pre_first_paint_sessions,
+            "shell_session_open_count": shell_sessions,
+            "active_session_probe_count": active_session_probes,
+            "metadata_probe_count": metadata_probes,
+            "metadata_probe_violation_count": metadata_probe_violations,
+            "cost_overview_autoload_violation_count": cost_autoload_violations,
+            "query_search_broad_autorun_count": query_search_broad_autoruns,
+            "packet_cache_hit": packet_cache_hit,
+            "packet_size_bytes": row_packet_size,
             "passed": not reasons,
             "failure_reason": "; ".join(reasons),
             "raw_sql_included": False,
@@ -204,6 +260,12 @@ def evaluate_first_paint_slo(
         "warm_slo_ms": WARM_SECTION_SWITCH_SLO_MS,
         "packet_size_bytes": packet_size,
         "packet_size_slo_bytes": PACKET_SIZE_SLO_BYTES,
+        "pre_first_paint_session_open_count": sum(_row_count(row, "pre_first_paint_session_open_count") for row in rows),
+        "shell_session_open_count": sum(_row_count(row, "shell_session_open_count") for row in rows),
+        "active_session_probe_count": sum(_row_count(row, "active_session_probe_count") for row in rows),
+        "metadata_probe_violation_count": sum(_row_count(row, "metadata_probe_violation_count") for row in rows),
+        "cost_overview_autoload_violation_count": sum(_row_count(row, "cost_overview_autoload_violation_count") for row in rows),
+        "query_search_broad_autorun_count": sum(_row_count(row, "query_search_broad_autorun_count") for row in rows),
         "rows": rows,
         "failures": failures,
         "raw_sql_included": False,
@@ -223,6 +285,12 @@ def write_first_paint_slo_artifacts(root: Path | str = ".") -> dict[str, Any]:
         "first_paint_slo_passed": bool(gate.get("first_paint_slo_passed")),
         "packet_size_bytes": int(gate.get("packet_size_bytes") or 0),
         "packet_size_slo_bytes": PACKET_SIZE_SLO_BYTES,
+        "pre_first_paint_session_open_count": int(gate.get("pre_first_paint_session_open_count") or 0),
+        "shell_session_open_count": int(gate.get("shell_session_open_count") or 0),
+        "active_session_probe_count": int(gate.get("active_session_probe_count") or 0),
+        "metadata_probe_violation_count": int(gate.get("metadata_probe_violation_count") or 0),
+        "cost_overview_autoload_violation_count": int(gate.get("cost_overview_autoload_violation_count") or 0),
+        "query_search_broad_autorun_count": int(gate.get("query_search_broad_autorun_count") or 0),
         "rows": gate.get("rows", []),
         "failures": gate.get("failures", []),
         "raw_sql_included": False,
@@ -242,6 +310,7 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "FIRST_PAINT_REQUIRED_TELEMETRY_FIELDS",
     "FIRST_PAINT_SLO_GATE_REL",
     "FIRST_PAINT_SLO_RESULTS_REL",
     "evaluate_first_paint_slo",

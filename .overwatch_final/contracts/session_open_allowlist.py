@@ -3,6 +3,25 @@
 from __future__ import annotations
 
 SESSION_OPEN_ALLOWLIST = (
+    {'boundary': 'setup_health',
+ 'budget': 'admin_setup',
+ 'call_type': 'get_session',
+ 'expected_runtime_context': 'admin_setup',
+ 'function': 'get_session',
+ 'module': '.overwatch_final/access_control.py',
+ 'owner': 'platform',
+ 'reason': 'explicit_connection_test',
+ 'review_note': 'Patchable lazy wrapper for the explicit Settings/Admin Setup Health connection test; no shell-time '
+                'session open is allowed.'},
+    {'boundary': 'setup_health',
+ 'budget': 'admin_setup',
+ 'call_type': 'get_session',
+ 'expected_runtime_context': 'admin_setup',
+ 'function': 'explicit_admin_connection_test',
+ 'module': '.overwatch_final/access_control.py',
+ 'owner': 'platform',
+ 'reason': 'explicit_connection_test',
+ 'review_note': 'Explicit admin/setup connection test only; never invoked by first paint or route actions.'},
     {'boundary': 'admin',
  'budget': 'advanced_diagnostics',
  'call_type': 'get_session',

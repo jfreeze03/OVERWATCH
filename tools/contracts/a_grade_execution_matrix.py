@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import hashlib
 import json
 from pathlib import Path
+import subprocess
 from typing import Any, Mapping
 
 
@@ -41,6 +43,120 @@ def _as_int(value: Any) -> int:
         return 0
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _proof_row_count(payload: Mapping[str, Any]) -> int:
+    count = 0
+    for key in ("rows", "checks", "results", "sections", "gates", "artifacts", "failures"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            count += len(value)
+        elif isinstance(value, Mapping):
+            count += len(value)
+    if count:
+        return count
+    proof_scalars = 0
+    ignored = {
+        "passed",
+        "failure_count",
+        "hard_gate_failure_count",
+        "failures",
+        "generated_at",
+        "raw_sql_included",
+        "source",
+        "producer",
+        "producer_signature",
+        "commit_sha",
+        "source_tree_sha",
+        "git_sha",
+    }
+    for key, value in payload.items():
+        if key in ignored:
+            continue
+        if isinstance(value, list):
+            proof_scalars += len(value)
+            continue
+        if isinstance(value, Mapping):
+            proof_scalars += len(value)
+            continue
+        if (
+            key.endswith("_count")
+            or key.endswith("_status")
+            or key.endswith("_passed")
+            or key.endswith("_signature")
+            or key in {"artifact", "proof_source", "workflow_run_url", "workflow_run_id"}
+        ):
+            proof_scalars += 1
+    return proof_scalars if proof_scalars >= 2 else 0
+
+
+def _git_commit(root: Path) -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return ""
+
+
+def _load_mapping(path: Path) -> Mapping[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if isinstance(payload, Mapping):
+        return payload
+    if isinstance(payload, list):
+        return {"rows": payload}
+    return {}
+
+
+def _commit_from_payload(payload: Mapping[str, Any]) -> str:
+    for key in ("commit_sha", "source_tree_sha", "git_sha"):
+        value = str(payload.get(key) or "")
+        if value:
+            return value
+    for key in ("rows", "checks", "results", "sections", "gates", "artifacts"):
+        value = payload.get(key)
+        rows = value.values() if isinstance(value, Mapping) else value if isinstance(value, list) else []
+        for row in rows:
+            if isinstance(row, Mapping) and str(row.get("commit_sha") or ""):
+                return str(row.get("commit_sha") or "")
+    return ""
+
+
+def _artifact_details(root: Path, rel: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    path = root / rel
+    exists = path.exists()
+    referenced_rel = str(payload.get("artifact") or payload.get("source_artifact") or "")
+    referenced_payload = _load_mapping(root / referenced_rel) if referenced_rel else {}
+    proof_row_count = max(_proof_row_count(payload), _proof_row_count(referenced_payload))
+    commit_sha = _commit_from_payload(payload) or _commit_from_payload(referenced_payload)
+    if not commit_sha and exists and str(payload.get("generated_at") or "") and str(payload.get("source") or payload.get("producer") or ""):
+        commit_sha = _git_commit(root)
+    return {
+        "artifact_path": rel,
+        "artifact_exists": exists,
+        "artifact_sha256": _sha256(path) if exists else "",
+        "artifact_commit_sha": commit_sha,
+        "producer": str(payload.get("producer") or payload.get("source") or ""),
+        "producer_signature": str(payload.get("producer_signature") or payload.get("proof_source") or payload.get("source") or ""),
+        "proof_row_count": proof_row_count,
+        "artifact_raw_sql_included": bool(payload.get("raw_sql_included") or referenced_payload.get("raw_sql_included")),
+    }
+
+
 def _gate_payload(root: Path, launch_artifacts: Mapping[str, Any], rel: str) -> Mapping[str, Any]:
     name = Path(rel).stem
     payload = launch_artifacts.get(name)
@@ -66,6 +182,14 @@ def _row(
     release_blocking: bool,
     passed: bool,
     failure_reason: str = "",
+    artifact_path: str = "",
+    artifact_exists: bool = False,
+    artifact_sha256: str = "",
+    artifact_commit_sha: str = "",
+    producer: str = "",
+    producer_signature: str = "",
+    proof_row_count: int = 0,
+    artifact_raw_sql_included: bool = False,
 ) -> dict[str, Any]:
     return {
         "workstream": workstream,
@@ -81,9 +205,16 @@ def _row(
         "owner": owner,
         "status": status,
         "release_blocking": release_blocking,
+        "artifact_path": artifact_path,
+        "artifact_exists": artifact_exists,
+        "artifact_sha256": artifact_sha256,
+        "artifact_commit_sha": artifact_commit_sha,
+        "producer": producer,
+        "producer_signature": producer_signature,
+        "proof_row_count": proof_row_count,
         "passed": passed,
         "failure_reason": failure_reason,
-        "raw_sql_included": False,
+        "raw_sql_included": artifact_raw_sql_included,
     }
 
 
@@ -203,15 +334,32 @@ def build_a_grade_execution_matrix(
             release_blocking,
         ) = spec
         gate = _gate_payload(root_path, artifacts, gate_rel)
+        artifact_details = _artifact_details(root_path, gate_rel, gate)
         if not release_blocking and gate:
             passed = bool(gate.get("ui_a_grade_ready", gate.get("passed")))
         else:
             passed = bool(gate.get("passed")) if gate else False
+        proof_reasons: list[str] = []
+        if not gate:
+            proof_reasons.append("required release gate missing")
+        if not artifact_details["artifact_exists"]:
+            proof_reasons.append("required release gate artifact missing")
+        if bool(artifact_details["artifact_raw_sql_included"]):
+            proof_reasons.append("release gate artifact includes raw SQL")
+        if release_blocking and not str(artifact_details["producer_signature"]):
+            proof_reasons.append("release gate artifact lacks producer signature")
+        if release_blocking and _as_int(artifact_details["proof_row_count"]) <= 0:
+            proof_reasons.append("release gate artifact lacks concrete proof rows")
+        if release_blocking and not str(artifact_details["artifact_commit_sha"]):
+            proof_reasons.append("release gate artifact lacks commit SHA")
+        proof_passed = not proof_reasons
+        if release_blocking:
+            passed = bool(passed and proof_passed)
         status = "passed" if passed else ("deferred" if not release_blocking else "failed")
         failure_reason = "" if passed else (
             "advisory A-grade row deferred with owner/rationale; production deployable is unaffected"
             if not release_blocking
-            else "required release gate missing or failed"
+            else "; ".join(proof_reasons or ["required release gate missing or failed"])
         )
         rows.append(
             _row(
@@ -230,6 +378,7 @@ def build_a_grade_execution_matrix(
                 release_blocking=release_blocking,
                 passed=passed or not release_blocking,
                 failure_reason=failure_reason,
+                **artifact_details,
             )
         )
 

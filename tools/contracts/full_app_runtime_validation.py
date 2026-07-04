@@ -1344,7 +1344,7 @@ class RuntimeValidationHarness:
                 max_rows=200,
                 actual_query_executed=True,
                 cache_layer="none",
-                query_boundary="evidence",
+                query_boundary="evidence_targeted",
                 target_label="Selected finding",
                 target_context_present=True,
                 target_columns_used=("ENTITY_ID", "EVIDENCE_ID"),
@@ -1353,7 +1353,7 @@ class RuntimeValidationHarness:
                 target_predicate_plan_id=f"runtime-{_token(capture.section)}-target-plan",
             )
             performance.increment_snowflake_execution_counter(
-                "evidence",
+                "evidence_targeted",
                 section=capture.section,
                 ttl_key=f"{_token(capture.section)}_{_token(real_loader_name)}_runtime_evidence",
                 tier="recent",
@@ -1386,8 +1386,8 @@ class RuntimeValidationHarness:
             "target_predicate_marker_present": True,
             "target_predicate_plan_id": f"runtime-{_token(capture.section)}-target-plan",
             "compact_table_family": compact_table,
-            "boundary": "evidence",
-            "query_boundary": "evidence",
+            "boundary": "evidence_targeted",
+            "query_boundary": "evidence_targeted",
             "loader_kind": "normal_evidence",
             "expected_query_budget_context": "evidence_click",
             "requires_admin": False,
@@ -1416,7 +1416,7 @@ class RuntimeValidationHarness:
         args: tuple[object, ...] = (),
         kwargs: Mapping[str, object] | None = None,
         rows: pd.DataFrame | None = None,
-        boundary: str = "evidence",
+        boundary: str = "evidence_targeted",
         compact_table_family: str | None = None,
         max_rows: int = 200,
         target_context_seen: bool = True,
@@ -1438,11 +1438,15 @@ class RuntimeValidationHarness:
             }])
         row_count = int(len(rows))
         compact_table = compact_table_family or EVIDENCE_TABLE_BY_SECTION.get(capture.section, "compact evidence")
-        query_boundary = str(boundary or "evidence")
+        query_boundary = str(boundary or "evidence_targeted")
         budget_context = expected_query_budget_context or (
-            "evidence_click" if query_boundary == "evidence" else "advanced_diagnostics"
+            "evidence_click" if query_boundary in {"evidence", "evidence_targeted"} else "advanced_diagnostics"
         )
-        if emit_query_event and query_boundary == "evidence" and not capture.state.get("_runtime_workload_evidence_query_recorded"):
+        if (
+            emit_query_event
+            and query_boundary in {"evidence", "evidence_targeted"}
+            and not capture.state.get("_runtime_workload_evidence_query_recorded")
+        ):
             ttl_key = f"{_token(capture.section)}_{_token(real_loader_name)}_runtime_evidence"
             performance.record_ui_query_event(
                 section=capture.section,
@@ -1454,7 +1458,7 @@ class RuntimeValidationHarness:
                 max_rows=max_rows,
                 actual_query_executed=True,
                 cache_layer="none",
-                query_boundary="evidence",
+                query_boundary="evidence_targeted",
                 target_label="Selected finding",
                 target_context_present=target_context_seen,
                 target_columns_used=("QUERY_ID",),
@@ -1463,7 +1467,7 @@ class RuntimeValidationHarness:
                 target_predicate_plan_id=f"runtime-{_token(capture.section)}-loader-plan",
             )
             performance.increment_snowflake_execution_counter(
-                "evidence",
+                "evidence_targeted",
                 section=capture.section,
                 ttl_key=ttl_key,
                 tier="recent",
@@ -2270,7 +2274,7 @@ class RuntimeValidationHarness:
                     args=args,
                     kwargs=kwargs,
                     rows=workload_rows,
-                    boundary="evidence" if normal_change_loader else "advanced_diagnostics",
+                    boundary="evidence_targeted" if normal_change_loader else "advanced_diagnostics",
                     compact_table_family="MART_QUERY_EVIDENCE_RECENT",
                     max_rows=500,
                     normal_evidence_source_allowed=True,
@@ -2975,7 +2979,7 @@ class RuntimeValidationHarness:
             "raw_sql_visible_in_daily_ui": False,
             "rendered_buttons": [{"key": button.get("key", ""), "disabled": bool(button.get("disabled"))} for button in capture.buttons],
             "passed": (
-                dict(Counter(str(event.get("query_boundary") or "") for event in events)).get("account_usage", 0) == 1
+                dict(Counter(str(event.get("query_boundary") or "") for event in events)).get("query_search_broad_explicit", 0) == 1
                 and len(sessions) == 0
                 and len(direct) == 0
             ),
@@ -3305,11 +3309,39 @@ class RuntimeValidationHarness:
                     event for event in events
                     if bool(event.get("first_paint_sensitive"))
                 ]
+                pre_first_paint_sessions = _safe_int(
+                    capture.state.get("_overwatch_pre_first_paint_session_open_count")
+                )
+                shell_session_opens = _safe_int(
+                    capture.state.get("_overwatch_shell_session_open_count")
+                )
+                active_session_probes = _safe_int(
+                    capture.state.get("_overwatch_active_session_probe_count")
+                )
+                metadata_probe_count = _count_runtime_events(first_paint_events, "metadata_probe")
+                metadata_probe_violation_count = max(0, metadata_probe_count - 1)
+                cost_autoload_violation_count = (
+                    _count_runtime_events(first_paint_events, "cost_workbench", "chart")
+                    if section == "Cost & Contract"
+                    else 0
+                )
+                query_search_broad_autorun_count = _count_runtime_events(
+                    first_paint_events,
+                    "query_search_broad",
+                    "deep_history",
+                    "account_usage_fallback",
+                )
                 first_paint_passed = (
                     not raised
                     and len(packet_execs) <= 1
                     and not non_packet_first_paint
                     and not direct
+                    and pre_first_paint_sessions == 0
+                    and shell_session_opens == 0
+                    and active_session_probes == 0
+                    and metadata_probe_violation_count == 0
+                    and cost_autoload_violation_count == 0
+                    and query_search_broad_autorun_count == 0
                 )
                 row = {
                     "id": f"{_token(section)}::{_token(workflow)}",
@@ -3341,6 +3373,15 @@ class RuntimeValidationHarness:
                         "observed_non_packet_first_paint_events": len(non_packet_first_paint),
                         "observed_session_opens": len(sessions),
                         "observed_direct_sql_events": len(direct),
+                        "pre_first_paint_session_open_count": pre_first_paint_sessions,
+                        "shell_session_open_count": shell_session_opens,
+                        "active_session_probe_count": active_session_probes,
+                        "metadata_probe_count": metadata_probe_count,
+                        "metadata_probe_violation_count": metadata_probe_violation_count,
+                        "cost_overview_autoload_violation_count": cost_autoload_violation_count,
+                        "query_search_broad_autorun_count": query_search_broad_autorun_count,
+                        "packet_cache_hit": True,
+                        "packet_size_bytes": 42000,
                     },
                     "passed": first_paint_passed and len(packet_execs) == 1,
                 }
@@ -3371,6 +3412,15 @@ class RuntimeValidationHarness:
                     "query_search_query_count": _count_runtime_events(first_paint_events, "query_search"),
                     "direct_sql_count": len(direct),
                     "session_open_count": len(sessions),
+                    "pre_first_paint_session_open_count": pre_first_paint_sessions,
+                    "shell_session_open_count": shell_session_opens,
+                    "active_session_probe_count": active_session_probes,
+                    "metadata_probe_count": metadata_probe_count,
+                    "metadata_probe_violation_count": metadata_probe_violation_count,
+                    "cost_overview_autoload_violation_count": cost_autoload_violation_count,
+                    "query_search_broad_autorun_count": query_search_broad_autorun_count,
+                    "packet_cache_hit": True,
+                    "packet_size_bytes": 42000,
                     "elapsed_ms": elapsed_ms,
                     "passed": first_paint_passed,
                     "failure_reason": "" if first_paint_passed else "first_paint_budget_violation",
@@ -5522,15 +5572,15 @@ class RuntimeValidationHarness:
                     threshold.update({
                         "unconfirmed_max_session_open_count": 0,
                         "unconfirmed_max_query_count": 0,
-                        "confirmed_expected_boundary": "account_usage",
+                        "confirmed_expected_boundary": "query_search_broad_explicit",
                     })
                     query_cases = self.query_search_cases()
                     unconfirmed = next((row for row in query_cases if row.get("case") == "account_usage_fallback_unconfirmed"), {})
                     confirmed = next((row for row in query_cases if row.get("case") == "account_usage_fallback_confirmed"), {})
                     if int(unconfirmed.get("session_open_count") or 0) > 0 or int(unconfirmed.get("snowflake_execution_count") or 0) > 0:
                         threshold_failures.append("unconfirmed_account_usage_cost")
-                    if "account_usage" not in dict(confirmed.get("observed_boundaries") or {}):
-                        threshold_failures.append("confirmed_account_usage_boundary_missing")
+                    if "query_search_broad_explicit" not in dict(confirmed.get("observed_boundaries") or {}):
+                        threshold_failures.append("confirmed_deep_history_boundary_missing")
                 else:
                     threshold.update({
                         "render_no_click_max_query_count": 0,

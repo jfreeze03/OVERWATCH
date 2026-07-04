@@ -897,7 +897,7 @@ def recompute_full_app_invariants(payloads: Mapping[str, Any], *, root: Path | N
     confirmed = query_cases.get("account_usage_fallback_confirmed", {})
     if confirmed:
         boundaries = _as_mapping(confirmed.get("observed_boundaries"))
-        if set(boundaries) - {"account_usage"}:
+        if set(boundaries) - {"query_search_broad_explicit"}:
             query_failures.append({"case": "account_usage_fallback_confirmed", "reason": "unexpected_boundary", "row": confirmed})
     for case in ("permission_denied", "slow_query_timeout"):
         row = query_cases.get(case, {})
@@ -1291,6 +1291,16 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
         **render_provenance_artifacts,
         **ui_kit_alignment_artifacts,
     }
+    optional_full_app_validation_entries = {
+        rel
+        for rel in (
+            "artifacts/full_app_validation/a_grade_execution_matrix_results.json",
+            "artifacts/full_app_validation/full_app_release_failures.json",
+            "artifacts/full_app_validation/full_app_release_sweep_results.json",
+            "artifacts/full_app_validation/post_deploy_smoke_results.json",
+        )
+        if (root_path / rel).exists()
+    }
     _ensure_manifest_entries(
         root_path,
         "artifacts/full_app_validation/artifact_manifest.json",
@@ -1348,6 +1358,7 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             reconciliation_rel,
             "artifacts/full_app_validation/gauntlet_results.json",
             "artifacts/full_app_validation/gauntlet_failures.json",
+            *optional_full_app_validation_entries,
             "artifacts/full_app_validation/summary_board_results.json",
             "artifacts/full_app_validation/summary_board_query_budget_results.json",
             "artifacts/full_app_validation/summary_board_error_inventory.json",

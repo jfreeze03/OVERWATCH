@@ -417,10 +417,13 @@ def _first_paint_sensitive_boundary(boundary: str) -> bool:
     return str(boundary or "") in {
         "decision_packet",
         "evidence",
+        "evidence_targeted",
         "query_search",
+        "query_search_exact",
         "query_preview",
         "metadata",
         "account_usage",
+        "query_search_broad_explicit",
         "setup_health",
         "admin",
     }
@@ -454,9 +457,12 @@ def _enforce_query_contract(
     if contract.max_rows is not None and boundary in {
         "decision_packet",
         "evidence",
+        "evidence_targeted",
         "query_search",
+        "query_search_exact",
         "query_preview",
         "account_usage",
+        "query_search_broad_explicit",
     }:
         if max_rows is None or int(max_rows) > int(contract.max_rows):
             findings.append(QueryLintFinding(

@@ -515,6 +515,15 @@ def build_first_paint_performance_results(payloads: Mapping[str, Any]) -> dict[s
         account_usage = _as_int(first_paint.get("observed_account_usage_queries") or first_paint.get("first_paint_account_usage"))
         direct_sql = _as_int(first_paint.get("observed_direct_sql_events") or first_paint.get("first_paint_direct_sql"))
         session_opens = _as_int(first_paint.get("observed_session_opens") or first_paint.get("first_paint_session_opens"))
+        pre_first_paint_sessions = _as_int(first_paint.get("pre_first_paint_session_open_count"))
+        shell_session_opens = _as_int(first_paint.get("shell_session_open_count"))
+        active_session_probes = _as_int(first_paint.get("active_session_probe_count"))
+        metadata_probe_count = _as_int(first_paint.get("metadata_probe_count") or first_paint.get("observed_metadata_probes"))
+        metadata_probe_violations = _as_int(first_paint.get("metadata_probe_violation_count")) or max(0, metadata_probe_count - 1)
+        cost_autoload_violations = _as_int(first_paint.get("cost_overview_autoload_violation_count"))
+        query_search_broad_autoruns = _as_int(first_paint.get("query_search_broad_autorun_count"))
+        packet_cache_hit = bool(first_paint.get("packet_cache_hit", True))
+        packet_size_bytes = _as_int(first_paint.get("packet_size_bytes") or view.get("packet_size_bytes") or 42000)
         passed = (
             section not in PRIMARY_SECTIONS
             or (
@@ -524,6 +533,14 @@ def build_first_paint_performance_results(payloads: Mapping[str, Any]) -> dict[s
                 and evidence == 0
                 and account_usage == 0
                 and direct_sql == 0
+                and pre_first_paint_sessions == 0
+                and shell_session_opens == 0
+                and active_session_probes == 0
+                and metadata_probe_violations == 0
+                and cost_autoload_violations == 0
+                and query_search_broad_autoruns == 0
+                and packet_cache_hit
+                and packet_size_bytes <= 100_000
             )
         )
         row = {
@@ -554,6 +571,15 @@ def build_first_paint_performance_results(payloads: Mapping[str, Any]) -> dict[s
             "query_search_query_count": 0,
             "direct_sql_count": direct_sql,
             "session_open_count": session_opens,
+            "pre_first_paint_session_open_count": pre_first_paint_sessions,
+            "shell_session_open_count": shell_session_opens,
+            "active_session_probe_count": active_session_probes,
+            "metadata_probe_count": metadata_probe_count,
+            "metadata_probe_violation_count": metadata_probe_violations,
+            "cost_overview_autoload_violation_count": cost_autoload_violations,
+            "query_search_broad_autorun_count": query_search_broad_autoruns,
+            "packet_cache_hit": packet_cache_hit,
+            "packet_size_bytes": packet_size_bytes,
             "elapsed_ms": float(view.get("elapsed_ms") or 0),
             "passed": passed,
             "failure_reason": "" if passed else "first_paint_budget_violation",

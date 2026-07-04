@@ -162,7 +162,7 @@ def load_query_text_preview(query_id: str):
         tier="recent",
         section="Query Search & History",
         max_rows=1,
-        query_boundary="query_preview",
+        query_boundary="query_search_exact",
     )
 
 
@@ -340,7 +340,7 @@ def render():
                         tier="historical",
                         section="Query Search & History",
                         max_rows=min(int(row_limit), 200),
-                        query_boundary="account_usage",
+                        query_boundary="query_search_broad_explicit",
                         target_label=query_target_label,
                         target_context_present=bool(proof_target),
                         target_columns_used=target_plan.columns_used,

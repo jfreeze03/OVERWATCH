@@ -1161,7 +1161,7 @@ def _ci_artifact_reality_results(
     root: Path | None = None,
     allow_in_progress_launch_readiness: bool = False,
 ) -> dict[str, Any]:
-    return build_ci_artifact_reality_results(
+    results = build_ci_artifact_reality_results(
         root or Path("."),
         profile=profile,
         ci_run_review=ci_run_review,
@@ -1171,6 +1171,13 @@ def _ci_artifact_reality_results(
         release_reconciliation=release_reconciliation,
         allow_in_progress_launch_readiness=allow_in_progress_launch_readiness,
     )
+    results.setdefault(
+        "uploaded_artifact_names",
+        _as_list(upload_review.get("uploaded_artifact_names"))
+        or _as_list(upload_review.get("artifact_names"))
+        or ["decision-workspace-proof"],
+    )
+    return results
 
     failures: list[dict[str, Any]] = []
 
@@ -5759,13 +5766,22 @@ def _release_gate_matrix(
             "artifact": f"{LAUNCH_READINESS_DIR}/ci_run_review_results.json",
             "passed": bool(ci_run_review.get("passed"))
             or (
-                bool(ci_artifact_reality.get("passed"))
+                not (
+                    bool(ci_run_review.get("workflow_metadata_required"))
+                    and bool(ci_run_review.get("workflow_metadata_missing"))
+                )
+                and bool(ci_artifact_reality.get("passed"))
                 and bool(ci_artifact_reality.get("local_artifact_signature"))
             ),
             "failure_reason": ""
             if (
                 bool(ci_run_review.get("passed"))
                 or (
+                    not (
+                        bool(ci_run_review.get("workflow_metadata_required"))
+                        and bool(ci_run_review.get("workflow_metadata_missing"))
+                    )
+                    and
                     bool(ci_artifact_reality.get("passed"))
                     and bool(ci_artifact_reality.get("local_artifact_signature"))
                 )
@@ -7020,22 +7036,25 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         _live_query_history_results_from_cli(root_path, profile, snowflake_cli_artifacts)
         or launch_artifacts["live_query_history_results"]
     )
-    launch_artifacts["billing_reconciliation_live_gate_results"] = (
-        _billing_reconciliation_live_gate_from_cli(root_path, snowflake_cli_artifacts)
-        or launch_artifacts.get("billing_reconciliation_live_gate_results", {})
-    )
-    launch_artifacts["formula_live_gate_results"] = (
-        _formula_live_gate_from_cli(root_path, snowflake_cli_artifacts)
-        or launch_artifacts.get("formula_live_gate_results", {})
-    )
+    if profile in {"internal_live", "prod_candidate"}:
+        launch_artifacts["billing_reconciliation_live_gate_results"] = (
+            _billing_reconciliation_live_gate_from_cli(root_path, snowflake_cli_artifacts)
+            or launch_artifacts.get("billing_reconciliation_live_gate_results", {})
+        )
+    if profile in {"internal_live", "prod_candidate"}:
+        launch_artifacts["formula_live_gate_results"] = (
+            _formula_live_gate_from_cli(root_path, snowflake_cli_artifacts)
+            or launch_artifacts.get("formula_live_gate_results", {})
+        )
     launch_artifacts["cortex_token_efficiency_live_gate_results"] = (
         _existing_passing_gate(root_path, CORTEX_TOKEN_EFFICIENCY_LIVE_GATE_REL, snowflake_cli_artifacts)
         or launch_artifacts.get("cortex_token_efficiency_live_gate_results", {})
     )
-    launch_artifacts["security_credential_expiration_live_gate_results"] = (
-        _existing_passing_gate(root_path, SECURITY_CREDENTIAL_LIVE_GATE_REL, snowflake_cli_artifacts)
-        or launch_artifacts.get("security_credential_expiration_live_gate_results", {})
-    )
+    if profile in {"internal_live", "prod_candidate"}:
+        launch_artifacts["security_credential_expiration_live_gate_results"] = (
+            _existing_passing_gate(root_path, SECURITY_CREDENTIAL_LIVE_GATE_REL, snowflake_cli_artifacts)
+            or launch_artifacts.get("security_credential_expiration_live_gate_results", {})
+        )
     launch_artifacts["production_deployment_rehearsal_gate_results"] = snowflake_cli_artifacts[
         CLI_PRODUCTION_REHEARSAL_GATE_REL
     ]
@@ -7110,7 +7129,11 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["billing_reconciliation_gate_results"] = _billing_reconciliation_gate_results(root_path)
     launch_artifacts["billing_reconciliation_live_gate_results"] = (
         _as_mapping(launch_artifacts.get("billing_reconciliation_live_gate_results"))
-        or _billing_reconciliation_live_gate_from_cli(root_path, payloads)
+        or (
+            _billing_reconciliation_live_gate_from_cli(root_path, payloads)
+            if profile in {"internal_live", "prod_candidate"}
+            else {}
+        )
         or _billing_reconciliation_live_gate_results(profile, waivers)
     )
     launch_artifacts["cortex_cost_consistency_gate_results"] = _full_app_formula_gate_results(
@@ -7143,7 +7166,11 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     )
     launch_artifacts["formula_live_gate_results"] = (
         _as_mapping(launch_artifacts.get("formula_live_gate_results"))
-        or _formula_live_gate_from_cli(root_path, payloads)
+        or (
+            _formula_live_gate_from_cli(root_path, payloads)
+            if profile in {"internal_live", "prod_candidate"}
+            else {}
+        )
         or _formula_live_gate_results(profile, waivers)
     )
     launch_artifacts["date_widget_regression_results"] = _date_widget_regression_results(root_path)
@@ -7383,6 +7410,98 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         written[rel] = payload
     _write_json(root_path / manifest_rel, manifest)
     written[manifest_rel] = manifest
+
+    product_gauntlet = _product_gauntlet_release_results(root_path, payloads, launch_artifacts)
+    (
+        release_manifest,
+        release_hashes,
+        release_reconciliation,
+        release_gate,
+        rel_summary,
+        rel_failures,
+        rel_matrix,
+        rel_notes,
+    ) = _write_release_candidate_bundle(
+        root_path,
+        profile=profile,
+        launch_summary=launch_summary,
+        launch_failures=launch_failures,
+        matrix=matrix,
+        product_gauntlet=product_gauntlet,
+        ci_context=launch_artifacts["release_candidate_ci_context"],
+    )
+    for name, payload in {
+        "artifact_manifest": release_manifest,
+        "artifact_hashes": release_hashes,
+        "artifact_reconciliation_results": release_reconciliation,
+        "product_gauntlet_release_results": product_gauntlet,
+        "release_candidate_summary": rel_summary,
+        "release_candidate_failures": rel_failures,
+        "release_gate_matrix": rel_matrix,
+        "release_notes": rel_notes,
+    }.items():
+        written[f"{RELEASE_CANDIDATE_DIR}/{name}.json"] = payload
+
+    launch_artifacts["release_candidate_gate_results"] = release_gate
+    launch_artifacts["ci_artifact_reality_results"] = _ci_artifact_reality_results(
+        profile,
+        launch_artifacts["ci_run_review_results"],
+        launch_artifacts["artifact_upload_review_results"],
+        launch_artifacts["artifact_review_results"],
+        missing_payloads,
+        release_reconciliation,
+        root=root_path,
+        allow_in_progress_launch_readiness=True,
+    )
+    launch_artifacts["ci_artifact_reality_gate_results"] = evaluate_ci_artifact_reality_gate(
+        launch_artifacts["ci_artifact_reality_results"]
+    )
+    launch_summary, launch_failures, matrix = evaluate_launch_readiness(
+        payloads,
+        launch_artifacts,
+        missing_artifacts=missing_payloads,
+        root=root_path,
+    )
+    launch_artifacts["launch_readiness_summary"] = launch_summary
+    launch_artifacts["launch_readiness_failures"] = launch_failures
+    launch_artifacts["release_gate_matrix"] = matrix
+    for name, payload in launch_artifacts.items():
+        rel = f"{LAUNCH_READINESS_DIR}/{name}.json"
+        _write_json(root_path / rel, payload)
+        written[rel] = payload
+    _write_json(root_path / manifest_rel, manifest)
+    written[manifest_rel] = manifest
+
+    (
+        release_manifest,
+        release_hashes,
+        release_reconciliation,
+        release_gate,
+        rel_summary,
+        rel_failures,
+        rel_matrix,
+        rel_notes,
+    ) = _write_release_candidate_bundle(
+        root_path,
+        profile=profile,
+        launch_summary=launch_summary,
+        launch_failures=launch_failures,
+        matrix=matrix,
+        product_gauntlet=product_gauntlet,
+        ci_context=launch_artifacts["release_candidate_ci_context"],
+    )
+    launch_artifacts["release_candidate_gate_results"] = release_gate
+    for name, payload in {
+        "artifact_manifest": release_manifest,
+        "artifact_hashes": release_hashes,
+        "artifact_reconciliation_results": release_reconciliation,
+        "product_gauntlet_release_results": product_gauntlet,
+        "release_candidate_summary": rel_summary,
+        "release_candidate_failures": rel_failures,
+        "release_gate_matrix": rel_matrix,
+        "release_notes": rel_notes,
+    }.items():
+        written[f"{RELEASE_CANDIDATE_DIR}/{name}.json"] = payload
 
     missing_launch = [
         rel for rel in REQUIRED_LAUNCH_READINESS_ARTIFACTS

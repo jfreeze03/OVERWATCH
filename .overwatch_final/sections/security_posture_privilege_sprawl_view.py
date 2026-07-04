@@ -143,7 +143,7 @@ def load_privileged_grant_readiness(company: str, environment: str, grant_days: 
         tier="standard",
         section="Security Posture",
         max_rows=500,
-        query_boundary="evidence",
+        query_boundary="evidence_targeted",
     )
     return (
         _annotate_security_privileged_grant_readiness(grant_rows),

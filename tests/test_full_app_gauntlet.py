@@ -856,7 +856,7 @@ class FullAppGauntletTests(unittest.TestCase):
             "proof_source": "runtime_click" if case not in zero_cost_cases else "runtime_render",
             "control_key_clicked": "" if case in zero_cost_cases else "qs_run",
             "observed_contexts": [] if case in zero_cost_cases else ["query_search_exact"],
-            "observed_boundaries": {"account_usage": 1} if case == "account_usage_fallback_confirmed" else {"query_search": 1},
+            "observed_boundaries": {"query_search_broad_explicit": 1} if case == "account_usage_fallback_confirmed" else {"query_search": 1},
             "max_rows": max_rows_by_case.get(case, 200 if case == "text_contains_explicit_search" else 0),
             "session_open_count": 0,
             "direct_sql_event_count": 0,

@@ -228,21 +228,22 @@ for _ttl_pattern, _section, _markers, _table_family in (
         "MART_SECURITY_EVIDENCE_RECENT",
     ),
 ):
-    register_query_contract(
-        QueryContract(
-            boundary="evidence",
-            contract_id=f"{_section.lower().replace(' ', '_').replace('&', 'and')}_targeted_evidence",
-            section=_section,
-            ttl_key_pattern=_ttl_pattern,
-            tier="",
-            max_rows=500,
-            requires_target_predicate=True,
-            target_predicate_marker_required=True,
-            target_predicate_markers=_markers,
-            requires_target_plan_metadata=True,
-            expected_table_family=_table_family,
+    for _boundary in ("evidence", "evidence_targeted"):
+        register_query_contract(
+            QueryContract(
+                boundary=_boundary,
+                contract_id=f"{_section.lower().replace(' ', '_').replace('&', 'and')}_targeted_evidence",
+                section=_section,
+                ttl_key_pattern=_ttl_pattern,
+                tier="",
+                max_rows=500,
+                requires_target_predicate=True,
+                target_predicate_marker_required=True,
+                target_predicate_markers=_markers,
+                requires_target_plan_metadata=True,
+                expected_table_family=_table_family,
+            )
         )
-    )
 register_query_contract(
     QueryContract(
         boundary="query_search",
@@ -295,15 +296,24 @@ register_query_contract(
 )
 register_query_contract(
     QueryContract(
-        boundary="account_usage",
+        boundary="query_search_exact",
+        contract_id="query_preview_text",
+        ttl_key_pattern=r"^query_text_preview_",
+        tier="recent",
+        max_rows=1,
+        expected_table_family="FACT_QUERY_DETAIL_RECENT",
+    )
+)
+for _fallback_boundary in ("account_usage", "query_search_broad_explicit"):
+    register_query_contract(QueryContract(
+        boundary=_fallback_boundary,
         contract_id="account_usage_confirmed_fallback",
         tier="historical",
         max_rows=200,
         allow_account_usage=True,
         allow_metadata=True,
         first_paint_allowed=False,
-    )
-)
+    ))
 register_query_contract(QueryContract(boundary="metadata", contract_id="metadata_probe", tier="metadata", allow_metadata=True))
 register_query_contract(QueryContract(boundary="setup_health", contract_id="setup_health_admin", tier="metadata", allow_metadata=True))
 register_query_contract(QueryContract(boundary="other", contract_id="other_bounded", tier="standard", max_rows=5000))

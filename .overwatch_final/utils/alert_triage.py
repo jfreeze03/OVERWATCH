@@ -611,7 +611,7 @@ def load_alert_history(
         tier="recent",
         section=section,
         max_rows=limit,
-        query_boundary="evidence",
+        query_boundary="evidence_targeted",
         target_label=target_label,
         target_context_present=bool(target),
         target_columns_used=target_plan.columns_used,

@@ -479,8 +479,8 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn('tier="recent"', source)
         self.assertIn('tier="historical"', source)
         self.assertIn('query_boundary="query_search"', source)
-        self.assertIn('query_boundary="query_preview"', source)
-        self.assertIn('query_boundary="account_usage"', source)
+        self.assertIn('query_boundary="query_search_exact"', source)
+        self.assertIn('query_boundary="query_search_broad_explicit"', source)
         self.assertIn('"query_search_exact"', source)
         self.assertIn("query_budget_context(context_name", source)
         self.assertIn('query_budget_context("account_usage_fallback"', source)
@@ -1266,7 +1266,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             if contract.account_usage_allowed:
                 self.assertEqual(contract.action_type, "account_usage_fallback", contract)
                 self.assertTrue(contract.requires_admin, contract)
-                self.assertEqual(contract.expected_query_boundary, "account_usage", contract)
+                self.assertEqual(contract.expected_query_boundary, "query_search_broad_explicit", contract)
                 self.assertEqual(contract.expected_query_count, 1, contract)
             if contract.action_type == "route" and not contract.skip_reason:
                 self.assertEqual(contract.expected_query_count, 0, contract)
@@ -1277,10 +1277,10 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 self.assertEqual(contract.expected_direct_sql_count, 0, contract)
                 self.assertEqual(contract.expected_metadata_probe_count, 0, contract)
             if contract.action_type == "evidence_load":
-                self.assertEqual(contract.expected_query_boundary, "evidence", contract)
+                self.assertEqual(contract.expected_query_boundary, "evidence_targeted", contract)
                 self.assertEqual(contract.expected_query_budget_context, "evidence_click", contract)
                 self.assertEqual(contract.expected_budget, 1, contract)
-                self.assertEqual(contract.expected_actual_boundaries, {"evidence": 1}, contract)
+                self.assertEqual(contract.expected_actual_boundaries, {"evidence_targeted": 1}, contract)
                 self.assertLessEqual(contract.expected_max_rows or 0, 500, contract)
             if contract.action_type == "refresh_packet":
                 self.assertEqual(contract.expected_query_budget_context, "refresh_packet", contract)
@@ -1290,7 +1290,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 self.assertEqual(contract.expected_metadata_probe_count, 0, contract)
             if contract.action_type == "account_usage_fallback":
                 self.assertEqual(contract.expected_query_budget_context, "account_usage_fallback", contract)
-                self.assertEqual(contract.expected_actual_boundaries, {"account_usage": 1}, contract)
+                self.assertEqual(contract.expected_actual_boundaries, {"query_search_broad_explicit": 1}, contract)
         self.assertNotEqual("route_action", "evidence_click")
         self.assertNotEqual("query_search_exact", "query_preview")
 
@@ -1307,13 +1307,13 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 section="Alert Center",
                 action_type="evidence_load",
                 expected_query_budget_context="evidence_click",
-                expected_actual_boundaries={"evidence": 1},
+                expected_actual_boundaries={"evidence_targeted": 1},
             ),
             ButtonActionContract(
                 section="Workload Operations",
                 action_type="advanced_load",
                 expected_query_budget_context="query_preview",
-                expected_actual_boundaries={"query_preview": 1},
+                expected_actual_boundaries={"query_search_exact": 1},
             ),
         )
         for contract in cases:
@@ -1864,7 +1864,7 @@ def emit_session():
                 else:
                     def _fake_load_center_data(*_args, **_kwargs):
                         performance.increment_snowflake_execution_counter(
-                            "evidence",
+                            "evidence_targeted",
                             section="Alert Center",
                             ttl_key="alert_center_targeted_loader",
                             tier="recent",
@@ -1879,7 +1879,7 @@ def emit_session():
                             max_rows=200,
                             actual_query_executed=True,
                             cache_layer="none",
-                            query_boundary="evidence",
+                            query_boundary="evidence_targeted",
                             target_label="Selected finding",
                             target_context_present=True,
                             target_columns_used=("EVENT_ID", "ALERT_KEY"),
@@ -2023,7 +2023,7 @@ def emit_session():
             max_rows=200,
             actual_query_executed=True,
             cache_layer="none",
-            query_boundary="evidence",
+            query_boundary="evidence_targeted",
             target_label="Selected finding" if target else "",
             target_context_present=bool(target),
             target_columns_used=("ENTITY_ID", "EVIDENCE_ID") if target else (),
@@ -2033,7 +2033,7 @@ def emit_session():
             first_paint_sensitive=False,
         )
         performance.increment_snowflake_execution_counter(
-            "evidence",
+            "evidence_targeted",
             section=section_name,
             ttl_key=f"{section_name.lower().replace(' ', '_').replace('&', 'and')}_deterministic_evidence_loader",
             tier="recent",
@@ -2234,7 +2234,7 @@ def emit_session():
                 ]
                 self.assertEqual(len(render_ids), 1, (section_name, workflow, performance.get_ui_query_events()))
                 render_id = str(render_ids[0])
-                for boundary in ("evidence", "metadata", "account_usage"):
+                for boundary in ("evidence", "evidence_targeted", "metadata", "account_usage", "query_search_broad_explicit"):
                     self.assertEqual(
                         self._count_events(
                             performance.get_ui_query_events(),
@@ -2497,11 +2497,11 @@ def emit_session():
                         self.assertEqual(budget_metadata_probes, int(expected_metadata_probe_count), (button, budget_contexts))
                     evidence_events = [
                         event for event in after_events[before_events:]
-                        if event.get("query_boundary") == "evidence"
+                        if event.get("query_boundary") in {"evidence", "evidence_targeted"}
                     ]
                     account_usage_events = [
                         event for event in after_events[before_events:]
-                        if event.get("query_boundary") == "account_usage"
+                        if event.get("query_boundary") in {"account_usage", "query_search_broad_explicit"}
                     ]
                     actual_execs = after_execs[before_execs:]
                     artifact_result: dict[str, object] = {}
@@ -2539,7 +2539,7 @@ def emit_session():
                                 pass
                             evidence_events = [
                                 event for event in performance.get_ui_query_events()[before_events:]
-                                if event.get("query_boundary") == "evidence"
+                                if event.get("query_boundary") in {"evidence", "evidence_targeted"}
                             ]
                         self.assertEqual(len(evidence_events), 1, button)
                         self.assertLessEqual(int(evidence_events[0].get("max_rows") or 0), 500, button)
@@ -2660,9 +2660,13 @@ def emit_session():
                     "cold_packet_queries": len(cold_execs),
                     "warm_packet_queries": len(warm_execs),
                     "evidence_queries_first_paint": self._count_events(events, render_id=cold_render_id, boundary="evidence", actual=True)
-                    + self._count_events(events, render_id=warm_render_id, boundary="evidence", actual=True),
+                    + self._count_events(events, render_id=cold_render_id, boundary="evidence_targeted", actual=True)
+                    + self._count_events(events, render_id=warm_render_id, boundary="evidence", actual=True)
+                    + self._count_events(events, render_id=warm_render_id, boundary="evidence_targeted", actual=True),
                     "account_usage_queries_first_paint": self._count_events(events, render_id=cold_render_id, boundary="account_usage", actual=True)
-                    + self._count_events(events, render_id=warm_render_id, boundary="account_usage", actual=True),
+                    + self._count_events(events, render_id=cold_render_id, boundary="query_search_broad_explicit", actual=True)
+                    + self._count_events(events, render_id=warm_render_id, boundary="account_usage", actual=True)
+                    + self._count_events(events, render_id=warm_render_id, boundary="query_search_broad_explicit", actual=True),
                     "metadata_queries_first_paint": self._count_events(events, render_id=cold_render_id, boundary="metadata", actual=True)
                     + self._count_events(events, render_id=warm_render_id, boundary="metadata", actual=True),
                     "route_action_queries_before_evidence": sum(
@@ -2820,7 +2824,7 @@ def emit_session():
             def _fake_run_query(sql, *args, **kwargs):
                 del args
                 boundary = str(kwargs.get("query_boundary") or "other")
-                tier = str(kwargs.get("tier") or ("historical" if boundary == "account_usage" else "recent"))
+                tier = str(kwargs.get("tier") or ("historical" if boundary in {"account_usage", "query_search_broad_explicit"} else "recent"))
                 ttl_key = str(kwargs.get("ttl_key") or "")
                 max_rows = kwargs.get("max_rows")
                 captured_queries.append({
@@ -2828,14 +2832,14 @@ def emit_session():
                     "boundary": boundary,
                     "max_rows": max_rows,
                     "ttl_key": ttl_key,
-                    "projects_query_text": "QUERY_TEXT" in str(sql).upper() and boundary != "query_preview",
+                    "projects_query_text": "QUERY_TEXT" in str(sql).upper() and boundary != "query_search_exact",
                 })
-                if boundary == "account_usage":
+                if boundary in {"account_usage", "query_search_broad_explicit"}:
                     performance.record_snowflake_session_open_event(
                         section="Query Search & History",
                         workflow=case,
                         reason="confirmed_account_usage_fallback",
-                        query_boundary="account_usage",
+                        query_boundary=boundary,
                     )
                 performance.record_ui_query_event(
                     section="Query Search & History",
@@ -2861,7 +2865,7 @@ def emit_session():
                     ttl_key=ttl_key,
                     tier=tier,
                 )
-                if boundary == "query_preview":
+                if boundary == "query_search_exact":
                     return pd.DataFrame([{"QUERY_ID": "01a1234567890123456", "query_text_preview": "SELECT 1"}])
                 return pd.DataFrame([
                     {
@@ -3063,12 +3067,12 @@ def emit_session():
                 {
                     "case": "sql_preview",
                     "proof_source": "deterministic_ui_click",
-                    "boundary": "query_preview",
+                    "boundary": "query_search_exact",
                     "budget_context": "query_preview",
                     "observed_contexts_source": "performance_runtime_events",
                     **preview_observed,
                     "contract_id": resolve_query_contract(
-                        boundary="query_preview",
+                        boundary="query_search_exact",
                         section="Query Search & History",
                         ttl_key="query_text_preview_01a",
                         tier="recent",
@@ -3080,7 +3084,7 @@ def emit_session():
                 {
                     "case": "account_usage_fallback",
                     "proof_source": "deterministic_ui_click",
-                    "boundary": "account_usage",
+                    "boundary": "query_search_broad_explicit",
                     "budget_context": "account_usage_fallback",
                     "observed_contexts_source": "query_search.render",
                     "observed_contexts": fallback_confirmed_observed["observed_contexts"],
@@ -3147,10 +3151,13 @@ def emit_session():
             kind = str(event.get("direct_sql_kind") or "direct_sql")
             direct_sql_events_by_kind[kind] = direct_sql_events_by_kind.get(kind, 0) + 1
         account_usage_metadata_probe_count = direct_sql_events_by_kind.get("account_usage_metadata_probe", 0)
-        account_usage_history_query_count = query_events_by_boundary.get("account_usage", 0)
+        account_usage_history_query_count = (
+            query_events_by_boundary.get("account_usage", 0)
+            + query_events_by_boundary.get("query_search_broad_explicit", 0)
+        )
         targeted_evidence_events = [
             event for event in telemetry
-            if event.get("query_boundary") == "evidence"
+            if event.get("query_boundary") in {"evidence", "evidence_targeted"}
             and (
                 event.get("target_context_present") is True
                 or str(event.get("target_label") or "").strip()
@@ -3198,7 +3205,7 @@ def emit_session():
             "query_events_by_boundary": query_events_by_boundary,
             "route_action_queries": sum(int(row["route_action_queries_before_evidence"]) for row in rows),
             "evidence_click_queries": sum(int(row["evidence_queries_after_click"]) for row in rows),
-            "account_usage_fallback_queries": query_events_by_boundary.get("account_usage", 0),
+            "account_usage_fallback_queries": account_usage_history_query_count,
             "account_usage_metadata_probe_count": account_usage_metadata_probe_count,
             "account_usage_history_query_count": account_usage_history_query_count,
             "total_account_usage_fallback_executions": (
@@ -3215,7 +3222,9 @@ def emit_session():
             "snowflake_executions_by_boundary": {
                 "decision_packet": sum(int(row["cold_packet_queries"]) for row in rows),
                 "evidence": query_events_by_boundary.get("evidence", 0),
+                "evidence_targeted": query_events_by_boundary.get("evidence_targeted", 0),
                 "account_usage": query_events_by_boundary.get("account_usage", 0),
+                "query_search_broad_explicit": query_events_by_boundary.get("query_search_broad_explicit", 0),
             },
             "rows_by_boundary": rows_by_boundary,
             "elapsed_ms_by_boundary": elapsed_by_boundary,
@@ -3495,10 +3504,10 @@ def emit_session():
         self.assertEqual(proof_cases["related_executions"]["observed_contexts_source"], "query_search.render")
         self.assertTrue(proof_cases["related_executions"]["observed_event_ids"])
         self.assertEqual(proof_cases["related_executions"]["observed_contexts"], ["query_search_related"])
-        self.assertEqual(proof_cases["sql_preview"]["boundary"], "query_preview")
+        self.assertEqual(proof_cases["sql_preview"]["boundary"], "query_search_exact")
         self.assertEqual(proof_cases["sql_preview"]["observed_contexts_source"], "query_search.render")
         self.assertTrue(proof_cases["sql_preview"]["observed_event_ids"])
-        self.assertEqual(proof_cases["sql_preview"]["observed_boundaries"], {"query_preview": 1})
+        self.assertEqual(proof_cases["sql_preview"]["observed_boundaries"], {"query_search_exact": 1})
         self.assertFalse(proof_cases["sql_preview"]["daily_raw_sql_visible"])
         self.assertFalse(proof_cases["sql_preview"]["default_export_includes_query_text"])
         self.assertEqual(proof_cases["account_usage_fallback"]["observed_contexts_source"], "query_search.render")

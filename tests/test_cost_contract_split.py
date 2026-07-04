@@ -8,6 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
+import theme as theme_module  # noqa: E402
+
 
 class CostContractSplitTests(unittest.TestCase):
     def test_cost_contract_reexports_moved_contracts(self):
@@ -85,7 +87,7 @@ class CostContractSplitTests(unittest.TestCase):
         hierarchy_text = (APP_ROOT / "sections" / "cost_contract_hierarchy.py").read_text(encoding="utf-8")
         cost_center_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8")
         explorer_text = (APP_ROOT / "sections" / "cost_center_explorer_view.py").read_text(encoding="utf-8")
-        theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
+        theme_text = theme_module._combined_theme_css("carbon")
 
         self.assertNotIn('render_workflow_selector(\n        "Cost workflow"', cost_contract_text)
         self.assertNotIn("st.columns([0.24, 0.76]", cost_contract_text)

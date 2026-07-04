@@ -105,7 +105,7 @@ def _function_probe_rows(root: Path) -> list[dict[str, Any]]:
     import access_control  # noqa: PLC0415
     from runtime_state import ADMIN_CONNECTION_TEST_COUNT  # noqa: PLC0415
 
-    snapshot = dict(st.session_state)
+    snapshot = {str(key): value for key, value in dict(st.session_state).items()}
     rows: list[dict[str, Any]] = []
 
     def row(name: str, passed: bool, reason: str = "", **extra: Any) -> None:

@@ -157,8 +157,14 @@ def _commit_from_payload(payload: Mapping[str, Any]) -> str:
         if value:
             return value
     for key in ("rows", "checks", "results", "sections", "gates", "artifacts"):
-        value = payload.get(key)
-        rows = value.values() if isinstance(value, Mapping) else value if isinstance(value, list) else []
+        nested_value = payload.get(key)
+        rows = (
+            nested_value.values()
+            if isinstance(nested_value, Mapping)
+            else nested_value
+            if isinstance(nested_value, list)
+            else []
+        )
         for row in rows:
             if isinstance(row, Mapping) and str(row.get("commit_sha") or ""):
                 return str(row.get("commit_sha") or "")

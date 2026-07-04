@@ -175,14 +175,14 @@ def evaluate_first_paint_slo(
             (),
         ),
     ):
-        failures, summary = verify_supporting_artifact(
+        artifact_failures, summary = verify_supporting_artifact(
             label,
             payload,
             expected_commit_sha=commit_sha,
             zero_counter_keys=counters,
         )
         support_checks[label] = summary
-        supporting_failures.extend(failures)
+        supporting_failures.extend(artifact_failures)
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = [*supporting_failures]
     seen_sections: set[str] = set()

@@ -137,6 +137,7 @@ def _build_rows(root: Path) -> list[dict[str, Any]]:
             reasons.append("default row limit exceeds max row limit")
         if TARGET_PREDICATE_MARKER not in str(metadata.get("sql_fragment") or ""):
             reasons.append("SQL predicate marker absent from generated fragment")
+        matched_columns = metadata.get("matched_columns")
         rows.append(
             {
                 "id": f"target_pushdown::{spec['case']}",
@@ -156,7 +157,7 @@ def _build_rows(root: Path) -> list[dict[str, Any]]:
                 "target_predicate_marker_required": metadata.get("target_predicate_marker_required"),
                 "target_predicate_marker_present": metadata.get("target_predicate_marker_present"),
                 "target_columns_present": metadata.get("target_columns_present"),
-                "matched_columns": list(metadata.get("matched_columns") or ()),
+                "matched_columns": list(matched_columns) if isinstance(matched_columns, (list, tuple)) else [],
                 "match_mode": metadata.get("match_mode"),
                 "default_row_limit": metadata.get("default_row_limit"),
                 "max_rows": metadata.get("max_rows"),

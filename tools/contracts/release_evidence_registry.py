@@ -309,7 +309,8 @@ def build_release_evidence_registry_results(root: Path | str = ".") -> dict[str,
 
 
 def build_release_evidence_registry_gate(results: Mapping[str, Any]) -> dict[str, Any]:
-    rows = results.get("rows") if isinstance(results.get("rows"), list) else []
+    rows_payload = results.get("rows")
+    rows = rows_payload if isinstance(rows_payload, list) else []
     proof_rows = [dict(row) for row in rows if isinstance(row, Mapping)]
     failures = [row for row in proof_rows if not bool(row.get("passed"))]
     signature = _producer_signature()

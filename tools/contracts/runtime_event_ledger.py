@@ -176,9 +176,9 @@ def _first_paint_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
             by_section[section] = row
     events: list[dict[str, Any]] = []
     for section in PRIMARY_SECTIONS:
-        row = by_section.get(section)
+        first_paint_row: Mapping[str, Any] = by_section.get(section) or {}
         row_id = f"first_paint::{section.lower().replace(' ', '_')}"
-        if not row:
+        if not first_paint_row:
             events.append(
                 _event_row(
                     row_id=row_id,
@@ -192,48 +192,48 @@ def _first_paint_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
             )
             continue
         reasons: list[str] = []
-        if str(row.get("commit_sha") or "") != commit_sha:
+        if str(first_paint_row.get("commit_sha") or "") != commit_sha:
             reasons.append("first-paint row commit_sha mismatch")
-        if _as_int(row.get("cold_first_paint_packet_query_count")) > 1:
+        if _as_int(first_paint_row.get("cold_first_paint_packet_query_count")) > 1:
             reasons.append("cold first paint exceeded one packet query")
-        if _as_int(row.get("warm_first_paint_query_count")) > 0:
+        if _as_int(first_paint_row.get("warm_first_paint_query_count")) > 0:
             reasons.append("warm first paint executed a query")
         blocked_counts = {
-            "evidence_query_count": row.get("evidence_query_count"),
-            "account_usage_count": row.get("account_usage_count"),
-            "detail_query_count": row.get("detail_query_count"),
-            "cost_workbench_query_count": row.get("cost_workbench_query_count"),
-            "query_search_query_count": row.get("query_search_query_count"),
-            "direct_sql_count": row.get("direct_sql_count"),
-            "non_packet_first_paint_event_count": row.get("non_packet_first_paint_event_count"),
-            "pre_first_paint_session_open_count": row.get("pre_first_paint_session_open_count"),
-            "shell_session_open_count": row.get("shell_session_open_count"),
-            "active_session_probe_count": row.get("active_session_probe_count"),
+            "evidence_query_count": first_paint_row.get("evidence_query_count"),
+            "account_usage_count": first_paint_row.get("account_usage_count"),
+            "detail_query_count": first_paint_row.get("detail_query_count"),
+            "cost_workbench_query_count": first_paint_row.get("cost_workbench_query_count"),
+            "query_search_query_count": first_paint_row.get("query_search_query_count"),
+            "direct_sql_count": first_paint_row.get("direct_sql_count"),
+            "non_packet_first_paint_event_count": first_paint_row.get("non_packet_first_paint_event_count"),
+            "pre_first_paint_session_open_count": first_paint_row.get("pre_first_paint_session_open_count"),
+            "shell_session_open_count": first_paint_row.get("shell_session_open_count"),
+            "active_session_probe_count": first_paint_row.get("active_session_probe_count"),
         }
         for key, value in blocked_counts.items():
             if _as_int(value) > 0:
                 reasons.append(f"{key}={_as_int(value)}")
-        if not _source_passed(row):
-            reasons.append(str(row.get("failure_reason") or "source row failed"))
+        if not _source_passed(first_paint_row):
+            reasons.append(str(first_paint_row.get("failure_reason") or "source row failed"))
         events.append(
             _event_row(
                 row_id=row_id,
                 commit_sha=commit_sha,
                 event_type="first_paint",
                 section=section,
-                workflow=str(row.get("workflow") or "Overview"),
-                query_boundary=str(row.get("query_boundary") or row.get("execution_boundary") or ""),
+                workflow=str(first_paint_row.get("workflow") or "Overview"),
+                query_boundary=str(first_paint_row.get("query_boundary") or first_paint_row.get("execution_boundary") or ""),
                 before_first_paint=True,
-                source_module=str(row.get("producer") or ""),
-                session_open_count_delta=_as_int(row.get("session_open_count")),
-                active_session_probe_count_delta=_as_int(row.get("active_session_probe_count")),
-                account_usage_marker_present=_as_int(row.get("account_usage_count")) > 0,
-                evidence_loader_marker_present=_as_int(row.get("evidence_query_count")) > 0,
-                cost_evidence_marker_present=_as_int(row.get("cost_workbench_query_count")) > 0
-                or _as_int(row.get("cost_overview_autoload_violation_count")) > 0,
-                query_search_broad_marker_present=_as_int(row.get("query_search_broad_autorun_count")) > 0,
-                setup_live_validation_marker_present=_as_int(row.get("admin_connection_test_count")) > 0
-                or _as_int(row.get("explicit_connection_test_count")) > 0,
+                source_module=str(first_paint_row.get("producer") or ""),
+                session_open_count_delta=_as_int(first_paint_row.get("session_open_count")),
+                active_session_probe_count_delta=_as_int(first_paint_row.get("active_session_probe_count")),
+                account_usage_marker_present=_as_int(first_paint_row.get("account_usage_count")) > 0,
+                evidence_loader_marker_present=_as_int(first_paint_row.get("evidence_query_count")) > 0,
+                cost_evidence_marker_present=_as_int(first_paint_row.get("cost_workbench_query_count")) > 0
+                or _as_int(first_paint_row.get("cost_overview_autoload_violation_count")) > 0,
+                query_search_broad_marker_present=_as_int(first_paint_row.get("query_search_broad_autorun_count")) > 0,
+                setup_live_validation_marker_present=_as_int(first_paint_row.get("admin_connection_test_count")) > 0
+                or _as_int(first_paint_row.get("explicit_connection_test_count")) > 0,
                 passed=not reasons,
                 failure_reason="; ".join(reasons),
             )

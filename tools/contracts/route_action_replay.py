@@ -254,13 +254,13 @@ def _action_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]:
             )
         )
     for index, row in enumerate(evidence_rows):
-        reasons: list[str] = []
+        explicit_reasons: list[str] = []
         if str(row.get("commit_sha") or "") != commit_sha:
-            reasons.append("commit_sha mismatch")
+            explicit_reasons.append("commit_sha mismatch")
         if _as_int(row.get("account_usage_count")) > 0 and str(row.get("action_area")) != "live_feature":
-            reasons.append("normal explicit action used Account Usage")
+            explicit_reasons.append("normal explicit action used Account Usage")
         if not bool(row.get("passed", True)):
-            reasons.append(str(row.get("failure_reason") or "source row failed"))
+            explicit_reasons.append(str(row.get("failure_reason") or "source row failed"))
         scenarios.append(
             _scenario(
                 row_id=f"explicit_action::{_action_id(row, index)}",
@@ -276,8 +276,8 @@ def _action_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]:
                 direct_sql_count=_as_int(row.get("direct_sql_count")),
                 account_usage_count=_as_int(row.get("account_usage_count")),
                 explicit_click_required=True,
-                passed=not reasons,
-                failure_reason="; ".join(reasons),
+                passed=not explicit_reasons,
+                failure_reason="; ".join(explicit_reasons),
             )
         )
     return scenarios

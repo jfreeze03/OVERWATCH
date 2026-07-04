@@ -27,6 +27,10 @@ from tools.contracts.artifact_verifier import (
     ARTIFACT_INTEGRITY_GATE_REL,
     write_artifact_integrity_artifacts,
 )
+from tools.contracts.export_case_parity import EXPORT_CASE_PARITY_GATE_REL
+from tools.contracts.release_evidence_registry import RELEASE_EVIDENCE_REGISTRY_GATE_REL
+from tools.contracts.route_action_replay import ROUTE_ACTION_REPLAY_GATE_REL
+from tools.contracts.runtime_event_ledger import RUNTIME_EVENT_LEDGER_GATE_REL
 from tools.contracts.ci_artifact_reality import (
     CI_ARTIFACT_REALITY_GATE_REL,
     CI_ARTIFACT_REALITY_RESULTS_REL,
@@ -39,6 +43,7 @@ from tools.contracts.full_app_release_sweep import (
 )
 from tools.contracts.import_laziness import IMPORT_LAZINESS_GATE_REL, write_import_laziness_artifacts
 from tools.contracts.post_deploy_smoke import POST_DEPLOY_SMOKE_GATE_REL, write_post_deploy_smoke_artifacts
+from tools.contracts.plan_adherence_report import PLAN_ADHERENCE_REPORT_REL, write_plan_adherence_report
 from tools.contracts.production_deployment_manifest import (
     PRODUCTION_DEPLOYMENT_MANIFEST_GATE_REL,
     write_production_deployment_manifest_artifacts,
@@ -515,6 +520,14 @@ def _final_release_candidate_summary(root: Path, results: Mapping[str, Any]) -> 
     launch_summary = dict(_load_json(root, "artifacts/launch_readiness/launch_readiness_summary.json"))
     ci_gate = _load_json(root, CI_ARTIFACT_REALITY_GATE_REL)
     artifact_integrity_gate = _load_json(root, ARTIFACT_INTEGRITY_GATE_REL)
+    release_registry_gate = _load_json(root, RELEASE_EVIDENCE_REGISTRY_GATE_REL)
+    runtime_event_gate = _load_json(root, RUNTIME_EVENT_LEDGER_GATE_REL)
+    route_replay_gate = _load_json(root, ROUTE_ACTION_REPLAY_GATE_REL)
+    export_case_parity_gate = _load_json(root, EXPORT_CASE_PARITY_GATE_REL)
+    first_paint_slo_gate = _load_json(root, "artifacts/launch_readiness/first_paint_slo_gate_results.json")
+    action_click_gate = _load_json(root, "artifacts/launch_readiness/action_click_gate_results.json")
+    export_download_gate = _load_json(root, "artifacts/launch_readiness/export_download_gate_results.json")
+    plan_adherence_report = _load_json(root, PLAN_ADHERENCE_REPORT_REL)
     full_sweep = _load_json(root, FULL_APP_RELEASE_SWEEP_GATE_REL)
     a_grade_gate = _load_json(root, A_GRADE_EXECUTION_MATRIX_GATE_REL)
     a_grade_summary = _load_json(root, A_GRADE_EXECUTION_MATRIX_SUMMARY_REL)
@@ -563,6 +576,50 @@ def _final_release_candidate_summary(root: Path, results: Mapping[str, Any]) -> 
         ),
         "artifact_hash_mismatch_count": _as_int(
             artifact_integrity_gate.get("hash_mismatch_count", launch_summary.get("artifact_hash_mismatch_count"))
+        ),
+        "release_evidence_registry_passed": bool(
+            release_registry_gate.get("passed", launch_summary.get("release_evidence_registry_passed"))
+        ),
+        "release_evidence_registry_failure_count": _as_int(
+            release_registry_gate.get("failure_count", launch_summary.get("release_evidence_registry_failure_count"))
+        ),
+        "runtime_event_ledger_passed": bool(
+            runtime_event_gate.get("passed", launch_summary.get("runtime_event_ledger_passed"))
+        ),
+        "runtime_event_ledger_failure_count": _as_int(
+            runtime_event_gate.get("failure_count", launch_summary.get("runtime_event_ledger_failure_count"))
+        ),
+        "route_action_replay_passed": bool(
+            route_replay_gate.get("passed", launch_summary.get("route_action_replay_passed"))
+        ),
+        "route_action_replay_failure_count": _as_int(
+            route_replay_gate.get("failure_count", launch_summary.get("route_action_replay_failure_count"))
+        ),
+        "export_case_parity_passed": bool(
+            export_case_parity_gate.get("passed", launch_summary.get("export_case_parity_passed"))
+        ),
+        "export_case_parity_failure_count": _as_int(
+            export_case_parity_gate.get("failure_count", launch_summary.get("export_case_parity_failure_count"))
+        ),
+        "first_paint_passed": bool(
+            first_paint_slo_gate.get("passed", launch_summary.get("first_paint_passed"))
+        ),
+        "exact_action_match_passed": bool(
+            action_click_gate.get("passed", launch_summary.get("exact_action_match_passed"))
+        ),
+        "export_parse_passed": bool(
+            export_download_gate.get("passed", launch_summary.get("export_parse_passed"))
+        )
+        and bool(export_case_parity_gate.get("passed", launch_summary.get("export_case_parity_passed"))),
+        "plan_adherence_report_path": PLAN_ADHERENCE_REPORT_REL,
+        "plan_adherence_report_passed": bool(
+            plan_adherence_report.get("passed", launch_summary.get("plan_adherence_report_passed", False))
+        ),
+        "plan_adherence_failure_count": _as_int(
+            plan_adherence_report.get("failure_count", launch_summary.get("plan_adherence_failure_count"))
+        ),
+        "plan_adherence_deviation_count": _as_int(
+            plan_adherence_report.get("deviation_count", launch_summary.get("plan_adherence_deviation_count"))
         ),
         "local_artifact_signature": str(
             results.get("local_artifact_signature") or ci_gate.get("local_artifact_signature") or ""
@@ -720,6 +777,30 @@ def run_production_release_candidate(
             gate_rel=ARTIFACT_INTEGRITY_GATE_REL,
         )
         add(
+            "release_evidence_registry",
+            RELEASE_EVIDENCE_REGISTRY_GATE_REL,
+            lambda _r: payloads,
+            gate_rel=RELEASE_EVIDENCE_REGISTRY_GATE_REL,
+        )
+        add(
+            "runtime_event_ledger",
+            RUNTIME_EVENT_LEDGER_GATE_REL,
+            lambda _r: payloads,
+            gate_rel=RUNTIME_EVENT_LEDGER_GATE_REL,
+        )
+        add(
+            "route_action_replay",
+            ROUTE_ACTION_REPLAY_GATE_REL,
+            lambda _r: payloads,
+            gate_rel=ROUTE_ACTION_REPLAY_GATE_REL,
+        )
+        add(
+            "export_case_parity",
+            EXPORT_CASE_PARITY_GATE_REL,
+            lambda _r: payloads,
+            gate_rel=EXPORT_CASE_PARITY_GATE_REL,
+        )
+        add(
             "a_grade_execution_matrix",
             A_GRADE_EXECUTION_MATRIX_GATE_REL,
             lambda _r: payloads,
@@ -855,6 +936,13 @@ def run_production_release_candidate(
         RELEASE_CANDIDATE_SUMMARY_REL: final_summary,
     }.items():
         _write_json(root_path / rel, payload)
+    plan_artifacts = write_plan_adherence_report(root_path)
+    plan_report = plan_artifacts[PLAN_ADHERENCE_REPORT_REL]
+    final_summary["plan_adherence_report_path"] = PLAN_ADHERENCE_REPORT_REL
+    final_summary["plan_adherence_report_passed"] = bool(plan_report.get("passed"))
+    final_summary["plan_adherence_failure_count"] = _as_int(plan_report.get("failure_count"))
+    final_summary["plan_adherence_deviation_count"] = _as_int(plan_report.get("deviation_count"))
+    _write_json(root_path / RELEASE_CANDIDATE_SUMMARY_REL, final_summary)
     artifact_manifest = _artifact_manifest(root_path)
     artifact_hashes = _artifact_hashes(artifact_manifest)
     artifacts = {
@@ -863,6 +951,7 @@ def run_production_release_candidate(
         PRODUCTION_RELEASE_CANDIDATE_GATE_REL: gate,
         RELEASE_GATE_MATRIX_REL: gate_matrix,
         RELEASE_CANDIDATE_SUMMARY_REL: final_summary,
+        PLAN_ADHERENCE_REPORT_REL: plan_report,
         ARTIFACT_MANIFEST_REL: artifact_manifest,
         ARTIFACT_HASHES_REL: artifact_hashes,
     }

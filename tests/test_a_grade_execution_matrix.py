@@ -23,6 +23,10 @@ class AGradeExecutionMatrixTests(unittest.TestCase):
         "artifacts/launch_readiness/import_laziness_gate_results.json",
         "artifacts/launch_readiness/ci_artifact_reality_gate_results.json",
         "artifacts/launch_readiness/artifact_integrity_gate_results.json",
+        "artifacts/launch_readiness/release_evidence_registry_gate_results.json",
+        "artifacts/launch_readiness/runtime_event_ledger_gate_results.json",
+        "artifacts/launch_readiness/route_action_replay_gate_results.json",
+        "artifacts/launch_readiness/export_case_parity_gate_results.json",
         "artifacts/launch_readiness/metric_source_governance_gate_results.json",
     ]
 
@@ -146,6 +150,25 @@ class AGradeExecutionMatrixTests(unittest.TestCase):
         self.assertFalse(results["passed"])
         reasons = " ".join(row["failure_reason"] for row in results["failures"])
         self.assertIn("artifact hash", reasons)
+
+    def test_release_blocking_gate_hash_must_match_manifest(self):
+        from tools.contracts.a_grade_execution_matrix import build_a_grade_execution_matrix
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in self.REQUIRED_GATES:
+                self._write_gate(root, rel)
+            hashes = root / "artifacts" / "release_candidate" / "artifact_hashes.json"
+            payload = json.loads(hashes.read_text(encoding="utf-8"))
+            for row in payload["hashes"]:
+                if row["path"] == "artifacts/launch_readiness/first_paint_slo_gate_results.json":
+                    row["sha256"] = "0" * 64
+            hashes.write_text(json.dumps(payload), encoding="utf-8")
+            results = build_a_grade_execution_matrix(root)
+
+        self.assertFalse(results["passed"])
+        reasons = " ".join(row["failure_reason"] for row in results["failures"])
+        self.assertIn("hash does not match", reasons)
 
     def test_release_blocking_gate_commit_must_match_current_commit(self):
         from tools.contracts.a_grade_execution_matrix import build_a_grade_execution_matrix

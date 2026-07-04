@@ -142,12 +142,14 @@ class ProductionReleaseCandidateTests(unittest.TestCase):
                 root / "artifacts" / "launch_readiness" / "ci_artifact_reality_gate_results.json",
                 {"passed": True, "local_artifact_signature": "signed-local", "token_path_leak_count": 0},
             )
+            from tools.contracts.artifact_verifier import DEFAULT_RELEASE_BLOCKING_ARTIFACTS
+
             self._write_json(
                 root / "artifacts" / "launch_readiness" / "artifact_integrity_gate_results.json",
                 {
                     "passed": True,
                     "failure_count": 0,
-                    "verified_artifact_count": 14,
+                    "verified_artifact_count": len(DEFAULT_RELEASE_BLOCKING_ARTIFACTS),
                     "hash_mismatch_count": 0,
                 },
             )
@@ -162,6 +164,26 @@ class ProductionReleaseCandidateTests(unittest.TestCase):
             self._write_json(
                 root / "artifacts" / "launch_readiness" / "full_app_release_sweep_gate_results.json",
                 {"passed": True},
+            )
+            self._write_json(
+                root / "artifacts" / "launch_readiness" / "first_paint_slo_gate_results.json",
+                {"passed": True, "failure_count": 0},
+            )
+            self._write_json(
+                root / "artifacts" / "launch_readiness" / "action_click_gate_results.json",
+                {"passed": True, "failure_count": 0},
+            )
+            self._write_json(
+                root / "artifacts" / "launch_readiness" / "export_download_gate_results.json",
+                {"passed": True, "failure_count": 0},
+            )
+            self._write_json(
+                root / "artifacts" / "launch_readiness" / "export_case_parity_gate_results.json",
+                {"passed": True, "failure_count": 0},
+            )
+            self._write_json(
+                root / "artifacts" / "release_candidate" / "plan_adherence_report.json",
+                {"passed": True, "failure_count": 0, "deviation_count": 1},
             )
 
             summary = _final_release_candidate_summary(
@@ -181,9 +203,16 @@ class ProductionReleaseCandidateTests(unittest.TestCase):
         self.assertTrue(summary["production_deployable"], summary)
         self.assertTrue(summary["ci_artifact_reality_passed"], summary)
         self.assertTrue(summary["artifact_integrity_passed"], summary)
-        self.assertEqual(summary["artifact_integrity_verified_count"], 14)
+        from tools.contracts.artifact_verifier import DEFAULT_RELEASE_BLOCKING_ARTIFACTS
+
+        self.assertEqual(summary["artifact_integrity_verified_count"], len(DEFAULT_RELEASE_BLOCKING_ARTIFACTS))
         self.assertEqual(summary["hard_gate_failure_count"], 0)
         self.assertEqual(summary["local_artifact_signature"], "signed-local")
+        self.assertTrue(summary["first_paint_passed"], summary)
+        self.assertTrue(summary["exact_action_match_passed"], summary)
+        self.assertTrue(summary["export_parse_passed"], summary)
+        self.assertTrue(summary["plan_adherence_report_passed"], summary)
+        self.assertEqual(summary["plan_adherence_deviation_count"], 1)
 
     @staticmethod
     def _write_json(path: Path, payload: dict) -> None:

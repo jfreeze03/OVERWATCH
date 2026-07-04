@@ -48,6 +48,9 @@ DEFAULT_RELEASE_BLOCKING_ARTIFACTS = (
     "artifacts/full_app_validation/query_boundary_lint_results.json",
     "artifacts/full_app_validation/first_paint_slo_results.json",
     "artifacts/full_app_validation/performance_budget_results.json",
+    "artifacts/full_app_validation/runtime_event_ledger_results.json",
+    "artifacts/full_app_validation/route_action_replay_results.json",
+    "artifacts/full_app_validation/export_case_parity_results.json",
     "artifacts/launch_readiness/access_control_runtime_gate_results.json",
     "artifacts/launch_readiness/cost_overview_no_autoload_gate_results.json",
     "artifacts/launch_readiness/query_search_autorun_gate_results.json",
@@ -55,6 +58,9 @@ DEFAULT_RELEASE_BLOCKING_ARTIFACTS = (
     "artifacts/launch_readiness/query_boundary_lint_gate_results.json",
     "artifacts/launch_readiness/first_paint_slo_gate_results.json",
     "artifacts/launch_readiness/performance_budget_gate_results.json",
+    "artifacts/launch_readiness/runtime_event_ledger_gate_results.json",
+    "artifacts/launch_readiness/route_action_replay_gate_results.json",
+    "artifacts/launch_readiness/export_case_parity_gate_results.json",
 )
 
 

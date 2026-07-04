@@ -212,7 +212,8 @@ def _artifact_details(root: Path, rel: str, payload: Mapping[str, Any], release_
     hash_index = release_indexes.get("hash_index")
     artifact_manifest_listed = rel in manifest_paths if isinstance(manifest_paths, set) else False
     expected_sha = hash_index.get(rel, "") if isinstance(hash_index, Mapping) else ""
-    artifact_hash_listed = bool(expected_sha) and bool(artifact_sha) and expected_sha == artifact_sha
+    artifact_hash_listed = bool(expected_sha)
+    artifact_hash_matched = bool(expected_sha and artifact_sha and expected_sha == artifact_sha)
     return {
         "artifact_path": rel,
         "artifact_exists": exists,
@@ -224,6 +225,7 @@ def _artifact_details(root: Path, rel: str, payload: Mapping[str, Any], release_
         "artifact_hash_manifest_path": ARTIFACT_HASHES_REL,
         "artifact_hash_manifest_exists": bool(release_indexes.get("artifact_hash_manifest_exists")),
         "artifact_hash_listed": artifact_hash_listed,
+        "artifact_hash_matched": artifact_hash_matched,
         "artifact_hash_manifest_sha256": str(expected_sha),
         "producer": str(payload.get("producer") or payload.get("source") or ""),
         "producer_signature": str(payload.get("producer_signature") or payload.get("proof_source") or payload.get("source") or ""),
@@ -273,6 +275,7 @@ def _row(
     artifact_hash_manifest_exists: bool = False,
     artifact_hash_manifest_sha256: str = "",
     artifact_hash_listed: bool = False,
+    artifact_hash_matched: bool = False,
     artifact_raw_sql_included: bool = False,
 ) -> dict[str, Any]:
     return {
@@ -304,6 +307,7 @@ def _row(
         "artifact_hash_manifest_exists": artifact_hash_manifest_exists,
         "artifact_hash_manifest_sha256": artifact_hash_manifest_sha256,
         "artifact_hash_listed": artifact_hash_listed,
+        "artifact_hash_matched": artifact_hash_matched,
         "passed": passed,
         "failure_reason": failure_reason,
         "raw_sql_included": artifact_raw_sql_included,
@@ -438,6 +442,58 @@ def build_a_grade_execution_matrix(
             True,
         ),
         (
+            "Production launch readiness",
+            "P0 evidence registry",
+            "single release evidence source of truth",
+            "B+",
+            "A",
+            "registered release gates consumed by readiness, candidate, and A-grade rows",
+            "tests.test_release_evidence_registry",
+            "release_evidence_registry_results.json; release_evidence_registry_gate_results.json",
+            "producer-backed registry rows with consumer checks",
+            "artifacts/launch_readiness/release_evidence_registry_gate_results.json",
+            True,
+        ),
+        (
+            "Query and app performance",
+            "P0 runtime event ledger",
+            "normalized query/action ledger",
+            "B+",
+            "A",
+            "first-paint, route, query-search, and cost events reconciled from producer artifacts",
+            "tests.test_runtime_event_ledger",
+            "runtime_event_ledger_results.json; runtime_event_ledger_gate_results.json",
+            "producer-backed runtime event rows",
+            "artifacts/launch_readiness/runtime_event_ledger_gate_results.json",
+            True,
+        ),
+        (
+            "UX / information architecture",
+            "P0 route replay",
+            "query-free route actions",
+            "B+",
+            "A",
+            "runtime artifact replay for shell, route, query-search, settings, and explicit action boundaries",
+            "tests.test_route_action_replay",
+            "route_action_replay_results.json; route_action_replay_gate_results.json",
+            "producer-backed replay rows",
+            "artifacts/launch_readiness/route_action_replay_gate_results.json",
+            True,
+        ),
+        (
+            "Production launch readiness",
+            "P0 export/case parity",
+            "file-backed payload parsing",
+            "B+",
+            "A",
+            "parse export/download/case payloads from disk and compare actual rows to visible rows",
+            "tests.test_export_case_parity",
+            "export_case_parity_results.json; export_case_parity_gate_results.json",
+            "producer-backed parsed file rows",
+            "artifacts/launch_readiness/export_case_parity_gate_results.json",
+            True,
+        ),
+        (
             "Decision metric governance",
             "P0 metric intake",
             "packet-backed high-impact metrics",
@@ -515,6 +571,8 @@ def build_a_grade_execution_matrix(
             proof_reasons.append("release artifact hash manifest is missing")
         if release_blocking and not artifact_details["artifact_hash_listed"]:
             proof_reasons.append("release gate artifact hash is not included in release artifact hashes")
+        if release_blocking and artifact_details["artifact_hash_listed"] and not artifact_details["artifact_hash_matched"]:
+            proof_reasons.append("release gate artifact hash does not match release artifact hashes")
         proof_passed = not proof_reasons
         if release_blocking:
             passed = bool(passed and proof_passed)

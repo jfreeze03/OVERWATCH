@@ -149,6 +149,26 @@ from tools.contracts.artifact_verifier import (
     ARTIFACT_INTEGRITY_RESULTS_REL,
     write_artifact_integrity_artifacts,
 )
+from tools.contracts.export_case_parity import (
+    EXPORT_CASE_PARITY_GATE_REL,
+    EXPORT_CASE_PARITY_RESULTS_REL,
+    write_export_case_parity_artifacts,
+)
+from tools.contracts.release_evidence_registry import (
+    RELEASE_EVIDENCE_REGISTRY_GATE_REL,
+    RELEASE_EVIDENCE_REGISTRY_RESULTS_REL,
+    write_release_evidence_registry_artifacts,
+)
+from tools.contracts.route_action_replay import (
+    ROUTE_ACTION_REPLAY_GATE_REL,
+    ROUTE_ACTION_REPLAY_RESULTS_REL,
+    write_route_action_replay_artifacts,
+)
+from tools.contracts.runtime_event_ledger import (
+    RUNTIME_EVENT_LEDGER_GATE_REL,
+    RUNTIME_EVENT_LEDGER_RESULTS_REL,
+    write_runtime_event_ledger_artifacts,
+)
 from tools.contracts.post_deploy_smoke import (
     POST_DEPLOY_SMOKE_GATE_REL,
     POST_DEPLOY_SMOKE_RESULTS_REL,
@@ -379,6 +399,10 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     UI_SYSTEM_GRADE_GATE_REL,
     A_GRADE_EXECUTION_MATRIX_GATE_REL,
     ARTIFACT_INTEGRITY_GATE_REL,
+    RELEASE_EVIDENCE_REGISTRY_GATE_REL,
+    RUNTIME_EVENT_LEDGER_GATE_REL,
+    ROUTE_ACTION_REPLAY_GATE_REL,
+    EXPORT_CASE_PARITY_GATE_REL,
     METRIC_SOURCE_GOVERNANCE_GATE_REL,
     UI_KIT_ALIGNMENT_GATE_REL,
     SECTION_LAYOUT_CONTRACT_GATE_REL,
@@ -426,6 +450,10 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     UI_SYSTEM_GRADE_RESULTS_REL,
     A_GRADE_EXECUTION_MATRIX_RESULTS_REL,
     ARTIFACT_INTEGRITY_RESULTS_REL,
+    RELEASE_EVIDENCE_REGISTRY_RESULTS_REL,
+    RUNTIME_EVENT_LEDGER_RESULTS_REL,
+    ROUTE_ACTION_REPLAY_RESULTS_REL,
+    EXPORT_CASE_PARITY_RESULTS_REL,
     FULL_APP_RELEASE_SWEEP_RESULTS_REL,
     FULL_APP_RELEASE_FAILURES_REL,
     SETTINGS_LIVE_FEATURE_RESULTS_REL,
@@ -6405,6 +6433,12 @@ def evaluate_launch_readiness(
     query_budget_gate = _as_mapping(launch_artifacts.get("query_budget_gate_results"))
     workload_formula_gate = _as_mapping(launch_artifacts.get("workload_formula_gate_results"))
     date_widget_gate = _as_mapping(launch_artifacts.get("date_widget_regression_results"))
+    release_evidence_registry_gate = _as_mapping(
+        launch_artifacts.get("release_evidence_registry_gate_results")
+    )
+    runtime_event_ledger_gate = _as_mapping(launch_artifacts.get("runtime_event_ledger_gate_results"))
+    route_action_replay_gate = _as_mapping(launch_artifacts.get("route_action_replay_gate_results"))
+    export_case_parity_gate = _as_mapping(launch_artifacts.get("export_case_parity_gate_results"))
     launch_summary = {
         "source": "launch_readiness",
         "proof_source": "runtime_click",
@@ -6489,7 +6523,11 @@ def evaluate_launch_readiness(
         and bool(production_rehearsal_gate.get("passed"))
         and bool(rollback_readiness_gate.get("rollback_ready", rollback_readiness_gate.get("passed")))
         and bool(post_deploy_smoke_gate.get("passed"))
-        and bool(snowflake_object_drift_gate.get("passed")),
+        and bool(snowflake_object_drift_gate.get("passed"))
+        and bool(release_evidence_registry_gate.get("passed"))
+        and bool(runtime_event_ledger_gate.get("passed"))
+        and bool(route_action_replay_gate.get("passed"))
+        and bool(export_case_parity_gate.get("passed")),
         "a_grade_ready": bool(a_grade_execution_matrix_gate.get("a_grade_ready")),
         "a_grade_execution_matrix_passed": bool(a_grade_execution_matrix_gate.get("passed")),
         "a_grade_deferred_count": _as_int(a_grade_execution_matrix_gate.get("a_grade_deferred_count")),
@@ -6497,6 +6535,20 @@ def evaluate_launch_readiness(
         "artifact_integrity_failure_count": _as_int(artifact_integrity_gate.get("failure_count")),
         "artifact_integrity_verified_count": _as_int(artifact_integrity_gate.get("verified_artifact_count")),
         "artifact_hash_mismatch_count": _as_int(artifact_integrity_gate.get("hash_mismatch_count")),
+        "release_evidence_registry_passed": bool(release_evidence_registry_gate.get("passed")),
+        "release_evidence_registry_failure_count": _as_int(release_evidence_registry_gate.get("failure_count")),
+        "release_evidence_registry_registered_gate_count": _as_int(
+            release_evidence_registry_gate.get("registered_gate_count")
+        ),
+        "runtime_event_ledger_passed": bool(runtime_event_ledger_gate.get("passed")),
+        "runtime_event_ledger_failure_count": _as_int(runtime_event_ledger_gate.get("failure_count")),
+        "runtime_event_ledger_event_count": _as_int(runtime_event_ledger_gate.get("event_count")),
+        "route_action_replay_passed": bool(route_action_replay_gate.get("passed")),
+        "route_action_replay_failure_count": _as_int(route_action_replay_gate.get("failure_count")),
+        "route_action_replay_scenario_count": _as_int(route_action_replay_gate.get("scenario_count")),
+        "export_case_parity_passed": bool(export_case_parity_gate.get("passed")),
+        "export_case_parity_failure_count": _as_int(export_case_parity_gate.get("failure_count")),
+        "export_case_parity_row_count": _as_int(export_case_parity_gate.get("row_count")),
         "query_performance_grade": str(a_grade_execution_matrix_gate.get("query_performance_grade") or ""),
         "app_performance_grade": str(a_grade_execution_matrix_gate.get("app_performance_grade") or ""),
         "ux_grade": str(a_grade_execution_matrix_gate.get("ux_grade") or ""),
@@ -6560,6 +6612,7 @@ def evaluate_launch_readiness(
             _as_int(first_paint_gate.get("failure_count")),
             _as_int(full_app_release_sweep_gate.get("first_paint_failure_count")),
             _as_int(first_paint_slo_gate.get("failure_count")),
+            _as_int(runtime_event_ledger_gate.get("failure_count")),
         ),
         "query_boundary_lint_passed": bool(query_boundary_lint_gate.get("passed")),
         "query_boundary_missing_count": _as_int(query_boundary_lint_gate.get("missing_query_boundary_count")),
@@ -6575,8 +6628,12 @@ def evaluate_launch_readiness(
         "query_search_autorun_passed": bool(query_search_autorun_gate.get("passed")),
         "query_search_broad_autorun_count": _as_int(
             query_search_autorun_gate.get("query_search_broad_autorun_count")
+        )
+        or _as_int(runtime_event_ledger_gate.get("query_search_broad_autorun_count")),
+        "metadata_probe_violation_count": max(
+            _as_int(performance_budget_gate.get("metadata_probe_violation_count")),
+            _as_int(runtime_event_ledger_gate.get("metadata_probe_violation_count")),
         ),
-        "metadata_probe_violation_count": _as_int(performance_budget_gate.get("metadata_probe_violation_count")),
         "pre_first_paint_session_open_count": _as_int(
             performance_budget_gate.get("pre_first_paint_session_open_count")
         ),
@@ -6585,12 +6642,16 @@ def evaluate_launch_readiness(
             _as_int(performance_budget_gate.get("cost_overview_autoload_violation_count")),
             _as_int(cost_overview_no_autoload_gate.get("cost_overview_autoload_violation_count")),
             _as_int(full_app_release_sweep_gate.get("cost_overview_autoload_violation_count")),
+            _as_int(runtime_event_ledger_gate.get("cost_overview_autoload_violation_count")),
+            _as_int(route_action_replay_gate.get("cost_overview_autoload_violation_count")),
         ),
         "cost_no_autoload_passed": bool(cost_overview_no_autoload_gate.get("passed"))
         and max(
             _as_int(performance_budget_gate.get("cost_overview_autoload_violation_count")),
             _as_int(cost_overview_no_autoload_gate.get("cost_overview_autoload_violation_count")),
             _as_int(full_app_release_sweep_gate.get("cost_overview_autoload_violation_count")),
+            _as_int(runtime_event_ledger_gate.get("cost_overview_autoload_violation_count")),
+            _as_int(route_action_replay_gate.get("cost_overview_autoload_violation_count")),
         )
         == 0,
         "credential_first_paint_violation_count": _security_first_paint_violation_count(payloads),
@@ -6948,6 +7009,12 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     payloads.update(performance_budget_artifacts)
     first_paint_slo_artifacts = write_first_paint_slo_artifacts(root_path)
     payloads.update(first_paint_slo_artifacts)
+    runtime_event_ledger_artifacts = write_runtime_event_ledger_artifacts(root_path)
+    payloads.update(runtime_event_ledger_artifacts)
+    route_action_replay_artifacts = write_route_action_replay_artifacts(root_path)
+    payloads.update(route_action_replay_artifacts)
+    export_case_parity_artifacts = write_export_case_parity_artifacts(root_path)
+    payloads.update(export_case_parity_artifacts)
     ui_system_grade_artifacts = write_ui_system_grade_artifacts(root_path)
     payloads.update(ui_system_grade_artifacts)
     delete_first_cleanup_artifacts = write_delete_first_cleanup_artifacts(root_path)
@@ -7023,6 +7090,15 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         COST_OVERVIEW_NO_AUTOLOAD_GATE_REL
     ]
     launch_artifacts["first_paint_slo_gate_results"] = first_paint_slo_artifacts[FIRST_PAINT_SLO_GATE_REL]
+    launch_artifacts["runtime_event_ledger_gate_results"] = runtime_event_ledger_artifacts[
+        RUNTIME_EVENT_LEDGER_GATE_REL
+    ]
+    launch_artifacts["route_action_replay_gate_results"] = route_action_replay_artifacts[
+        ROUTE_ACTION_REPLAY_GATE_REL
+    ]
+    launch_artifacts["export_case_parity_gate_results"] = export_case_parity_artifacts[
+        EXPORT_CASE_PARITY_GATE_REL
+    ]
     launch_artifacts["query_boundary_lint_gate_results"] = query_boundary_lint_artifacts[
         QUERY_BOUNDARY_LINT_GATE_REL
     ]
@@ -7461,6 +7537,13 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["artifact_integrity_gate_results"] = artifact_integrity_artifacts[
         ARTIFACT_INTEGRITY_GATE_REL
     ]
+    for name, payload in launch_artifacts.items():
+        _write_json(root_path / f"{LAUNCH_READINESS_DIR}/{name}.json", payload)
+    release_evidence_registry_artifacts = write_release_evidence_registry_artifacts(root_path)
+    payloads.update(release_evidence_registry_artifacts)
+    launch_artifacts["release_evidence_registry_gate_results"] = release_evidence_registry_artifacts[
+        RELEASE_EVIDENCE_REGISTRY_GATE_REL
+    ]
     a_grade_artifacts = write_a_grade_execution_matrix_artifacts(
         root_path,
         launch_artifacts=launch_artifacts,
@@ -7550,6 +7633,13 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["ci_artifact_reality_gate_results"] = evaluate_ci_artifact_reality_gate(
         launch_artifacts["ci_artifact_reality_results"]
     )
+    for name, payload in launch_artifacts.items():
+        _write_json(root_path / f"{LAUNCH_READINESS_DIR}/{name}.json", payload)
+    release_evidence_registry_artifacts = write_release_evidence_registry_artifacts(root_path)
+    payloads.update(release_evidence_registry_artifacts)
+    launch_artifacts["release_evidence_registry_gate_results"] = release_evidence_registry_artifacts[
+        RELEASE_EVIDENCE_REGISTRY_GATE_REL
+    ]
     a_grade_artifacts = write_a_grade_execution_matrix_artifacts(
         root_path,
         launch_artifacts=launch_artifacts,
@@ -7654,6 +7744,68 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         ci_context=launch_artifacts["release_candidate_ci_context"],
     )
     launch_artifacts["release_candidate_gate_results"] = release_gate
+    for name, payload in {
+        "artifact_manifest": release_manifest,
+        "artifact_hashes": release_hashes,
+        "artifact_reconciliation_results": release_reconciliation,
+        "product_gauntlet_release_results": product_gauntlet,
+        "release_candidate_summary": rel_summary,
+        "release_candidate_failures": rel_failures,
+        "release_gate_matrix": rel_matrix,
+        "release_notes": rel_notes,
+    }.items():
+        written[f"{RELEASE_CANDIDATE_DIR}/{name}.json"] = payload
+
+    # Late launch artifacts such as CI artifact reality and the release evidence
+    # registry are intentionally written after the first bundle pass. Re-run the
+    # hash-sensitive A-grade gate once the release hash manifest can see those
+    # exact artifacts, then refresh the bundle summary with the final decision.
+    a_grade_artifacts = write_a_grade_execution_matrix_artifacts(
+        root_path,
+        launch_artifacts=launch_artifacts,
+    )
+    payloads.update(a_grade_artifacts)
+    launch_artifacts["a_grade_execution_matrix_gate_results"] = a_grade_artifacts[
+        A_GRADE_EXECUTION_MATRIX_GATE_REL
+    ]
+    launch_summary, launch_failures, matrix = evaluate_launch_readiness(
+        payloads,
+        launch_artifacts,
+        missing_artifacts=missing_payloads,
+        root=root_path,
+    )
+    launch_artifacts["launch_readiness_summary"] = launch_summary
+    launch_artifacts["launch_readiness_failures"] = launch_failures
+    launch_artifacts["release_gate_matrix"] = matrix
+    for name, payload in launch_artifacts.items():
+        rel = f"{LAUNCH_READINESS_DIR}/{name}.json"
+        _write_json(root_path / rel, payload)
+        written[rel] = payload
+    _write_json(root_path / manifest_rel, manifest)
+    written[manifest_rel] = manifest
+
+    product_gauntlet = _product_gauntlet_release_results(root_path, payloads, launch_artifacts)
+    (
+        release_manifest,
+        release_hashes,
+        release_reconciliation,
+        release_gate,
+        rel_summary,
+        rel_failures,
+        rel_matrix,
+        rel_notes,
+    ) = _write_release_candidate_bundle(
+        root_path,
+        profile=profile,
+        launch_summary=launch_summary,
+        launch_failures=launch_failures,
+        matrix=matrix,
+        product_gauntlet=product_gauntlet,
+        ci_context=launch_artifacts["release_candidate_ci_context"],
+    )
+    launch_artifacts["release_candidate_gate_results"] = release_gate
+    _write_json(root_path / f"{LAUNCH_READINESS_DIR}/release_candidate_gate_results.json", release_gate)
+    written[f"{LAUNCH_READINESS_DIR}/release_candidate_gate_results.json"] = release_gate
     for name, payload in {
         "artifact_manifest": release_manifest,
         "artifact_hashes": release_hashes,

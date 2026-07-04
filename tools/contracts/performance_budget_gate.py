@@ -14,6 +14,7 @@ LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
 
 PERFORMANCE_BUDGET_RESULTS_REL = f"{FULL_APP_DIR}/performance_budget_results.json"
 PERFORMANCE_BUDGET_GATE_REL = f"{LAUNCH_READINESS_DIR}/performance_budget_gate_results.json"
+ACCESS_CONTROL_RUNTIME_RESULTS_REL = f"{FULL_APP_DIR}/access_control_runtime_results.json"
 COST_OVERVIEW_NO_AUTOLOAD_RESULTS_REL = f"{FULL_APP_DIR}/cost_overview_no_autoload_results.json"
 COST_OVERVIEW_NO_AUTOLOAD_GATE_REL = f"{LAUNCH_READINESS_DIR}/cost_overview_no_autoload_gate_results.json"
 TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL = f"{FULL_APP_DIR}/targeted_evidence_sql_pushdown_results.json"
@@ -121,6 +122,55 @@ def _boundary(row: Mapping[str, Any]) -> str:
 
 def _section(row: Mapping[str, Any]) -> str:
     return str(row.get("section") or row.get("area") or "").strip()
+
+
+def _supporting_artifact_failures(
+    label: str,
+    payload: Any,
+    *,
+    zero_counter_keys: tuple[str, ...] = (),
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not isinstance(payload, Mapping) or not payload:
+        return (
+            [{
+                "section": label,
+                "workflow": "Supporting artifact",
+                "failure_reason": f"missing {label} proof artifact",
+            }],
+            {"provided": payload is not None, "passed": False, "row_count": 0},
+        )
+    rows = _rows(payload)
+    reasons: list[str] = []
+    if not payload.get("producer"):
+        reasons.append("missing producer")
+    if not payload.get("producer_signature"):
+        reasons.append("missing producer_signature")
+    if bool(payload.get("raw_sql_included")):
+        reasons.append("raw_sql_included=true")
+    if not bool(payload.get("passed")):
+        reasons.append(str(payload.get("failure_reason") or f"{label} proof did not pass"))
+    if not rows:
+        reasons.append("row-level proof missing")
+    for key in zero_counter_keys:
+        if _as_int(payload.get(key)):
+            reasons.append(f"{key}={_as_int(payload.get(key))}")
+    summary = {
+        "provided": True,
+        "passed": not reasons,
+        "row_count": len(rows),
+        "failure_count": _as_int(payload.get("failure_count")) or len(reasons),
+        **{key: _as_int(payload.get(key)) for key in zero_counter_keys},
+    }
+    if not reasons:
+        return [], summary
+    return (
+        [{
+            "section": label,
+            "workflow": "Supporting artifact",
+            "failure_reason": "; ".join(reasons),
+        }],
+        summary,
+    )
 
 
 def _evaluate_first_paint_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -345,6 +395,7 @@ def evaluate_performance_budget_gate(
     cost_overview_payload: Any = None,
     target_pushdown_payload: Any = None,
     query_search_autorun_payload: Any = None,
+    access_control_payload: Any = None,
     telemetry_rows: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     first_paint_rows, first_paint_failures = _evaluate_first_paint_rows(_rows(first_paint_payload))
@@ -352,6 +403,15 @@ def evaluate_performance_budget_gate(
     if telemetry_rows is not None:
         budget_rows.extend(dict(row) for row in telemetry_rows if isinstance(row, Mapping))
     budget_checks, budget_failures = _evaluate_budget_rows(budget_rows)
+    access_control_failures, access_control_summary = _supporting_artifact_failures(
+        "Access control runtime",
+        access_control_payload,
+        zero_counter_keys=(
+            "pre_first_paint_session_open_count",
+            "shell_session_open_count",
+            "active_session_probe_count",
+        ),
+    )
     cost_payload = cost_overview_payload if isinstance(cost_overview_payload, Mapping) else {}
     cost_rows = _rows(cost_payload)
     cost_failures: list[dict[str, Any]] = []
@@ -424,7 +484,14 @@ def evaluate_performance_budget_gate(
         })
         query_search_broad_autorun_count = 1
 
-    failures = first_paint_failures + budget_failures + cost_failures + target_pushdown_failures + query_autorun_failures
+    failures = (
+        first_paint_failures
+        + budget_failures
+        + access_control_failures
+        + cost_failures
+        + target_pushdown_failures
+        + query_autorun_failures
+    )
     metadata_probe_violation_count = sum(
         1
         for row in [*first_paint_rows, *budget_checks]
@@ -442,6 +509,8 @@ def evaluate_performance_budget_gate(
         "first_paint_rows": first_paint_rows,
         "query_budget_rows": budget_checks,
         "cost_overview_no_autoload_rows": cost_rows,
+        "access_control_runtime_passed": bool(access_control_summary.get("passed")),
+        "access_control_runtime_row_count": _as_int(access_control_summary.get("row_count")),
         "cost_overview_autoload_violation_count": cost_violation_count,
         "target_pushdown_violation_count": target_pushdown_violation_count,
         "query_search_broad_autorun_count": query_search_broad_autorun_count,
@@ -502,10 +571,18 @@ def write_performance_budget_gate_artifacts(root: Path | str = ".") -> dict[str,
     root_path = Path(root).resolve()
     first_paint = _load_json(root_path / f"{FULL_APP_DIR}/first_paint_performance_results.json")
     query_budget = _load_json(root_path / f"{FULL_APP_DIR}/query_budget_results.json")
+    access_control = _load_json(root_path / ACCESS_CONTROL_RUNTIME_RESULTS_REL)
     cost_overview = _load_json(root_path / COST_OVERVIEW_NO_AUTOLOAD_RESULTS_REL)
     target_pushdown = _load_json(root_path / TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL)
     query_search_autorun = _load_json(root_path / QUERY_SEARCH_AUTORUN_RESULTS_REL)
-    gate = evaluate_performance_budget_gate(first_paint, query_budget, cost_overview, target_pushdown, query_search_autorun)
+    gate = evaluate_performance_budget_gate(
+        first_paint,
+        query_budget,
+        cost_overview,
+        target_pushdown,
+        query_search_autorun,
+        access_control,
+    )
     cost_gate = evaluate_cost_overview_no_autoload_gate(cost_overview, commit_sha=_git_commit(root_path))
     results = {
         "source": "performance_budget_results",
@@ -515,6 +592,8 @@ def write_performance_budget_gate_artifacts(root: Path | str = ".") -> dict[str,
         "first_paint_rows": gate.get("first_paint_rows", []),
         "query_budget_rows": gate.get("query_budget_rows", []),
         "cost_overview_no_autoload_rows": gate.get("cost_overview_no_autoload_rows", []),
+        "access_control_runtime_passed": bool(gate.get("access_control_runtime_passed")),
+        "access_control_runtime_row_count": int(gate.get("access_control_runtime_row_count") or 0),
         "cost_overview_autoload_violation_count": int(gate.get("cost_overview_autoload_violation_count") or 0),
         "target_pushdown_violation_count": int(gate.get("target_pushdown_violation_count") or 0),
         "query_search_broad_autorun_count": int(gate.get("query_search_broad_autorun_count") or 0),
@@ -543,6 +622,7 @@ if __name__ == "__main__":
 __all__ = [
     "COST_OVERVIEW_NO_AUTOLOAD_RESULTS_REL",
     "COST_OVERVIEW_NO_AUTOLOAD_GATE_REL",
+    "ACCESS_CONTROL_RUNTIME_RESULTS_REL",
     "QUERY_SEARCH_AUTORUN_RESULTS_REL",
     "TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL",
     "PERFORMANCE_BUDGET_GATE_REL",

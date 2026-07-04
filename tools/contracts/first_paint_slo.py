@@ -13,6 +13,10 @@ LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
 
 FIRST_PAINT_SLO_RESULTS_REL = f"{FULL_APP_DIR}/first_paint_slo_results.json"
 FIRST_PAINT_SLO_GATE_REL = f"{LAUNCH_READINESS_DIR}/first_paint_slo_gate_results.json"
+ACCESS_CONTROL_RUNTIME_RESULTS_REL = f"{FULL_APP_DIR}/access_control_runtime_results.json"
+COST_OVERVIEW_NO_AUTOLOAD_RESULTS_REL = f"{FULL_APP_DIR}/cost_overview_no_autoload_results.json"
+TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL = f"{FULL_APP_DIR}/targeted_evidence_sql_pushdown_results.json"
+QUERY_SEARCH_AUTORUN_RESULTS_REL = f"{FULL_APP_DIR}/query_search_autorun_results.json"
 
 COLD_FIRST_PAINT_SLO_MS = 1_500
 WARM_SECTION_SWITCH_SLO_MS = 300
@@ -120,18 +124,107 @@ def _commit_from_rows(rows: Iterable[Mapping[str, Any]]) -> str:
     return ""
 
 
+def _supporting_artifact_failure(
+    label: str,
+    payload: Any,
+    *,
+    zero_counter_keys: tuple[str, ...] = (),
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    if payload is None:
+        return None, {"provided": False, "passed": True}
+    if not isinstance(payload, Mapping) or not payload:
+        return (
+            {
+                "section": label,
+                "workflow": "Supporting artifact",
+                "failure_reason": f"missing {label} proof artifact",
+            },
+            {"provided": True, "passed": False},
+        )
+
+    rows = _rows(payload)
+    reasons: list[str] = []
+    if not payload.get("producer"):
+        reasons.append("missing producer")
+    if not payload.get("producer_signature"):
+        reasons.append("missing producer_signature")
+    if bool(payload.get("raw_sql_included")):
+        reasons.append("raw_sql_included=true")
+    if not bool(payload.get("passed")):
+        reasons.append(str(payload.get("failure_reason") or f"{label} proof did not pass"))
+    if not rows:
+        reasons.append("row-level proof missing")
+    for key in zero_counter_keys:
+        if _as_int(payload.get(key)):
+            reasons.append(f"{key}={_as_int(payload.get(key))}")
+
+    summary = {
+        "provided": True,
+        "passed": not reasons,
+        "row_count": len(rows),
+        "failure_count": _as_int(payload.get("failure_count")) or len(reasons),
+        **{key: _as_int(payload.get(key)) for key in zero_counter_keys},
+    }
+    if not reasons:
+        return None, summary
+    return (
+        {
+            "section": label,
+            "workflow": "Supporting artifact",
+            "failure_reason": "; ".join(reasons),
+        },
+        summary,
+    )
+
+
 def evaluate_first_paint_slo(
     first_paint_payload: Any,
     *,
     packet_size_payload: Any | None = None,
+    access_control_payload: Any | None = None,
+    cost_overview_payload: Any | None = None,
+    target_pushdown_payload: Any | None = None,
+    query_search_autorun_payload: Any | None = None,
 ) -> dict[str, Any]:
     """Evaluate SLO rows without treating missing telemetry as success."""
 
     source_rows = _rows(first_paint_payload)
     packet_size = _packet_size_bytes(packet_size_payload, source_rows)
     commit_sha = _commit_from_rows(source_rows)
+    support_checks = {}
+    supporting_failures: list[dict[str, Any]] = []
+    for label, payload, counters in (
+        (
+            "Access control runtime",
+            access_control_payload,
+            (
+                "pre_first_paint_session_open_count",
+                "shell_session_open_count",
+                "active_session_probe_count",
+            ),
+        ),
+        (
+            "Cost Overview no-autoload",
+            cost_overview_payload,
+            ("cost_overview_autoload_violation_count",),
+        ),
+        (
+            "Targeted evidence SQL pushdown",
+            target_pushdown_payload,
+            ("target_pushdown_violation_count",),
+        ),
+        (
+            "Query Search autorun",
+            query_search_autorun_payload,
+            ("query_search_broad_autorun_count",),
+        ),
+    ):
+        failure, summary = _supporting_artifact_failure(label, payload, zero_counter_keys=counters)
+        support_checks[label] = summary
+        if failure:
+            supporting_failures.append(failure)
     rows: list[dict[str, Any]] = []
-    failures: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = [*supporting_failures]
     seen_sections: set[str] = set()
 
     if not source_rows:
@@ -158,6 +251,7 @@ def evaluate_first_paint_slo(
             "cost_overview_autoload_violation_count": 0,
             "query_search_broad_autorun_count": 0,
             "target_pushdown_violation_count": 0,
+            "supporting_artifact_checks": support_checks,
             "rows": rows,
             "failures": failures,
             "raw_sql_included": False,
@@ -309,6 +403,11 @@ def evaluate_first_paint_slo(
         "cost_overview_autoload_violation_count": sum(_row_count(row, "cost_overview_autoload_violation_count") for row in rows),
         "query_search_broad_autorun_count": sum(_row_count(row, "query_search_broad_autorun_count") for row in rows),
         "target_pushdown_violation_count": sum(_row_count(row, "target_pushdown_violation_count") for row in rows),
+        "supporting_artifact_checks": support_checks,
+        "access_control_runtime_passed": bool(support_checks.get("Access control runtime", {}).get("passed", True)),
+        "cost_no_autoload_passed": bool(support_checks.get("Cost Overview no-autoload", {}).get("passed", True)),
+        "target_pushdown_passed": bool(support_checks.get("Targeted evidence SQL pushdown", {}).get("passed", True)),
+        "query_search_autorun_passed": bool(support_checks.get("Query Search autorun", {}).get("passed", True)),
         "rows": rows,
         "failures": failures,
         "raw_sql_included": False,
@@ -319,7 +418,18 @@ def write_first_paint_slo_artifacts(root: Path | str = ".") -> dict[str, Any]:
     root_path = Path(root).resolve()
     first_paint = _load_json(root_path / f"{FULL_APP_DIR}/first_paint_performance_results.json")
     packet_size = _load_json(root_path / "artifacts/snowflake_validation/packet_size_results.json")
-    gate = evaluate_first_paint_slo(first_paint, packet_size_payload=packet_size)
+    access_control = _load_json(root_path / ACCESS_CONTROL_RUNTIME_RESULTS_REL)
+    cost_overview = _load_json(root_path / COST_OVERVIEW_NO_AUTOLOAD_RESULTS_REL)
+    target_pushdown = _load_json(root_path / TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL)
+    query_search_autorun = _load_json(root_path / QUERY_SEARCH_AUTORUN_RESULTS_REL)
+    gate = evaluate_first_paint_slo(
+        first_paint,
+        packet_size_payload=packet_size,
+        access_control_payload=access_control,
+        cost_overview_payload=cost_overview,
+        target_pushdown_payload=target_pushdown,
+        query_search_autorun_payload=query_search_autorun,
+    )
     results = {
         "source": "first_paint_slo_results",
         "producer": "first_paint_slo",
@@ -341,6 +451,11 @@ def write_first_paint_slo_artifacts(root: Path | str = ".") -> dict[str, Any]:
         "cost_overview_autoload_violation_count": int(gate.get("cost_overview_autoload_violation_count") or 0),
         "query_search_broad_autorun_count": int(gate.get("query_search_broad_autorun_count") or 0),
         "target_pushdown_violation_count": int(gate.get("target_pushdown_violation_count") or 0),
+        "supporting_artifact_checks": gate.get("supporting_artifact_checks", {}),
+        "access_control_runtime_passed": bool(gate.get("access_control_runtime_passed")),
+        "cost_no_autoload_passed": bool(gate.get("cost_no_autoload_passed")),
+        "target_pushdown_passed": bool(gate.get("target_pushdown_passed")),
+        "query_search_autorun_passed": bool(gate.get("query_search_autorun_passed")),
         "rows": gate.get("rows", []),
         "failures": gate.get("failures", []),
         "raw_sql_included": False,

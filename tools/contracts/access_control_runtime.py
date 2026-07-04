@@ -293,6 +293,7 @@ def evaluate_access_control_runtime(first_paint_payload: Any, *, root: Path | st
         "admin_connection_test_count": sum(_as_int(row.get("admin_connection_test_count")) for row in rows),
         "explicit_connection_test_count": sum(_as_int(row.get("explicit_connection_test_count")) for row in rows),
         "rows": rows,
+        "proof_rows": rows,
         "failures": failures,
         "raw_sql_included": False,
     }
@@ -315,6 +316,7 @@ def evaluate_access_control_runtime_gate(payload: Any) -> dict[str, Any]:
         "active_session_probe_count": _as_int(results.get("active_session_probe_count")),
         "admin_connection_test_count": _as_int(results.get("admin_connection_test_count")),
         "explicit_connection_test_count": _as_int(results.get("explicit_connection_test_count")),
+        "proof_rows": results.get("proof_rows") or results.get("rows") or [],
         "failures": failures,
         "raw_sql_included": False,
     }

@@ -6216,6 +6216,9 @@ def evaluate_launch_readiness(
             _as_mapping(payloads.get(FIRST_PAINT_PERFORMANCE_REL)),
             _as_mapping(payloads.get("artifacts/full_app_validation/query_budget_results.json")),
             _as_mapping(payloads.get("artifacts/full_app_validation/cost_overview_no_autoload_results.json")),
+            _as_mapping(payloads.get("artifacts/full_app_validation/targeted_evidence_sql_pushdown_results.json")),
+            _as_mapping(payloads.get("artifacts/full_app_validation/query_search_autorun_results.json")),
+            _as_mapping(payloads.get("artifacts/full_app_validation/access_control_runtime_results.json")),
         ),
         "cost_overview_no_autoload_gate_results": _as_mapping(
             launch_artifacts.get("cost_overview_no_autoload_gate_results")
@@ -6906,18 +6909,18 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     payloads.update(formula_artifacts)
     formula_end_to_end_artifacts = write_formula_end_to_end_artifacts(root_path)
     payloads.update(formula_end_to_end_artifacts)
-    performance_budget_artifacts = write_performance_budget_gate_artifacts(root_path)
-    payloads.update(performance_budget_artifacts)
-    first_paint_slo_artifacts = write_first_paint_slo_artifacts(root_path)
-    payloads.update(first_paint_slo_artifacts)
-    query_boundary_lint_artifacts = write_query_boundary_lint_artifacts(root_path)
-    payloads.update(query_boundary_lint_artifacts)
     access_control_runtime_artifacts = write_access_control_runtime_artifacts(root_path)
     payloads.update(access_control_runtime_artifacts)
     targeted_evidence_sql_pushdown_artifacts = write_targeted_evidence_sql_pushdown_artifacts(root_path)
     payloads.update(targeted_evidence_sql_pushdown_artifacts)
     query_search_autorun_artifacts = write_query_search_autorun_artifacts(root_path)
     payloads.update(query_search_autorun_artifacts)
+    performance_budget_artifacts = write_performance_budget_gate_artifacts(root_path)
+    payloads.update(performance_budget_artifacts)
+    first_paint_slo_artifacts = write_first_paint_slo_artifacts(root_path)
+    payloads.update(first_paint_slo_artifacts)
+    query_boundary_lint_artifacts = write_query_boundary_lint_artifacts(root_path)
+    payloads.update(query_boundary_lint_artifacts)
     ui_system_grade_artifacts = write_ui_system_grade_artifacts(root_path)
     payloads.update(ui_system_grade_artifacts)
     delete_first_cleanup_artifacts = write_delete_first_cleanup_artifacts(root_path)

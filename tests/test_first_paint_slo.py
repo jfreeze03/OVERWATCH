@@ -55,6 +55,50 @@ class FirstPaintSloTests(unittest.TestCase):
             ]
         }
 
+    def _support_artifacts(self):
+        return {
+            "access_control_payload": {
+                "producer": "access_control_runtime",
+                "producer_signature": "access_control_runtime::v1",
+                "passed": True,
+                "failure_count": 0,
+                "pre_first_paint_session_open_count": 0,
+                "shell_session_open_count": 0,
+                "active_session_probe_count": 0,
+                "admin_connection_test_count": 0,
+                "explicit_connection_test_count": 0,
+                "rows": [{"id": "access_control::shell_first_paint_no_get_session", "passed": True}],
+                "raw_sql_included": False,
+            },
+            "cost_overview_payload": {
+                "producer": "full_app_runtime_validation",
+                "producer_signature": "cost_overview_no_autoload::v1",
+                "passed": True,
+                "failure_count": 0,
+                "cost_overview_autoload_violation_count": 0,
+                "rows": [{"id": "cost_overview_no_autoload::cost_contract", "passed": True}],
+                "raw_sql_included": False,
+            },
+            "target_pushdown_payload": {
+                "producer": "targeted_evidence_sql_pushdown",
+                "producer_signature": "targeted_evidence_sql_pushdown::v1",
+                "passed": True,
+                "failure_count": 0,
+                "target_pushdown_violation_count": 0,
+                "rows": [{"id": "target_pushdown::alert_center_finding", "passed": True}],
+                "raw_sql_included": False,
+            },
+            "query_search_autorun_payload": {
+                "producer": "query_search_autorun",
+                "producer_signature": "query_search_autorun::v1",
+                "passed": True,
+                "failure_count": 0,
+                "query_search_broad_autorun_count": 0,
+                "rows": [{"id": "query_search_autorun::render_no_click", "passed": True}],
+                "raw_sql_included": False,
+            },
+        }
+
     def test_primary_packet_rows_under_slo_pass(self):
         from tools.contracts.first_paint_slo import evaluate_first_paint_slo
 
@@ -62,6 +106,55 @@ class FirstPaintSloTests(unittest.TestCase):
 
         self.assertTrue(gate["passed"], gate.get("failures"))
         self.assertTrue(gate["first_paint_slo_passed"])
+
+    def test_supporting_runtime_artifacts_are_consumed(self):
+        from tools.contracts.first_paint_slo import evaluate_first_paint_slo
+
+        gate = evaluate_first_paint_slo(
+            self._rows(),
+            packet_size_payload={"max_packet_bytes": 42_000},
+            **self._support_artifacts(),
+        )
+
+        self.assertTrue(gate["passed"], gate.get("failures"))
+        self.assertTrue(gate["access_control_runtime_passed"])
+        self.assertTrue(gate["cost_no_autoload_passed"])
+        self.assertTrue(gate["target_pushdown_passed"])
+        self.assertTrue(gate["query_search_autorun_passed"])
+
+    def test_allowed_admin_connection_probe_row_does_not_fail_slo(self):
+        from tools.contracts.first_paint_slo import evaluate_first_paint_slo
+
+        artifacts = self._support_artifacts()
+        artifacts["access_control_payload"]["admin_connection_test_count"] = 1
+        artifacts["access_control_payload"]["explicit_connection_test_count"] = 1
+        artifacts["access_control_payload"]["rows"].append(
+            {"id": "access_control::forced_probe_uses_explicit_admin_test", "passed": True}
+        )
+
+        gate = evaluate_first_paint_slo(
+            self._rows(),
+            packet_size_payload={"max_packet_bytes": 42_000},
+            **artifacts,
+        )
+
+        self.assertTrue(gate["passed"], gate.get("failures"))
+        self.assertTrue(gate["access_control_runtime_passed"])
+
+    def test_missing_supporting_runtime_artifact_fails(self):
+        from tools.contracts.first_paint_slo import evaluate_first_paint_slo
+
+        artifacts = self._support_artifacts()
+        artifacts["access_control_payload"] = {}
+        gate = evaluate_first_paint_slo(
+            self._rows(),
+            packet_size_payload={"max_packet_bytes": 42_000},
+            **artifacts,
+        )
+
+        self.assertFalse(gate["passed"])
+        reasons = " ".join(row["failure_reason"] for row in gate["failures"])
+        self.assertIn("missing Access control runtime proof artifact", reasons)
 
     def test_missing_packet_size_fails(self):
         from tools.contracts.first_paint_slo import evaluate_first_paint_slo

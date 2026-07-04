@@ -44,6 +44,30 @@ def _first_paint_row(section: str, **overrides):
     return row
 
 
+def _access_control_artifact(**overrides):
+    payload = {
+        "producer": "access_control_runtime",
+        "producer_signature": "access_control_runtime::v1",
+        "passed": True,
+        "failure_count": 0,
+        "pre_first_paint_session_open_count": 0,
+        "shell_session_open_count": 0,
+        "active_session_probe_count": 0,
+        "admin_connection_test_count": 0,
+        "explicit_connection_test_count": 0,
+        "rows": [
+            {
+                "id": "access_control::shell_first_paint_no_get_session",
+                "passed": True,
+                "raw_sql_included": False,
+            }
+        ],
+        "raw_sql_included": False,
+    }
+    payload.update(overrides)
+    return payload
+
+
 class PerformanceBudgetGateTests(unittest.TestCase):
     def test_primary_first_paint_packet_only_passes(self):
         from tools.contracts.performance_budget_gate import PRIMARY_SECTIONS, evaluate_performance_budget_gate
@@ -52,7 +76,7 @@ class PerformanceBudgetGateTests(unittest.TestCase):
             "rows": [_first_paint_row(section) for section in PRIMARY_SECTIONS]
         }
 
-        gate = evaluate_performance_budget_gate(payload, {"rows": []})
+        gate = evaluate_performance_budget_gate(payload, {"rows": []}, access_control_payload=_access_control_artifact())
 
         self.assertTrue(gate["passed"], gate.get("failures"))
 
@@ -71,6 +95,7 @@ class PerformanceBudgetGateTests(unittest.TestCase):
                 ]
             },
             {"rows": []},
+            access_control_payload=_access_control_artifact(),
         )
 
         self.assertFalse(gate["passed"])
@@ -89,6 +114,7 @@ class PerformanceBudgetGateTests(unittest.TestCase):
                     {"section": "Workload Operations", "boundary": "query_search_no_click", "query_count": 1},
                 ]
             },
+            access_control_payload=_access_control_artifact(),
         )
 
         self.assertFalse(gate["passed"])
@@ -99,7 +125,7 @@ class PerformanceBudgetGateTests(unittest.TestCase):
     def test_missing_first_paint_rows_fail(self):
         from tools.contracts.performance_budget_gate import evaluate_performance_budget_gate
 
-        gate = evaluate_performance_budget_gate({"rows": []}, {"rows": []})
+        gate = evaluate_performance_budget_gate({"rows": []}, {"rows": []}, access_control_payload=_access_control_artifact())
 
         self.assertFalse(gate["passed"])
         self.assertGreaterEqual(len(gate["failures"]), 6)
@@ -118,6 +144,7 @@ class PerformanceBudgetGateTests(unittest.TestCase):
                 ]
             },
             {"rows": []},
+            access_control_payload=_access_control_artifact(),
         )
 
         self.assertFalse(gate["passed"])
@@ -130,6 +157,7 @@ class PerformanceBudgetGateTests(unittest.TestCase):
         gate = evaluate_performance_budget_gate(
             {"rows": [_first_paint_row("Executive Landing", query_boundary="compact_evidence")]},
             {"rows": []},
+            access_control_payload=_access_control_artifact(),
         )
 
         self.assertFalse(gate["passed"])
@@ -167,6 +195,7 @@ class PerformanceBudgetGateTests(unittest.TestCase):
                     }
                 ],
             },
+            access_control_payload=_access_control_artifact(),
         )
 
         self.assertFalse(gate["passed"])
@@ -212,7 +241,7 @@ class PerformanceBudgetGateTests(unittest.TestCase):
             ]
         }
 
-        gate = evaluate_performance_budget_gate(first_paint, {"rows": []})
+        gate = evaluate_performance_budget_gate(first_paint, {"rows": []}, access_control_payload=_access_control_artifact())
 
         self.assertFalse(gate["passed"])
         self.assertEqual(gate["pre_first_paint_session_open_count"], 1)
@@ -221,6 +250,17 @@ class PerformanceBudgetGateTests(unittest.TestCase):
         reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
         self.assertIn("before first-paint", reasons)
         self.assertIn("metadata", reasons)
+
+    def test_missing_access_control_artifact_blocks_performance_gate(self):
+        from tools.contracts.performance_budget_gate import PRIMARY_SECTIONS, evaluate_performance_budget_gate
+
+        first_paint = {"rows": [_first_paint_row(section) for section in PRIMARY_SECTIONS]}
+
+        gate = evaluate_performance_budget_gate(first_paint, {"rows": []}, access_control_payload={})
+
+        self.assertFalse(gate["passed"])
+        reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
+        self.assertIn("Access control runtime", reasons)
 
 
 if __name__ == "__main__":

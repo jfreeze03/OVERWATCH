@@ -6,6 +6,7 @@ import ast
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import subprocess
 from typing import Any, Iterable
 
 
@@ -25,6 +26,16 @@ CRITICAL_QUERY_PATH_SUFFIXES = (
     "utils/action_queue.py",
     "utils/alert_delivery.py",
     "utils/alert_triage.py",
+)
+
+SELECTED_TOOL_PATH_SUFFIXES = (
+    "tools/contracts/full_app_runtime_validation.py",
+    "tools/contracts/performance_budget_gate.py",
+    "tools/contracts/first_paint_slo.py",
+    "tools/contracts/launch_readiness.py",
+    "tools/contracts/production_release_candidate.py",
+    "tools/contracts/ci_artifact_reality.py",
+    "tools/contracts/ui_system_grade.py",
 )
 
 ALLOWED_QUERY_BOUNDARIES = {
@@ -70,6 +81,18 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _git_commit(root: Path) -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return ""
+
+
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
@@ -87,6 +110,20 @@ def _is_critical(path: Path, suffixes: Iterable[str] = CRITICAL_QUERY_PATH_SUFFI
 def _is_direct_sql_release_blocking(path: Path) -> bool:
     normalized = _norm(path)
     return any(normalized.endswith(suffix) for suffix in DIRECT_SQL_RELEASE_BLOCKING_SUFFIXES)
+
+
+def _selected_scan_files(root: Path) -> list[Path]:
+    files = list((root / ".overwatch_final").rglob("*.py"))
+    for suffix in SELECTED_TOOL_PATH_SUFFIXES:
+        path = root / suffix
+        if path.exists() and path.is_file():
+            files.append(path)
+    return sorted({path.resolve() for path in files})
+
+
+def _is_selected_tool_file(path: Path) -> bool:
+    normalized = _norm(path)
+    return any(normalized.endswith(suffix) for suffix in SELECTED_TOOL_PATH_SUFFIXES)
 
 
 def _run_query_aliases(tree: ast.AST) -> set[str]:
@@ -129,6 +166,12 @@ def _is_session_sql_call(node: ast.Call) -> bool:
         return value.id in {"session", "sess", "sf_session"}
     if isinstance(value, ast.Attribute):
         return value.attr.lower().endswith("session")
+    if isinstance(value, ast.Call):
+        inner = value.func
+        if isinstance(inner, ast.Name):
+            return inner.id == "get_session"
+        if isinstance(inner, ast.Attribute):
+            return inner.attr == "get_session"
     return False
 
 
@@ -144,18 +187,22 @@ def _keyword_literal(node: ast.Call, keyword_name: str) -> str:
 
 def lint_query_boundary_paths(root: Path | str = ".", *, critical_suffixes: Iterable[str] = CRITICAL_QUERY_PATH_SUFFIXES) -> dict[str, Any]:
     root_path = Path(root).resolve()
-    app_root = root_path / ".overwatch_final"
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     scanned_files = 0
     critical_file_count = 0
     app_file_count = 0
+    selected_tool_file_count = 0
     run_query_call_count = 0
     direct_session_sql_call_count = 0
     direct_session_sql_violation_count = 0
-    for path in sorted(app_root.rglob("*.py")):
+    commit_sha = _git_commit(root_path)
+    for path in _selected_scan_files(root_path):
         rel = path.relative_to(root_path)
-        app_file_count += 1
+        app_file = rel.as_posix().startswith(".overwatch_final/")
+        selected_tool_file = _is_selected_tool_file(rel)
+        app_file_count += 1 if app_file else 0
+        selected_tool_file_count += 1 if selected_tool_file else 0
         critical = _is_critical(rel, critical_suffixes)
         direct_sql_release_blocking = _is_direct_sql_release_blocking(rel)
         scanned_files += 1
@@ -191,6 +238,12 @@ def lint_query_boundary_paths(root: Path | str = ".", *, critical_suffixes: Iter
                     "file": rel.as_posix(),
                     "line": int(getattr(node, "lineno", 0) or 0),
                     "call": "run_query",
+                    "producer": "query_boundary_lint",
+                    "producer_signature": "query_boundary_lint::ast_scan",
+                    "provenance_origin": "producer",
+                    "commit_sha": commit_sha,
+                    "app_file": app_file,
+                    "selected_tool_file": selected_tool_file,
                     "aliases_detected": sorted(aliases - {"run_query"}),
                     "query_boundary_present": has_boundary,
                     "query_boundary": boundary_value,
@@ -211,6 +264,12 @@ def lint_query_boundary_paths(root: Path | str = ".", *, critical_suffixes: Iter
                     "file": rel.as_posix(),
                     "line": int(getattr(node, "lineno", 0) or 0),
                     "call": "session.sql",
+                    "producer": "query_boundary_lint",
+                    "producer_signature": "query_boundary_lint::ast_scan",
+                    "provenance_origin": "producer",
+                    "commit_sha": commit_sha,
+                    "app_file": app_file,
+                    "selected_tool_file": selected_tool_file,
                     "release_blocking_path": release_blocking,
                     "passed": not release_blocking,
                     "failure_reason": reason,
@@ -222,10 +281,15 @@ def lint_query_boundary_paths(root: Path | str = ".", *, critical_suffixes: Iter
                     failures.append({"file": row["file"], "line": row["line"], "failure_reason": reason})
     return {
         "source": "query_boundary_lint",
+        "producer": "query_boundary_lint",
+        "producer_signature": "query_boundary_lint::v2",
+        "provenance_origin": "producer",
+        "commit_sha": commit_sha,
         "generated_at": _now(),
         "passed": not failures,
         "failure_count": len(failures),
         "app_file_count": app_file_count,
+        "selected_tool_file_count": selected_tool_file_count,
         "scanned_file_count": scanned_files,
         "critical_file_count": critical_file_count,
         "run_query_call_count": run_query_call_count,
@@ -243,11 +307,16 @@ def write_query_boundary_lint_artifacts(root: Path | str = ".") -> dict[str, Any
     results = lint_query_boundary_paths(root_path)
     gate = {
         "source": "query_boundary_lint_gate",
+        "producer": "query_boundary_lint",
+        "producer_signature": "query_boundary_lint_gate::v2",
+        "provenance_origin": "producer",
+        "commit_sha": str(results.get("commit_sha") or ""),
         "generated_at": _now(),
         "passed": bool(results.get("passed")),
         "failure_count": int(results.get("failure_count") or 0),
         "missing_query_boundary_count": int(results.get("missing_query_boundary_count") or 0),
         "critical_file_count": int(results.get("critical_file_count") or 0),
+        "selected_tool_file_count": int(results.get("selected_tool_file_count") or 0),
         "scanned_file_count": int(results.get("scanned_file_count") or 0),
         "app_file_count": int(results.get("app_file_count") or 0),
         "run_query_call_count": int(results.get("run_query_call_count") or 0),

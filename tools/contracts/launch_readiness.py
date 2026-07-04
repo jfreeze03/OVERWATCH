@@ -221,6 +221,7 @@ from tools.contracts.first_paint_slo import (
     write_first_paint_slo_artifacts,
 )
 from tools.contracts.performance_budget_gate import (
+    COST_OVERVIEW_NO_AUTOLOAD_GATE_REL,
     PERFORMANCE_BUDGET_GATE_REL,
     PERFORMANCE_BUDGET_RESULTS_REL,
     evaluate_performance_budget_gate,
@@ -365,6 +366,7 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     SQL_CLEANUP_GATE_REL,
     DELETE_FIRST_GATE_REL,
     PERFORMANCE_BUDGET_GATE_REL,
+    COST_OVERVIEW_NO_AUTOLOAD_GATE_REL,
     FIRST_PAINT_SLO_GATE_REL,
     QUERY_BOUNDARY_LINT_GATE_REL,
     TARGETED_EVIDENCE_SQL_PUSHDOWN_GATE_REL,
@@ -5140,6 +5142,7 @@ def _release_gate_matrix(
     targeted_evidence_sql_pushdown_gate = _as_mapping(
         launch_artifacts.get("targeted_evidence_sql_pushdown_gate_results")
     )
+    cost_overview_no_autoload_gate = _as_mapping(launch_artifacts.get("cost_overview_no_autoload_gate_results"))
     query_search_autorun_gate = _as_mapping(launch_artifacts.get("query_search_autorun_gate_results"))
     ui_system_grade_gate = _as_mapping(launch_artifacts.get("ui_system_grade_gate_results"))
     a_grade_execution_matrix_gate = _as_mapping(launch_artifacts.get("a_grade_execution_matrix_gate_results"))
@@ -6214,6 +6217,9 @@ def evaluate_launch_readiness(
             _as_mapping(payloads.get("artifacts/full_app_validation/query_budget_results.json")),
             _as_mapping(payloads.get("artifacts/full_app_validation/cost_overview_no_autoload_results.json")),
         ),
+        "cost_overview_no_autoload_gate_results": _as_mapping(
+            launch_artifacts.get("cost_overview_no_autoload_gate_results")
+        ),
         "first_paint_slo_gate_results": _as_mapping(launch_artifacts.get("first_paint_slo_gate_results")),
         "query_boundary_lint_gate_results": _as_mapping(launch_artifacts.get("query_boundary_lint_gate_results")),
         "ui_system_grade_gate_results": _as_mapping(launch_artifacts.get("ui_system_grade_gate_results")),
@@ -6311,6 +6317,7 @@ def evaluate_launch_readiness(
     targeted_evidence_sql_pushdown_gate = _as_mapping(
         launch_artifacts.get("targeted_evidence_sql_pushdown_gate_results")
     )
+    cost_overview_no_autoload_gate = _as_mapping(launch_artifacts.get("cost_overview_no_autoload_gate_results"))
     query_search_autorun_gate = _as_mapping(launch_artifacts.get("query_search_autorun_gate_results"))
     ui_system_grade_gate = _as_mapping(launch_artifacts.get("ui_system_grade_gate_results"))
     a_grade_execution_matrix_gate = _as_mapping(launch_artifacts.get("a_grade_execution_matrix_gate_results"))
@@ -6546,8 +6553,16 @@ def evaluate_launch_readiness(
         "shell_session_open_count": _as_int(performance_budget_gate.get("shell_session_open_count")),
         "cost_overview_autoload_violation_count": max(
             _as_int(performance_budget_gate.get("cost_overview_autoload_violation_count")),
+            _as_int(cost_overview_no_autoload_gate.get("cost_overview_autoload_violation_count")),
             _as_int(full_app_release_sweep_gate.get("cost_overview_autoload_violation_count")),
         ),
+        "cost_no_autoload_passed": bool(cost_overview_no_autoload_gate.get("passed"))
+        and max(
+            _as_int(performance_budget_gate.get("cost_overview_autoload_violation_count")),
+            _as_int(cost_overview_no_autoload_gate.get("cost_overview_autoload_violation_count")),
+            _as_int(full_app_release_sweep_gate.get("cost_overview_autoload_violation_count")),
+        )
+        == 0,
         "credential_first_paint_violation_count": _security_first_paint_violation_count(payloads),
         "packet_fallback_ui_passed": bool(packet_fallback_gate.get("passed")),
         "packet_fallback_ui_failure_count": _as_int(packet_fallback_gate.get("failure_count")),
@@ -6974,6 +6989,9 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["app_entry_smoke_gate_results"] = app_entry_smoke_artifacts[APP_ENTRY_SMOKE_GATE_REL]
     launch_artifacts["import_laziness_gate_results"] = import_laziness_artifacts[IMPORT_LAZINESS_GATE_REL]
     launch_artifacts["performance_budget_gate_results"] = performance_budget_artifacts[PERFORMANCE_BUDGET_GATE_REL]
+    launch_artifacts["cost_overview_no_autoload_gate_results"] = performance_budget_artifacts[
+        COST_OVERVIEW_NO_AUTOLOAD_GATE_REL
+    ]
     launch_artifacts["first_paint_slo_gate_results"] = first_paint_slo_artifacts[FIRST_PAINT_SLO_GATE_REL]
     launch_artifacts["query_boundary_lint_gate_results"] = query_boundary_lint_artifacts[
         QUERY_BOUNDARY_LINT_GATE_REL

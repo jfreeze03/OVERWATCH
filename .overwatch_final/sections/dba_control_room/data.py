@@ -586,7 +586,7 @@ def _target_query_kwargs(target: dict | None, columns: tuple[str, ...]) -> dict[
         available_columns=columns,
     ).with_fingerprint()
     return {
-        "query_boundary": "evidence",
+        "query_boundary": "evidence_targeted",
         "max_rows": 500,
         "target_label": evidence_target_label(target or {}),
         "target_context_present": bool(target),

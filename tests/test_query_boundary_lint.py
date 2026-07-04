@@ -88,6 +88,46 @@ class QueryBoundaryLintTests(unittest.TestCase):
         self.assertFalse(results["passed"])
         self.assertEqual(results["direct_session_sql_violation_count"], 1)
 
+    def test_chained_get_session_sql_in_shell_path_fails(self):
+        from tools.contracts.query_boundary_lint import lint_query_boundary_paths
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / ".overwatch_final" / "shell.py"
+            target.parent.mkdir(parents=True)
+            target.write_text(
+                "from utils.session import get_session\n"
+                "def bad():\n"
+                "    return get_session().sql('select 1').collect()\n",
+                encoding="utf-8",
+            )
+
+            results = lint_query_boundary_paths(root)
+
+        self.assertFalse(results["passed"])
+        self.assertEqual(results["direct_session_sql_violation_count"], 1)
+
+    def test_selected_contract_producers_are_scanned(self):
+        from tools.contracts.query_boundary_lint import lint_query_boundary_paths
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "tools" / "contracts" / "full_app_runtime_validation.py"
+            target.parent.mkdir(parents=True)
+            target.write_text(
+                "from utils.query import run_query as rq\n"
+                "runner = rq\n"
+                "def ok():\n"
+                "    return runner('select 1', query_boundary='decision_packet')\n",
+                encoding="utf-8",
+            )
+
+            results = lint_query_boundary_paths(root)
+
+        self.assertTrue(results["passed"], results.get("failures"))
+        self.assertEqual(results["selected_tool_file_count"], 1)
+        self.assertTrue(any(row.get("selected_tool_file") for row in results["rows"]))
+
 
 if __name__ == "__main__":
     unittest.main()

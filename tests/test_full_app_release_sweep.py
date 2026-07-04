@@ -350,6 +350,12 @@ def _passing_payload(root: Path) -> dict:
             ],
             "raw_sql_included": False,
         },
+        "artifacts/launch_readiness/cost_overview_no_autoload_gate_results.json": {
+            **passed_gate,
+            "producer": "performance_budget_gate",
+            "producer_signature": "cost_overview_no_autoload_gate::v1",
+            "cost_overview_autoload_violation_count": 0,
+        },
         "artifacts/full_app_validation/action_click_results.json": {"passed": True, "rows": action_rows, "failure_count": 0},
         "artifacts/full_app_validation/button_click_results.json": action_rows,
         "artifacts/full_app_validation/export_results.json": export_rows,

@@ -124,7 +124,11 @@ class PerformanceBudgetGateTests(unittest.TestCase):
         self.assertIn("boundary", reasons)
 
     def test_cost_overview_autoload_artifact_blocks_performance_gate(self):
-        from tools.contracts.performance_budget_gate import PRIMARY_SECTIONS, evaluate_performance_budget_gate
+        from tools.contracts.performance_budget_gate import (
+            PRIMARY_SECTIONS,
+            evaluate_cost_overview_no_autoload_gate,
+            evaluate_performance_budget_gate,
+        )
 
         first_paint = {
             "rows": [
@@ -156,6 +160,28 @@ class PerformanceBudgetGateTests(unittest.TestCase):
         self.assertEqual(gate["cost_overview_autoload_violation_count"], 1)
         reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
         self.assertIn("Cost Overview", reasons)
+        cost_gate = evaluate_cost_overview_no_autoload_gate({
+            "passed": False,
+            "cost_overview_autoload_violation_count": 1,
+            "rows": [
+                {
+                    "section": "Cost & Contract",
+                    "workflow": "Cost Overview",
+                    "failure_reason": "Cost Overview first paint autoloaded evidence/workbench/detail.",
+                    "passed": False,
+                }
+            ],
+        })
+        self.assertFalse(cost_gate["passed"])
+        self.assertEqual(cost_gate["cost_overview_autoload_violation_count"], 1)
+
+    def test_cost_overview_no_autoload_gate_requires_runtime_artifact(self):
+        from tools.contracts.performance_budget_gate import evaluate_cost_overview_no_autoload_gate
+
+        gate = evaluate_cost_overview_no_autoload_gate({})
+
+        self.assertFalse(gate["passed"])
+        self.assertEqual(gate["cost_overview_autoload_violation_count"], 1)
 
     def test_pre_first_paint_shell_session_and_metadata_probe_fail(self):
         from tools.contracts.performance_budget_gate import PRIMARY_SECTIONS, evaluate_performance_budget_gate

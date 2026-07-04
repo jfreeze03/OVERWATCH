@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import subprocess
 from typing import Any, Iterable, Mapping
 
 
@@ -14,6 +15,7 @@ LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
 PERFORMANCE_BUDGET_RESULTS_REL = f"{FULL_APP_DIR}/performance_budget_results.json"
 PERFORMANCE_BUDGET_GATE_REL = f"{LAUNCH_READINESS_DIR}/performance_budget_gate_results.json"
 COST_OVERVIEW_NO_AUTOLOAD_RESULTS_REL = f"{FULL_APP_DIR}/cost_overview_no_autoload_results.json"
+COST_OVERVIEW_NO_AUTOLOAD_GATE_REL = f"{LAUNCH_READINESS_DIR}/cost_overview_no_autoload_gate_results.json"
 TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL = f"{FULL_APP_DIR}/targeted_evidence_sql_pushdown_results.json"
 QUERY_SEARCH_AUTORUN_RESULTS_REL = f"{FULL_APP_DIR}/query_search_autorun_results.json"
 
@@ -59,6 +61,18 @@ REQUIRED_FIRST_PAINT_FIELDS = (
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _git_commit(root: Path | str = ".") -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(root),
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return ""
 
 
 def _write_json(path: Path, payload: Any) -> None:
@@ -434,6 +448,51 @@ def evaluate_performance_budget_gate(
     }
 
 
+def evaluate_cost_overview_no_autoload_gate(payload: Any, *, commit_sha: str = "") -> dict[str, Any]:
+    cost_payload = payload if isinstance(payload, Mapping) else {}
+    rows = _rows(cost_payload)
+    failures: list[dict[str, Any]] = []
+    violation_count = _as_int(cost_payload.get("cost_overview_autoload_violation_count"))
+    if not cost_payload:
+        failures.append({
+            "section": "Cost & Contract",
+            "workflow": "Cost Overview",
+            "failure_reason": "missing Cost Overview no-autoload runtime artifact",
+        })
+        violation_count = 1
+    elif not bool(cost_payload.get("passed")):
+        failures.extend(
+            {
+                "section": str(row.get("section") or "Cost & Contract"),
+                "workflow": str(row.get("workflow") or "Cost Overview"),
+                "failure_reason": str(row.get("failure_reason") or "Cost Overview no-autoload proof failed"),
+            }
+            for row in (rows or [{"section": "Cost & Contract", "workflow": "Cost Overview"}])
+            if not bool(row.get("passed", cost_payload.get("passed")))
+        )
+        if not violation_count:
+            violation_count = max(1, len(failures))
+    return {
+        "source": "cost_overview_no_autoload_gate_results",
+        "producer": "performance_budget_gate",
+        "producer_signature": "cost_overview_no_autoload_gate::v1",
+        "provenance_origin": "producer",
+        "generated_at": _now(),
+        "commit_sha": str(commit_sha or cost_payload.get("commit_sha") or ""),
+        "passed": not failures,
+        "failure_count": len(failures),
+        "cost_overview_autoload_violation_count": violation_count,
+        "first_paint_packet_only": bool(cost_payload.get("first_paint_packet_only", True)) and not failures,
+        "evidence_autoload_count": _as_int(cost_payload.get("evidence_autoload_count")),
+        "cost_workbench_autoload_count": _as_int(cost_payload.get("cost_workbench_autoload_count")),
+        "chart_detail_autoload_count": _as_int(cost_payload.get("chart_detail_autoload_count")),
+        "account_usage_autoload_count": _as_int(cost_payload.get("account_usage_autoload_count")),
+        "rows": rows,
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+
+
 def write_performance_budget_gate_artifacts(root: Path | str = ".") -> dict[str, Any]:
     root_path = Path(root).resolve()
     first_paint = _load_json(root_path / f"{FULL_APP_DIR}/first_paint_performance_results.json")
@@ -442,6 +501,7 @@ def write_performance_budget_gate_artifacts(root: Path | str = ".") -> dict[str,
     target_pushdown = _load_json(root_path / TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL)
     query_search_autorun = _load_json(root_path / QUERY_SEARCH_AUTORUN_RESULTS_REL)
     gate = evaluate_performance_budget_gate(first_paint, query_budget, cost_overview, target_pushdown, query_search_autorun)
+    cost_gate = evaluate_cost_overview_no_autoload_gate(cost_overview, commit_sha=_git_commit(root_path))
     results = {
         "source": "performance_budget_results",
         "generated_at": _now(),
@@ -460,9 +520,11 @@ def write_performance_budget_gate_artifacts(root: Path | str = ".") -> dict[str,
     }
     _write_json(root_path / PERFORMANCE_BUDGET_RESULTS_REL, results)
     _write_json(root_path / PERFORMANCE_BUDGET_GATE_REL, gate)
+    _write_json(root_path / COST_OVERVIEW_NO_AUTOLOAD_GATE_REL, cost_gate)
     return {
         PERFORMANCE_BUDGET_RESULTS_REL: results,
         PERFORMANCE_BUDGET_GATE_REL: gate,
+        COST_OVERVIEW_NO_AUTOLOAD_GATE_REL: cost_gate,
     }
 
 
@@ -475,11 +537,13 @@ if __name__ == "__main__":
 
 __all__ = [
     "COST_OVERVIEW_NO_AUTOLOAD_RESULTS_REL",
+    "COST_OVERVIEW_NO_AUTOLOAD_GATE_REL",
     "QUERY_SEARCH_AUTORUN_RESULTS_REL",
     "TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL",
     "PERFORMANCE_BUDGET_GATE_REL",
     "PERFORMANCE_BUDGET_RESULTS_REL",
     "PRIMARY_SECTIONS",
+    "evaluate_cost_overview_no_autoload_gate",
     "evaluate_performance_budget_gate",
     "write_performance_budget_gate_artifacts",
 ]

@@ -44,8 +44,34 @@ def _first_paint_row(section: str, **overrides):
     return row
 
 
-def _access_control_artifact(**overrides):
+def _query_boundary_artifact(**overrides):
+    commit_sha = str(overrides.get("commit_sha") or "")
     payload = {
+        "commit_sha": commit_sha,
+        "producer": "query_boundary_lint",
+        "producer_signature": "query_boundary_lint::v2",
+        "passed": True,
+        "failure_count": 0,
+        "rows": [
+            {
+                "id": "query_boundary_lint::repo_scan",
+                "commit_sha": commit_sha,
+                "producer": "query_boundary_lint",
+                "producer_signature": "query_boundary_lint::ast_scan",
+                "passed": True,
+                "raw_sql_included": False,
+            }
+        ],
+        "raw_sql_included": False,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _access_control_artifact(**overrides):
+    commit_sha = str(overrides.get("commit_sha") or "")
+    payload = {
+        "commit_sha": commit_sha,
         "producer": "access_control_runtime",
         "producer_signature": "access_control_runtime::v1",
         "passed": True,
@@ -58,6 +84,9 @@ def _access_control_artifact(**overrides):
         "rows": [
             {
                 "id": "access_control::shell_first_paint_no_get_session",
+                "commit_sha": commit_sha,
+                "producer": "access_control_runtime",
+                "producer_signature": "access_control_runtime::runtime_probe",
                 "passed": True,
                 "raw_sql_included": False,
             }
@@ -68,6 +97,93 @@ def _access_control_artifact(**overrides):
     return payload
 
 
+def _cost_no_autoload_artifact(**overrides):
+    commit_sha = str(overrides.get("commit_sha") or "")
+    payload = {
+        "commit_sha": commit_sha,
+        "producer": "full_app_runtime_validation",
+        "producer_signature": "cost_overview_no_autoload::v1",
+        "passed": True,
+        "failure_count": 0,
+        "cost_overview_autoload_violation_count": 0,
+        "rows": [
+            {
+                "id": "cost_overview_no_autoload::cost_contract",
+                "commit_sha": commit_sha,
+                "producer": "full_app_runtime_validation",
+                "producer_signature": "cost_overview_no_autoload::runtime_row",
+                "passed": True,
+                "raw_sql_included": False,
+            }
+        ],
+        "raw_sql_included": False,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _target_pushdown_artifact(**overrides):
+    commit_sha = str(overrides.get("commit_sha") or "")
+    payload = {
+        "commit_sha": commit_sha,
+        "producer": "targeted_evidence_sql_pushdown",
+        "producer_signature": "targeted_evidence_sql_pushdown::v1",
+        "passed": True,
+        "failure_count": 0,
+        "target_pushdown_violation_count": 0,
+        "rows": [
+            {
+                "id": "target_pushdown::alert_center_finding",
+                "commit_sha": commit_sha,
+                "producer": "targeted_evidence_sql_pushdown",
+                "producer_signature": "targeted_evidence_sql_pushdown::v1",
+                "passed": True,
+                "raw_sql_included": False,
+            }
+        ],
+        "raw_sql_included": False,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _query_search_autorun_artifact(**overrides):
+    commit_sha = str(overrides.get("commit_sha") or "")
+    payload = {
+        "commit_sha": commit_sha,
+        "producer": "query_search_autorun",
+        "producer_signature": "query_search_autorun::v1",
+        "passed": True,
+        "failure_count": 0,
+        "query_search_broad_autorun_count": 0,
+        "rows": [
+            {
+                "id": "query_search_autorun::render_no_click",
+                "commit_sha": commit_sha,
+                "producer": "query_search_autorun",
+                "producer_signature": "query_search_autorun::v1",
+                "passed": True,
+                "raw_sql_included": False,
+            }
+        ],
+        "raw_sql_included": False,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _support_kwargs(commit_sha: str = "", **overrides):
+    support = {
+        "access_control_payload": _access_control_artifact(commit_sha=commit_sha),
+        "cost_overview_payload": _cost_no_autoload_artifact(commit_sha=commit_sha),
+        "target_pushdown_payload": _target_pushdown_artifact(commit_sha=commit_sha),
+        "query_search_autorun_payload": _query_search_autorun_artifact(commit_sha=commit_sha),
+        "query_boundary_lint_payload": _query_boundary_artifact(commit_sha=commit_sha),
+    }
+    support.update(overrides)
+    return support
+
+
 class PerformanceBudgetGateTests(unittest.TestCase):
     def test_primary_first_paint_packet_only_passes(self):
         from tools.contracts.performance_budget_gate import PRIMARY_SECTIONS, evaluate_performance_budget_gate
@@ -76,7 +192,11 @@ class PerformanceBudgetGateTests(unittest.TestCase):
             "rows": [_first_paint_row(section) for section in PRIMARY_SECTIONS]
         }
 
-        gate = evaluate_performance_budget_gate(payload, {"rows": []}, access_control_payload=_access_control_artifact())
+        gate = evaluate_performance_budget_gate(
+            payload,
+            {"rows": []},
+            **_support_kwargs(),
+        )
 
         self.assertTrue(gate["passed"], gate.get("failures"))
 
@@ -95,7 +215,7 @@ class PerformanceBudgetGateTests(unittest.TestCase):
                 ]
             },
             {"rows": []},
-            access_control_payload=_access_control_artifact(),
+            **_support_kwargs(),
         )
 
         self.assertFalse(gate["passed"])
@@ -114,7 +234,7 @@ class PerformanceBudgetGateTests(unittest.TestCase):
                     {"section": "Workload Operations", "boundary": "query_search_no_click", "query_count": 1},
                 ]
             },
-            access_control_payload=_access_control_artifact(),
+            **_support_kwargs(),
         )
 
         self.assertFalse(gate["passed"])
@@ -125,7 +245,11 @@ class PerformanceBudgetGateTests(unittest.TestCase):
     def test_missing_first_paint_rows_fail(self):
         from tools.contracts.performance_budget_gate import evaluate_performance_budget_gate
 
-        gate = evaluate_performance_budget_gate({"rows": []}, {"rows": []}, access_control_payload=_access_control_artifact())
+        gate = evaluate_performance_budget_gate(
+            {"rows": []},
+            {"rows": []},
+            **_support_kwargs(),
+        )
 
         self.assertFalse(gate["passed"])
         self.assertGreaterEqual(len(gate["failures"]), 6)
@@ -144,7 +268,7 @@ class PerformanceBudgetGateTests(unittest.TestCase):
                 ]
             },
             {"rows": []},
-            access_control_payload=_access_control_artifact(),
+            **_support_kwargs(),
         )
 
         self.assertFalse(gate["passed"])
@@ -157,7 +281,7 @@ class PerformanceBudgetGateTests(unittest.TestCase):
         gate = evaluate_performance_budget_gate(
             {"rows": [_first_paint_row("Executive Landing", query_boundary="compact_evidence")]},
             {"rows": []},
-            access_control_payload=_access_control_artifact(),
+            **_support_kwargs(),
         )
 
         self.assertFalse(gate["passed"])
@@ -195,7 +319,11 @@ class PerformanceBudgetGateTests(unittest.TestCase):
                     }
                 ],
             },
-            access_control_payload=_access_control_artifact(),
+            **{
+                key: value
+                for key, value in _support_kwargs().items()
+                if key != "cost_overview_payload"
+            },
         )
 
         self.assertFalse(gate["passed"])
@@ -241,7 +369,11 @@ class PerformanceBudgetGateTests(unittest.TestCase):
             ]
         }
 
-        gate = evaluate_performance_budget_gate(first_paint, {"rows": []}, access_control_payload=_access_control_artifact())
+        gate = evaluate_performance_budget_gate(
+            first_paint,
+            {"rows": []},
+            **_support_kwargs(),
+        )
 
         self.assertFalse(gate["passed"])
         self.assertEqual(gate["pre_first_paint_session_open_count"], 1)
@@ -256,11 +388,58 @@ class PerformanceBudgetGateTests(unittest.TestCase):
 
         first_paint = {"rows": [_first_paint_row(section) for section in PRIMARY_SECTIONS]}
 
-        gate = evaluate_performance_budget_gate(first_paint, {"rows": []}, access_control_payload={})
+        gate = evaluate_performance_budget_gate(
+            first_paint,
+            {"rows": []},
+            access_control_payload={},
+            **{
+                key: value
+                for key, value in _support_kwargs().items()
+                if key != "access_control_payload"
+            },
+        )
 
         self.assertFalse(gate["passed"])
         reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
         self.assertIn("Access control runtime", reasons)
+
+    def test_wrong_commit_support_artifact_blocks_performance_gate(self):
+        from tools.contracts.performance_budget_gate import PRIMARY_SECTIONS, evaluate_performance_budget_gate
+
+        first_paint = {"rows": [_first_paint_row(section, commit_sha="current") for section in PRIMARY_SECTIONS]}
+
+        gate = evaluate_performance_budget_gate(
+            first_paint,
+            {"rows": []},
+            access_control_payload=_access_control_artifact(commit_sha="old"),
+            **{
+                key: value
+                for key, value in _support_kwargs("current").items()
+                if key != "access_control_payload"
+            },
+        )
+
+        self.assertFalse(gate["passed"])
+        reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
+        self.assertIn("commit_sha mismatch", reasons)
+
+    def test_query_boundary_artifact_failure_count_blocks_performance_gate(self):
+        from tools.contracts.performance_budget_gate import PRIMARY_SECTIONS, evaluate_performance_budget_gate
+
+        first_paint = {"rows": [_first_paint_row(section, commit_sha="current") for section in PRIMARY_SECTIONS]}
+
+        gate = evaluate_performance_budget_gate(
+            first_paint,
+            {"rows": []},
+            **_support_kwargs(
+                "current",
+                query_boundary_lint_payload=_query_boundary_artifact(commit_sha="current", failure_count=1),
+            ),
+        )
+
+        self.assertFalse(gate["passed"])
+        reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
+        self.assertIn("failure_count=1", reasons)
 
 
 if __name__ == "__main__":

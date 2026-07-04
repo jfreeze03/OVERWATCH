@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from tools.contracts.artifact_integrity import verify_supporting_artifact
+
 
 FULL_APP_DIR = "artifacts/full_app_validation"
 LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
@@ -17,6 +19,7 @@ ACCESS_CONTROL_RUNTIME_RESULTS_REL = f"{FULL_APP_DIR}/access_control_runtime_res
 COST_OVERVIEW_NO_AUTOLOAD_RESULTS_REL = f"{FULL_APP_DIR}/cost_overview_no_autoload_results.json"
 TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL = f"{FULL_APP_DIR}/targeted_evidence_sql_pushdown_results.json"
 QUERY_SEARCH_AUTORUN_RESULTS_REL = f"{FULL_APP_DIR}/query_search_autorun_results.json"
+QUERY_BOUNDARY_LINT_RESULTS_REL = f"{FULL_APP_DIR}/query_boundary_lint_results.json"
 
 COLD_FIRST_PAINT_SLO_MS = 1_500
 WARM_SECTION_SWITCH_SLO_MS = 300
@@ -124,59 +127,6 @@ def _commit_from_rows(rows: Iterable[Mapping[str, Any]]) -> str:
     return ""
 
 
-def _supporting_artifact_failure(
-    label: str,
-    payload: Any,
-    *,
-    zero_counter_keys: tuple[str, ...] = (),
-) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    if payload is None:
-        return None, {"provided": False, "passed": True}
-    if not isinstance(payload, Mapping) or not payload:
-        return (
-            {
-                "section": label,
-                "workflow": "Supporting artifact",
-                "failure_reason": f"missing {label} proof artifact",
-            },
-            {"provided": True, "passed": False},
-        )
-
-    rows = _rows(payload)
-    reasons: list[str] = []
-    if not payload.get("producer"):
-        reasons.append("missing producer")
-    if not payload.get("producer_signature"):
-        reasons.append("missing producer_signature")
-    if bool(payload.get("raw_sql_included")):
-        reasons.append("raw_sql_included=true")
-    if not bool(payload.get("passed")):
-        reasons.append(str(payload.get("failure_reason") or f"{label} proof did not pass"))
-    if not rows:
-        reasons.append("row-level proof missing")
-    for key in zero_counter_keys:
-        if _as_int(payload.get(key)):
-            reasons.append(f"{key}={_as_int(payload.get(key))}")
-
-    summary = {
-        "provided": True,
-        "passed": not reasons,
-        "row_count": len(rows),
-        "failure_count": _as_int(payload.get("failure_count")) or len(reasons),
-        **{key: _as_int(payload.get(key)) for key in zero_counter_keys},
-    }
-    if not reasons:
-        return None, summary
-    return (
-        {
-            "section": label,
-            "workflow": "Supporting artifact",
-            "failure_reason": "; ".join(reasons),
-        },
-        summary,
-    )
-
-
 def evaluate_first_paint_slo(
     first_paint_payload: Any,
     *,
@@ -185,6 +135,7 @@ def evaluate_first_paint_slo(
     cost_overview_payload: Any | None = None,
     target_pushdown_payload: Any | None = None,
     query_search_autorun_payload: Any | None = None,
+    query_boundary_lint_payload: Any | None = None,
 ) -> dict[str, Any]:
     """Evaluate SLO rows without treating missing telemetry as success."""
 
@@ -218,11 +169,20 @@ def evaluate_first_paint_slo(
             query_search_autorun_payload,
             ("query_search_broad_autorun_count",),
         ),
+        (
+            "Query boundary lint",
+            query_boundary_lint_payload,
+            (),
+        ),
     ):
-        failure, summary = _supporting_artifact_failure(label, payload, zero_counter_keys=counters)
+        failures, summary = verify_supporting_artifact(
+            label,
+            payload,
+            expected_commit_sha=commit_sha,
+            zero_counter_keys=counters,
+        )
         support_checks[label] = summary
-        if failure:
-            supporting_failures.append(failure)
+        supporting_failures.extend(failures)
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = [*supporting_failures]
     seen_sections: set[str] = set()
@@ -408,6 +368,7 @@ def evaluate_first_paint_slo(
         "cost_no_autoload_passed": bool(support_checks.get("Cost Overview no-autoload", {}).get("passed", True)),
         "target_pushdown_passed": bool(support_checks.get("Targeted evidence SQL pushdown", {}).get("passed", True)),
         "query_search_autorun_passed": bool(support_checks.get("Query Search autorun", {}).get("passed", True)),
+        "query_boundary_lint_passed": bool(support_checks.get("Query boundary lint", {}).get("passed", True)),
         "rows": rows,
         "failures": failures,
         "raw_sql_included": False,
@@ -422,6 +383,7 @@ def write_first_paint_slo_artifacts(root: Path | str = ".") -> dict[str, Any]:
     cost_overview = _load_json(root_path / COST_OVERVIEW_NO_AUTOLOAD_RESULTS_REL)
     target_pushdown = _load_json(root_path / TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL)
     query_search_autorun = _load_json(root_path / QUERY_SEARCH_AUTORUN_RESULTS_REL)
+    query_boundary_lint = _load_json(root_path / QUERY_BOUNDARY_LINT_RESULTS_REL)
     gate = evaluate_first_paint_slo(
         first_paint,
         packet_size_payload=packet_size,
@@ -429,6 +391,7 @@ def write_first_paint_slo_artifacts(root: Path | str = ".") -> dict[str, Any]:
         cost_overview_payload=cost_overview,
         target_pushdown_payload=target_pushdown,
         query_search_autorun_payload=query_search_autorun,
+        query_boundary_lint_payload=query_boundary_lint,
     )
     results = {
         "source": "first_paint_slo_results",
@@ -456,6 +419,7 @@ def write_first_paint_slo_artifacts(root: Path | str = ".") -> dict[str, Any]:
         "cost_no_autoload_passed": bool(gate.get("cost_no_autoload_passed")),
         "target_pushdown_passed": bool(gate.get("target_pushdown_passed")),
         "query_search_autorun_passed": bool(gate.get("query_search_autorun_passed")),
+        "query_boundary_lint_passed": bool(gate.get("query_boundary_lint_passed")),
         "rows": gate.get("rows", []),
         "failures": gate.get("failures", []),
         "raw_sql_included": False,
@@ -478,6 +442,7 @@ __all__ = [
     "FIRST_PAINT_REQUIRED_TELEMETRY_FIELDS",
     "FIRST_PAINT_SLO_GATE_REL",
     "FIRST_PAINT_SLO_RESULTS_REL",
+    "QUERY_BOUNDARY_LINT_RESULTS_REL",
     "evaluate_first_paint_slo",
     "write_first_paint_slo_artifacts",
 ]

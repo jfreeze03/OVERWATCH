@@ -25,14 +25,19 @@ RELEASE_CANDIDATE_DIR = "artifacts/release_candidate"
 CI_ARTIFACT_REALITY_RESULTS_REL = f"{LAUNCH_READINESS_DIR}/ci_artifact_reality_results.json"
 CI_ARTIFACT_REALITY_GATE_REL = f"{LAUNCH_READINESS_DIR}/ci_artifact_reality_gate_results.json"
 LOCAL_ARTIFACT_PROOF_REL = f"{RELEASE_CANDIDATE_DIR}/local_artifact_proof.json"
+RELEASE_CANDIDATE_SUMMARY_REL = f"{RELEASE_CANDIDATE_DIR}/release_candidate_summary.json"
+LAUNCH_READINESS_SUMMARY_REL = f"{LAUNCH_READINESS_DIR}/launch_readiness_summary.json"
+ARTIFACT_MANIFEST_REL = f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json"
+ARTIFACT_HASHES_REL = f"{RELEASE_CANDIDATE_DIR}/artifact_hashes.json"
 
 PRODUCER = "ci_artifact_reality"
+LOCAL_ARTIFACT_PROOF_SIGNATURE = "ci_artifact_reality::local_artifact_proof::v2"
 
 REQUIRED_LOCAL_ARTIFACTS = (
-    f"{RELEASE_CANDIDATE_DIR}/release_candidate_summary.json",
-    f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json",
-    f"{RELEASE_CANDIDATE_DIR}/artifact_hashes.json",
-    f"{LAUNCH_READINESS_DIR}/launch_readiness_summary.json",
+    RELEASE_CANDIDATE_SUMMARY_REL,
+    ARTIFACT_MANIFEST_REL,
+    ARTIFACT_HASHES_REL,
+    LAUNCH_READINESS_SUMMARY_REL,
 )
 
 
@@ -97,6 +102,16 @@ def _artifact_commit_sha(payload: Mapping[str, Any]) -> str:
     return ""
 
 
+def _summary_hard_gate_failure_count(*summaries: Mapping[str, Any]) -> int:
+    counts: list[int] = []
+    for summary in summaries:
+        if not summary:
+            continue
+        counts.append(_as_int(summary.get("hard_gate_failure_count")))
+        counts.append(_as_int(summary.get("failure_count")))
+    return max(counts) if counts else 0
+
+
 def _scan_text_counts(root: Path) -> tuple[int, int, int]:
     """Return token path, temp SQL path, and raw SQL body leak counts."""
 
@@ -138,6 +153,23 @@ def build_local_artifact_proof(
 ) -> dict[str, Any]:
     root_path = Path(root).resolve()
     commit_sha = _git_sha(root_path)
+    created_at = _utc_now()
+    release_candidate_summary = (
+        {} if allow_in_progress_launch_readiness else _load_json(root_path, RELEASE_CANDIDATE_SUMMARY_REL)
+    )
+    launch_readiness_summary = (
+        {} if allow_in_progress_launch_readiness else _load_json(root_path, LAUNCH_READINESS_SUMMARY_REL)
+    )
+    summary_paths = [
+        rel
+        for rel in (RELEASE_CANDIDATE_SUMMARY_REL, LAUNCH_READINESS_SUMMARY_REL)
+        if (root_path / rel).exists()
+        or (allow_in_progress_launch_readiness and rel == LAUNCH_READINESS_SUMMARY_REL)
+    ]
+    hard_gate_failure_count = _summary_hard_gate_failure_count(
+        release_candidate_summary,
+        launch_readiness_summary,
+    )
     artifact_hashes: list[dict[str, Any]] = []
     artifacts_root = root_path / "artifacts"
     if artifacts_root.exists():
@@ -162,24 +194,40 @@ def build_local_artifact_proof(
     ]
     signature_payload = {
         "commit_sha": commit_sha,
+        "created_at": created_at,
         "profile": profile,
+        "producer": PRODUCER,
+        "producer_signature": LOCAL_ARTIFACT_PROOF_SIGNATURE,
+        "proof_type": "local_artifact_reality",
+        "artifact_hash_manifest": ARTIFACT_HASHES_REL,
         "artifact_hashes": artifact_hashes,
+        "artifact_manifest": ARTIFACT_MANIFEST_REL,
+        "summary_paths": summary_paths,
+        "hard_gate_failure_count": hard_gate_failure_count,
         "missing_required_artifacts": missing_required,
     }
     signature = hashlib.sha256(json.dumps(signature_payload, sort_keys=True).encode("utf-8")).hexdigest()
     return {
+        "proof_type": "local_artifact_reality",
         "source": "local_artifact_proof",
         "producer": PRODUCER,
+        "producer_signature": LOCAL_ARTIFACT_PROOF_SIGNATURE,
         "provenance_origin": "producer",
-        "generated_at": _utc_now(),
+        "generated_at": created_at,
+        "created_at": created_at,
         "commit_sha": commit_sha,
         "launch_profile": profile,
+        "signature": signature,
         "local_artifact_signature": signature,
+        "artifact_hash_manifest": ARTIFACT_HASHES_REL,
+        "artifact_manifest": ARTIFACT_MANIFEST_REL,
         "artifact_count": len(artifact_hashes),
+        "summary_paths": summary_paths,
+        "hard_gate_failure_count": hard_gate_failure_count,
         "required_artifacts": list(REQUIRED_LOCAL_ARTIFACTS),
         "missing_required_artifacts": missing_required,
         "missing_required_artifact_count": len(missing_required),
-        "passed": not missing_required and bool(artifact_hashes),
+        "passed": not missing_required and bool(artifact_hashes) and hard_gate_failure_count == 0,
         "raw_sql_included": False,
         "token_file_path_stored": False,
         "temp_sql_file_path_stored": False,
@@ -219,12 +267,20 @@ def build_ci_artifact_reality_results(
     artifact_review = artifact_review or {}
     release_reconciliation = release_reconciliation or {}
     commit_sha = _git_sha(root_path)
-    release_candidate_summary = _load_json(root_path, f"{RELEASE_CANDIDATE_DIR}/release_candidate_summary.json")
-    launch_readiness_summary = _load_json(root_path, f"{LAUNCH_READINESS_DIR}/launch_readiness_summary.json")
-    artifact_manifest = _load_json(root_path, f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json")
-    artifact_hashes = _load_json(root_path, f"{RELEASE_CANDIDATE_DIR}/artifact_hashes.json")
+    release_candidate_summary = (
+        {} if allow_in_progress_launch_readiness else _load_json(root_path, RELEASE_CANDIDATE_SUMMARY_REL)
+    )
+    launch_readiness_summary = (
+        {} if allow_in_progress_launch_readiness else _load_json(root_path, LAUNCH_READINESS_SUMMARY_REL)
+    )
+    artifact_manifest = _load_json(root_path, ARTIFACT_MANIFEST_REL)
+    artifact_hashes = _load_json(root_path, ARTIFACT_HASHES_REL)
     artifact_hash_rows = _as_list(artifact_hashes.get("hashes"))
     artifact_manifest_rows = _as_list(artifact_manifest.get("files"))
+    summary_hard_gate_failure_count = _summary_hard_gate_failure_count(
+        release_candidate_summary,
+        launch_readiness_summary,
+    )
     github_actions = bool(ci_run_review.get("github_actions")) or os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
     workflow_run_id = str(ci_run_review.get("workflow_run_id") or os.environ.get("GITHUB_RUN_ID") or "")
     workflow_run_url = str(ci_run_review.get("workflow_url") or "")
@@ -254,10 +310,10 @@ def build_ci_artifact_reality_results(
     artifact_commit_mismatches: list[dict[str, Any]] = []
     if commit_sha:
         for rel, payload in (
-            (f"{RELEASE_CANDIDATE_DIR}/release_candidate_summary.json", release_candidate_summary),
-            (f"{LAUNCH_READINESS_DIR}/launch_readiness_summary.json", launch_readiness_summary),
-            (f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json", artifact_manifest),
-            (f"{RELEASE_CANDIDATE_DIR}/artifact_hashes.json", artifact_hashes),
+            (RELEASE_CANDIDATE_SUMMARY_REL, release_candidate_summary),
+            (LAUNCH_READINESS_SUMMARY_REL, launch_readiness_summary),
+            (ARTIFACT_MANIFEST_REL, artifact_manifest),
+            (ARTIFACT_HASHES_REL, artifact_hashes),
         ):
             artifact_commit = _artifact_commit_sha(payload)
             if artifact_commit and artifact_commit != commit_sha:
@@ -282,11 +338,20 @@ def build_ci_artifact_reality_results(
 
     if not github_proof and not local_proof_ok:
         fail("ARTIFACT_PROOF_MISSING", "No GitHub Actions artifact proof or signed local artifact proof is available.")
+    if _as_int(local_proof.get("hard_gate_failure_count")):
+        fail(
+            "LOCAL_ARTIFACT_HARD_GATE_FAILURE",
+            "Signed local artifact proof references release summaries with hard gate failures.",
+            details={
+                "hard_gate_failure_count": _as_int(local_proof.get("hard_gate_failure_count")),
+                "summary_paths": _as_list(local_proof.get("summary_paths")),
+            },
+        )
     if required_missing:
         fail("REQUIRED_ARTIFACT_MISSING", "Required release artifacts are missing.", details=required_missing)
-    if (root_path / f"{RELEASE_CANDIDATE_DIR}/artifact_hashes.json").exists() and not artifact_hash_rows:
+    if (root_path / ARTIFACT_HASHES_REL).exists() and not artifact_hash_rows:
         fail("ARTIFACT_HASH_BUNDLE_EMPTY", "Release artifact hash bundle exists but contains no file hashes.")
-    if (root_path / f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json").exists() and not artifact_manifest_rows:
+    if (root_path / ARTIFACT_MANIFEST_REL).exists() and not artifact_manifest_rows:
         fail("ARTIFACT_MANIFEST_EMPTY", "Release artifact manifest exists but contains no files.")
     if artifact_commit_mismatches:
         fail("LOCAL_ARTIFACT_COMMIT_MISMATCH", "Local release artifacts do not match the current source commit.", details=artifact_commit_mismatches)
@@ -321,16 +386,22 @@ def build_ci_artifact_reality_results(
         "github_actions": github_actions,
         "workflow_run_id": workflow_run_id,
         "workflow_run_url": workflow_run_url,
-        "local_artifact_signature": str(local_proof.get("local_artifact_signature") or ""),
+        "proof_type": str(local_proof.get("proof_type") or ""),
+        "producer_signature": str(local_proof.get("producer_signature") or ""),
+        "signature": str(local_proof.get("signature") or local_proof.get("local_artifact_signature") or ""),
+        "local_artifact_signature": str(local_proof.get("local_artifact_signature") or local_proof.get("signature") or ""),
         "local_artifact_proof_path": LOCAL_ARTIFACT_PROOF_REL,
+        "artifact_hash_manifest": str(local_proof.get("artifact_hash_manifest") or ""),
+        "summary_paths": _as_list(local_proof.get("summary_paths")),
+        "summary_hard_gate_failure_count": summary_hard_gate_failure_count,
         "artifact_upload_count": len(uploaded_artifacts) if github_proof else int(local_proof.get("artifact_count") or 0),
         "required_artifact_count": len(REQUIRED_LOCAL_ARTIFACTS),
         "missing_required_artifacts": required_missing,
-        "release_candidate_summary_exists": (root_path / f"{RELEASE_CANDIDATE_DIR}/release_candidate_summary.json").exists(),
-        "launch_readiness_summary_exists": (root_path / f"{LAUNCH_READINESS_DIR}/launch_readiness_summary.json").exists()
+        "release_candidate_summary_exists": (root_path / RELEASE_CANDIDATE_SUMMARY_REL).exists(),
+        "launch_readiness_summary_exists": (root_path / LAUNCH_READINESS_SUMMARY_REL).exists()
         or allow_in_progress_launch_readiness,
-        "artifact_hashes_exists": (root_path / f"{RELEASE_CANDIDATE_DIR}/artifact_hashes.json").exists(),
-        "artifact_manifest_exists": (root_path / f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json").exists(),
+        "artifact_hashes_exists": (root_path / ARTIFACT_HASHES_REL).exists(),
+        "artifact_manifest_exists": (root_path / ARTIFACT_MANIFEST_REL).exists(),
         "artifact_hash_count": len(artifact_hash_rows),
         "artifact_manifest_file_count": len(artifact_manifest_rows),
         "artifact_commit_mismatch_count": len(artifact_commit_mismatches),
@@ -359,8 +430,14 @@ def evaluate_ci_artifact_reality_gate(results: Mapping[str, Any] | None) -> dict
         "commit_sha": str(results.get("commit_sha") or ""),
         "passed": passed,
         "failure_count": len(failures),
-        "hard_gate_failure_count": len(failures),
-        "local_artifact_signature": str(results.get("local_artifact_signature") or ""),
+        "hard_gate_failure_count": max(len(failures), _as_int(results.get("summary_hard_gate_failure_count"))),
+        "proof_type": str(results.get("proof_type") or ""),
+        "producer_signature": str(results.get("producer_signature") or ""),
+        "signature": str(results.get("signature") or results.get("local_artifact_signature") or ""),
+        "local_artifact_signature": str(results.get("local_artifact_signature") or results.get("signature") or ""),
+        "artifact_hash_manifest": str(results.get("artifact_hash_manifest") or ""),
+        "summary_paths": _as_list(results.get("summary_paths")),
+        "summary_hard_gate_failure_count": _as_int(results.get("summary_hard_gate_failure_count")),
         "workflow_run_id": str(results.get("workflow_run_id") or ""),
         "workflow_run_url": str(results.get("workflow_run_url") or ""),
         "token_path_leak_count": _as_int(results.get("token_path_leak_count")),

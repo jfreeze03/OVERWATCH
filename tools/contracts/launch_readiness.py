@@ -144,6 +144,11 @@ from tools.contracts.a_grade_execution_matrix import (
     A_GRADE_EXECUTION_MATRIX_SUMMARY_REL,
     write_a_grade_execution_matrix_artifacts,
 )
+from tools.contracts.artifact_verifier import (
+    ARTIFACT_INTEGRITY_GATE_REL,
+    ARTIFACT_INTEGRITY_RESULTS_REL,
+    write_artifact_integrity_artifacts,
+)
 from tools.contracts.post_deploy_smoke import (
     POST_DEPLOY_SMOKE_GATE_REL,
     POST_DEPLOY_SMOKE_RESULTS_REL,
@@ -373,6 +378,7 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     QUERY_SEARCH_AUTORUN_GATE_REL,
     UI_SYSTEM_GRADE_GATE_REL,
     A_GRADE_EXECUTION_MATRIX_GATE_REL,
+    ARTIFACT_INTEGRITY_GATE_REL,
     METRIC_SOURCE_GOVERNANCE_GATE_REL,
     UI_KIT_ALIGNMENT_GATE_REL,
     SECTION_LAYOUT_CONTRACT_GATE_REL,
@@ -419,6 +425,7 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     QUERY_SEARCH_AUTORUN_RESULTS_REL,
     UI_SYSTEM_GRADE_RESULTS_REL,
     A_GRADE_EXECUTION_MATRIX_RESULTS_REL,
+    ARTIFACT_INTEGRITY_RESULTS_REL,
     FULL_APP_RELEASE_SWEEP_RESULTS_REL,
     FULL_APP_RELEASE_FAILURES_REL,
     SETTINGS_LIVE_FEATURE_RESULTS_REL,
@@ -2963,6 +2970,10 @@ def _release_candidate_summary_bundle(
         "artifact_count": _as_int(reconciliation.get("artifact_count")),
         "artifact_hash_count": _as_int(reconciliation.get("hash_count")),
         "ci_artifact_reality_passed": bool(launch_summary.get("ci_artifact_reality_passed")),
+        "artifact_integrity_passed": bool(launch_summary.get("artifact_integrity_passed")),
+        "artifact_integrity_failure_count": _as_int(launch_summary.get("artifact_integrity_failure_count")),
+        "artifact_integrity_verified_count": _as_int(launch_summary.get("artifact_integrity_verified_count")),
+        "artifact_hash_mismatch_count": _as_int(launch_summary.get("artifact_hash_mismatch_count")),
         "app_entry_smoke_passed": bool(launch_summary.get("app_entry_smoke_passed")),
         "app_entry_smoke_failure_count": _as_int(launch_summary.get("app_entry_smoke_failure_count")),
         "post_deploy_smoke_passed": bool(launch_summary.get("post_deploy_smoke_passed")),
@@ -5146,6 +5157,7 @@ def _release_gate_matrix(
     query_search_autorun_gate = _as_mapping(launch_artifacts.get("query_search_autorun_gate_results"))
     ui_system_grade_gate = _as_mapping(launch_artifacts.get("ui_system_grade_gate_results"))
     a_grade_execution_matrix_gate = _as_mapping(launch_artifacts.get("a_grade_execution_matrix_gate_results"))
+    artifact_integrity_gate = _as_mapping(launch_artifacts.get("artifact_integrity_gate_results"))
     full_app_launch_gate = _as_mapping(launch_artifacts.get("full_app_launch_gate_results"))
     deterministic_render_gate = _as_mapping(launch_artifacts.get("deterministic_render_gate_results"))
     browser_smoke_gate = _as_mapping(launch_artifacts.get("browser_smoke_gate_results"))
@@ -5482,6 +5494,14 @@ def _release_gate_matrix(
             "failure_reason": ""
             if a_grade_execution_matrix_gate.get("passed")
             else "Executable A-grade matrix has failed release-blocking rows.",
+        },
+        {
+            "gate": "artifact_integrity",
+            "artifact": ARTIFACT_INTEGRITY_GATE_REL,
+            "passed": bool(artifact_integrity_gate.get("passed")),
+            "failure_reason": ""
+            if artifact_integrity_gate.get("passed")
+            else "Release artifact verifier found missing, stale, malformed, unhashed, failed, or unsafe producer-backed proof.",
         },
         {
             "gate": "metric_source_governance",
@@ -6230,6 +6250,7 @@ def evaluate_launch_readiness(
         "a_grade_execution_matrix_gate_results": _as_mapping(
             launch_artifacts.get("a_grade_execution_matrix_gate_results")
         ),
+        "artifact_integrity_gate_results": _as_mapping(launch_artifacts.get("artifact_integrity_gate_results")),
         "user_stress_gate_results": _as_mapping(launch_artifacts.get("user_stress_gate_results"))
         or evaluate_user_stress_gate(payloads.get(USER_STRESS_RESULTS_REL)),
         "source_internal_leak_scan_gate_results": _as_mapping(launch_artifacts.get("source_internal_leak_scan_gate_results"))
@@ -6325,6 +6346,7 @@ def evaluate_launch_readiness(
     query_search_autorun_gate = _as_mapping(launch_artifacts.get("query_search_autorun_gate_results"))
     ui_system_grade_gate = _as_mapping(launch_artifacts.get("ui_system_grade_gate_results"))
     a_grade_execution_matrix_gate = _as_mapping(launch_artifacts.get("a_grade_execution_matrix_gate_results"))
+    artifact_integrity_gate = _as_mapping(launch_artifacts.get("artifact_integrity_gate_results"))
     full_app_launch_gate = _as_mapping(launch_artifacts.get("full_app_launch_gate_results"))
     deterministic_render_gate = _as_mapping(launch_artifacts.get("deterministic_render_gate_results"))
     browser_smoke_gate = _as_mapping(launch_artifacts.get("browser_smoke_gate_results"))
@@ -6471,6 +6493,10 @@ def evaluate_launch_readiness(
         "a_grade_ready": bool(a_grade_execution_matrix_gate.get("a_grade_ready")),
         "a_grade_execution_matrix_passed": bool(a_grade_execution_matrix_gate.get("passed")),
         "a_grade_deferred_count": _as_int(a_grade_execution_matrix_gate.get("a_grade_deferred_count")),
+        "artifact_integrity_passed": bool(artifact_integrity_gate.get("passed")),
+        "artifact_integrity_failure_count": _as_int(artifact_integrity_gate.get("failure_count")),
+        "artifact_integrity_verified_count": _as_int(artifact_integrity_gate.get("verified_artifact_count")),
+        "artifact_hash_mismatch_count": _as_int(artifact_integrity_gate.get("hash_mismatch_count")),
         "query_performance_grade": str(a_grade_execution_matrix_gate.get("query_performance_grade") or ""),
         "app_performance_grade": str(a_grade_execution_matrix_gate.get("app_performance_grade") or ""),
         "ux_grade": str(a_grade_execution_matrix_gate.get("ux_grade") or ""),
@@ -7430,6 +7456,11 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     raw_results, raw_failures = _raw_invariant_artifacts(root_path, payloads)
     launch_artifacts["raw_invariant_results"] = raw_results
     launch_artifacts["raw_invariant_failures"] = raw_failures
+    artifact_integrity_artifacts = write_artifact_integrity_artifacts(root_path)
+    payloads.update(artifact_integrity_artifacts)
+    launch_artifacts["artifact_integrity_gate_results"] = artifact_integrity_artifacts[
+        ARTIFACT_INTEGRITY_GATE_REL
+    ]
     a_grade_artifacts = write_a_grade_execution_matrix_artifacts(
         root_path,
         launch_artifacts=launch_artifacts,

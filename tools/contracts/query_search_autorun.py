@@ -193,6 +193,7 @@ def evaluate_query_search_autorun(payload: Any, *, root: Path | str = ".") -> di
 def evaluate_query_search_autorun_gate(payload: Any) -> dict[str, Any]:
     results = payload if isinstance(payload, Mapping) else {}
     failures = results.get("failures") if isinstance(results.get("failures"), list) else []
+    rows = results.get("rows") if isinstance(results.get("rows"), list) else []
     return {
         "source": "query_search_autorun_gate_results",
         "producer": "query_search_autorun",
@@ -204,6 +205,7 @@ def evaluate_query_search_autorun_gate(payload: Any) -> dict[str, Any]:
         "failure_count": len(failures) if failures else _as_int(results.get("failure_count")),
         "query_search_broad_autorun_count": _as_int(results.get("query_search_broad_autorun_count")),
         "required_case_count": _as_int(results.get("required_case_count")),
+        "rows": rows,
         "failures": failures,
         "raw_sql_included": False,
     }

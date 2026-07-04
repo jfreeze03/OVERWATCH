@@ -143,6 +143,15 @@ class ProductionReleaseCandidateTests(unittest.TestCase):
                 {"passed": True, "local_artifact_signature": "signed-local", "token_path_leak_count": 0},
             )
             self._write_json(
+                root / "artifacts" / "launch_readiness" / "artifact_integrity_gate_results.json",
+                {
+                    "passed": True,
+                    "failure_count": 0,
+                    "verified_artifact_count": 14,
+                    "hash_mismatch_count": 0,
+                },
+            )
+            self._write_json(
                 root / "artifacts" / "launch_readiness" / "snowflake_cli_live_gate_results.json",
                 {"passed": True, "snowflake_cli_gate_passed": True, "snowflake_cli_live_passed": True},
             )
@@ -171,6 +180,8 @@ class ProductionReleaseCandidateTests(unittest.TestCase):
         self.assertTrue(summary["all_passed"], summary)
         self.assertTrue(summary["production_deployable"], summary)
         self.assertTrue(summary["ci_artifact_reality_passed"], summary)
+        self.assertTrue(summary["artifact_integrity_passed"], summary)
+        self.assertEqual(summary["artifact_integrity_verified_count"], 14)
         self.assertEqual(summary["hard_gate_failure_count"], 0)
         self.assertEqual(summary["local_artifact_signature"], "signed-local")
 

@@ -298,8 +298,17 @@ def evaluate_first_paint_slo(
         if "packet_size_bytes" in row and row_packet_size > PACKET_SIZE_SLO_BYTES:
             reasons.append("row packet size exceeds 100 KB")
         checked = {
+            "row_id": f"first_paint_slo::{section or 'unknown'}::{workflow}",
             "section": section,
             "workflow": workflow,
+            "producer": "first_paint_slo",
+            "producer_signature": "first_paint_slo_row::v1",
+            "provenance_origin": "producer",
+            "runtime_source": str(row.get("runtime_source") or "first_paint_performance_results"),
+            "proof_source": "runtime_first_paint_telemetry",
+            "source": "first_paint_slo",
+            "generated_at": _now(),
+            "commit_sha": str(row.get("commit_sha") or commit_sha),
             "cold_elapsed_ms": cold_ms,
             "warm_elapsed_ms": warm_ms,
             "cold_first_paint_packet_query_count": cold_packet,

@@ -229,8 +229,16 @@ def _evaluate_first_paint_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[
             reasons.append("first paint opened a session outside the packet lookup")
         checked.append(
             {
+                "row_id": f"performance_first_paint::{section or 'unknown'}::{workflow}",
                 "section": section,
                 "workflow": workflow,
+                "producer": "performance_budget_gate",
+                "producer_signature": "performance_first_paint_row::v1",
+                "provenance_origin": "producer",
+                "runtime_source": str(row.get("runtime_source") or "first_paint_performance_results"),
+                "proof_source": "runtime_first_paint_telemetry",
+                "source": "performance_budget_gate",
+                "generated_at": _now(),
                 "commit_sha": str(row.get("commit_sha") or ""),
                 "boundary": "first_paint_packet",
                 "product_boundary": product_boundary,
@@ -325,8 +333,17 @@ def _evaluate_budget_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[dict[
             reasons.append("targeted evidence SQL pushdown violation was recorded")
         checked.append(
             {
+                "row_id": f"performance_budget::{section or 'unknown'}::{boundary or 'unknown'}",
                 "section": section,
                 "workflow": str(row.get("workflow") or ""),
+                "producer": "performance_budget_gate",
+                "producer_signature": "performance_budget_row::v1",
+                "provenance_origin": "producer",
+                "runtime_source": str(row.get("runtime_source") or "query_budget_results"),
+                "proof_source": "runtime_query_budget_telemetry",
+                "source": "performance_budget_gate",
+                "generated_at": _now(),
+                "commit_sha": str(row.get("commit_sha") or ""),
                 "boundary": boundary,
                 "query_count": query_count,
                 "session_open_count": session_open,
@@ -368,6 +385,9 @@ def evaluate_performance_budget_gate(
     if telemetry_rows is not None:
         budget_rows.extend(dict(row) for row in telemetry_rows if isinstance(row, Mapping))
     budget_checks, budget_failures = _evaluate_budget_rows(budget_rows)
+    for row in [*first_paint_rows, *budget_checks]:
+        if expected_commit_sha and not row.get("commit_sha"):
+            row["commit_sha"] = expected_commit_sha
     access_control_failures, access_control_summary = verify_supporting_artifact(
         "Access control runtime",
         access_control_payload,
@@ -433,6 +453,10 @@ def evaluate_performance_budget_gate(
     shell_session_open_count = sum(_as_int(row.get("shell_session_open_count")) for row in [*first_paint_rows, *budget_checks])
     return {
         "source": "performance_budget_gate",
+        "producer": "performance_budget_gate",
+        "producer_signature": "performance_budget_gate::v1",
+        "provenance_origin": "producer",
+        "commit_sha": expected_commit_sha,
         "generated_at": _now(),
         "passed": not failures,
         "failure_count": len(failures),
@@ -508,6 +532,10 @@ def write_performance_budget_gate_artifacts(root: Path | str = ".") -> dict[str,
     cost_gate = evaluate_cost_overview_no_autoload_gate(cost_overview, commit_sha=_git_commit(root_path))
     results = {
         "source": "performance_budget_results",
+        "producer": "performance_budget_gate",
+        "producer_signature": "performance_budget_results::v1",
+        "provenance_origin": "producer",
+        "commit_sha": str(gate.get("commit_sha") or ""),
         "generated_at": _now(),
         "passed": bool(gate.get("passed")),
         "failure_count": int(gate.get("failure_count") or 0),

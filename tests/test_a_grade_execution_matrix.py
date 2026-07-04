@@ -22,6 +22,7 @@ class AGradeExecutionMatrixTests(unittest.TestCase):
         "artifacts/launch_readiness/action_click_gate_results.json",
         "artifacts/launch_readiness/import_laziness_gate_results.json",
         "artifacts/launch_readiness/ci_artifact_reality_gate_results.json",
+        "artifacts/launch_readiness/artifact_integrity_gate_results.json",
         "artifacts/launch_readiness/metric_source_governance_gate_results.json",
     ]
 

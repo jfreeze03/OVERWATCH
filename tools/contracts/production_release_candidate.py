@@ -23,6 +23,10 @@ from tools.contracts.a_grade_execution_matrix import (
     A_GRADE_EXECUTION_MATRIX_GATE_REL,
     A_GRADE_EXECUTION_MATRIX_SUMMARY_REL,
 )
+from tools.contracts.artifact_verifier import (
+    ARTIFACT_INTEGRITY_GATE_REL,
+    write_artifact_integrity_artifacts,
+)
 from tools.contracts.ci_artifact_reality import (
     CI_ARTIFACT_REALITY_GATE_REL,
     CI_ARTIFACT_REALITY_RESULTS_REL,
@@ -510,6 +514,7 @@ def build_production_release_candidate_gate(payload: object) -> dict[str, Any]:
 def _final_release_candidate_summary(root: Path, results: Mapping[str, Any]) -> dict[str, Any]:
     launch_summary = dict(_load_json(root, "artifacts/launch_readiness/launch_readiness_summary.json"))
     ci_gate = _load_json(root, CI_ARTIFACT_REALITY_GATE_REL)
+    artifact_integrity_gate = _load_json(root, ARTIFACT_INTEGRITY_GATE_REL)
     full_sweep = _load_json(root, FULL_APP_RELEASE_SWEEP_GATE_REL)
     a_grade_gate = _load_json(root, A_GRADE_EXECUTION_MATRIX_GATE_REL)
     a_grade_summary = _load_json(root, A_GRADE_EXECUTION_MATRIX_SUMMARY_REL)
@@ -547,6 +552,18 @@ def _final_release_candidate_summary(root: Path, results: Mapping[str, Any]) -> 
         "production_release_candidate_phase_count": _as_int(results.get("phase_count")),
         "production_release_candidate_artifact": PRODUCTION_RELEASE_CANDIDATE_RESULTS_REL,
         "ci_artifact_reality_passed": bool(ci_gate.get("passed", launch_summary.get("ci_artifact_reality_passed"))),
+        "artifact_integrity_passed": bool(
+            artifact_integrity_gate.get("passed", launch_summary.get("artifact_integrity_passed"))
+        ),
+        "artifact_integrity_failure_count": _as_int(
+            artifact_integrity_gate.get("failure_count", launch_summary.get("artifact_integrity_failure_count"))
+        ),
+        "artifact_integrity_verified_count": _as_int(
+            artifact_integrity_gate.get("verified_artifact_count", launch_summary.get("artifact_integrity_verified_count"))
+        ),
+        "artifact_hash_mismatch_count": _as_int(
+            artifact_integrity_gate.get("hash_mismatch_count", launch_summary.get("artifact_hash_mismatch_count"))
+        ),
         "local_artifact_signature": str(
             results.get("local_artifact_signature") or ci_gate.get("local_artifact_signature") or ""
         ),
@@ -693,6 +710,14 @@ def run_production_release_candidate(
             CI_ARTIFACT_REALITY_GATE_REL,
             lambda _r: payloads,
             gate_rel=CI_ARTIFACT_REALITY_GATE_REL,
+        )
+        artifact_integrity_artifacts = write_artifact_integrity_artifacts(root_path)
+        payloads.update(artifact_integrity_artifacts)
+        add(
+            "artifact_integrity",
+            ARTIFACT_INTEGRITY_GATE_REL,
+            lambda _r: payloads,
+            gate_rel=ARTIFACT_INTEGRITY_GATE_REL,
         )
         add(
             "a_grade_execution_matrix",

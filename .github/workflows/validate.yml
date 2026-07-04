@@ -109,6 +109,7 @@ jobs:
         run: |
           python -m unittest \
             tests.test_a_grade_execution_matrix \
+            tests.test_artifact_verifier \
             tests.test_first_paint_slo \
             tests.test_query_boundary_lint \
             tests.test_ui_system_grade \
@@ -173,6 +174,9 @@ jobs:
 
       - name: Run A-grade execution matrix gate
         run: python -m tools.contracts.a_grade_execution_matrix
+
+      - name: Run artifact integrity gate
+        run: python -m tools.contracts.artifact_verifier
 
       - name: Run query-boundary lint gate
         run: python -m tools.contracts.query_boundary_lint

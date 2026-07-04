@@ -322,6 +322,7 @@ def write_query_boundary_lint_artifacts(root: Path | str = ".") -> dict[str, Any
         "run_query_call_count": int(results.get("run_query_call_count") or 0),
         "direct_session_sql_call_count": int(results.get("direct_session_sql_call_count") or 0),
         "direct_session_sql_violation_count": int(results.get("direct_session_sql_violation_count") or 0),
+        "rows": results.get("rows", []),
         "failures": results.get("failures", []),
         "raw_sql_included": False,
     }

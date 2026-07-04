@@ -204,6 +204,7 @@ def evaluate_targeted_evidence_sql_pushdown(root: Path | str = ".") -> dict[str,
 def evaluate_targeted_evidence_sql_pushdown_gate(payload: Any) -> dict[str, Any]:
     results = payload if isinstance(payload, Mapping) else {}
     failures = results.get("failures") if isinstance(results.get("failures"), list) else []
+    rows = results.get("rows") if isinstance(results.get("rows"), list) else []
     return {
         "source": "targeted_evidence_sql_pushdown_gate_results",
         "producer": "targeted_evidence_sql_pushdown",
@@ -215,6 +216,7 @@ def evaluate_targeted_evidence_sql_pushdown_gate(payload: Any) -> dict[str, Any]
         "failure_count": len(failures) if failures else _as_int(results.get("failure_count")),
         "target_pushdown_violation_count": _as_int(results.get("target_pushdown_violation_count")),
         "required_case_count": _as_int(results.get("required_case_count")),
+        "rows": rows,
         "failures": failures,
         "raw_sql_included": False,
     }

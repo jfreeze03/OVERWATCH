@@ -79,6 +79,7 @@ def _passing_payload(root: Path) -> dict:
                 "workflow": workflow,
                 "product_boundary": "first_paint_packet",
                 "execution_boundary": "decision_packet",
+                "query_boundary": "decision_packet",
                 "cold_first_paint_packet_query_count": 1,
                 "warm_first_paint_query_count": 0,
                 "non_packet_first_paint_event_count": 0,
@@ -680,6 +681,22 @@ class FullAppReleaseSweepTests(unittest.TestCase):
 
         self.assertFalse(results["passed"])
         self.assertGreater(results["missing_first_paint_row_count"], 0)
+
+    def test_wrong_first_paint_query_boundary_fails(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = _passing_payload(root)
+            payload["artifacts/full_app_validation/first_paint_performance_results.json"]["rows"][0][
+                "query_boundary"
+            ] = "compact_evidence"
+            results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT, root=root)
+
+        self.assertFalse(results["passed"])
+        self.assertGreater(results["first_paint_failure_count"], 0)
+        reasons = " ".join(str(row.get("failure_reason") or "") for row in results["rows"])
+        self.assertIn("query_boundary", reasons)
 
     def test_manual_render_source_fails(self):
         from tools.contracts.full_app_release_sweep import build_full_app_release_sweep

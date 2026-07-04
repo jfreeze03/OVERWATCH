@@ -203,6 +203,7 @@ REQUIRED_FIRST_PAINT_FIELDS = (
     "elapsed_ms",
     "product_boundary",
     "execution_boundary",
+    "query_boundary",
     "passed",
 )
 
@@ -392,6 +393,8 @@ def _first_paint_failures(row: Mapping[str, Any], *, current_commit: str) -> lis
         reasons.append("first-paint row missing product_boundary")
     if not str(row.get("execution_boundary") or "").strip():
         reasons.append("first-paint row missing execution_boundary")
+    if _as_int(row.get("cold_first_paint_packet_query_count")) and str(row.get("query_boundary") or "").strip() != "decision_packet":
+        reasons.append("first-paint query_boundary must be decision_packet")
     if bool(row.get("raw_sql_included")):
         reasons.append("first-paint row included raw SQL")
     return reasons

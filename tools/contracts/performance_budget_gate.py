@@ -52,6 +52,7 @@ REQUIRED_FIRST_PAINT_FIELDS = (
     "target_pushdown_violation_count",
     "packet_cache_hit",
     "packet_size_bytes",
+    "query_boundary",
     "elapsed_ms",
     "product_boundary",
     "execution_boundary",
@@ -140,6 +141,7 @@ def _evaluate_first_paint_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[
         missing_fields = [field for field in REQUIRED_FIRST_PAINT_FIELDS if field not in row]
         product_boundary = str(row.get("product_boundary") or "").strip()
         execution_boundary = str(row.get("execution_boundary") or "").strip()
+        query_boundary = str(row.get("query_boundary") or "").strip()
         cold_packet = _row_count(row, "cold_first_paint_packet_query_count", "cold_packet_query_count", "packet_query_count")
         warm_queries = _row_count(row, "warm_first_paint_query_count", "warm_query_count")
         non_packet = _row_count(row, "non_packet_first_paint_event_count", "non_packet_query_count")
@@ -173,6 +175,8 @@ def _evaluate_first_paint_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[
             reasons.append("first-paint telemetry is synthetic/static-only")
         if section in PRIMARY_SECTIONS and cold_packet > 1:
             reasons.append("cold first paint used more than one packet query")
+        if section in PRIMARY_SECTIONS and cold_packet and query_boundary != "decision_packet":
+            reasons.append("cold first-paint query boundary was not decision_packet")
         if warm_queries:
             reasons.append("warm first paint executed a query")
         if non_packet:
@@ -218,6 +222,7 @@ def _evaluate_first_paint_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[
                 "boundary": "first_paint_packet",
                 "product_boundary": product_boundary,
                 "execution_boundary": execution_boundary,
+                "query_boundary": query_boundary,
                 "cold_first_paint_packet_query_count": cold_packet,
                 "warm_first_paint_query_count": warm_queries,
                 "non_packet_first_paint_event_count": non_packet,

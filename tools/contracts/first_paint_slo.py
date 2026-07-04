@@ -40,6 +40,7 @@ FIRST_PAINT_REQUIRED_TELEMETRY_FIELDS = (
     "target_pushdown_violation_count",
     "packet_cache_hit",
     "packet_size_bytes",
+    "query_boundary",
 )
 
 
@@ -190,6 +191,7 @@ def evaluate_first_paint_slo(
         target_pushdown_violations = _row_count(row, "target_pushdown_violation_count")
         packet_cache_hit = bool(row.get("packet_cache_hit"))
         row_packet_size = _row_count(row, "packet_size_bytes", "packet_bytes")
+        query_boundary = str(row.get("query_boundary") or "").strip()
         reasons: list[str] = []
         if section in PRIMARY_SECTIONS:
             missing_fields = [field for field in FIRST_PAINT_REQUIRED_TELEMETRY_FIELDS if field not in row]
@@ -203,6 +205,8 @@ def evaluate_first_paint_slo(
             reasons.append("warm section switch exceeded 300ms SLO")
         if section in PRIMARY_SECTIONS and cold_packet > 1:
             reasons.append("cold first paint used more than one packet query")
+        if section in PRIMARY_SECTIONS and cold_packet and query_boundary != "decision_packet":
+            reasons.append("cold first paint query boundary was not decision_packet")
         if warm_queries:
             reasons.append("warm first paint executed a query")
         if evidence:
@@ -245,6 +249,7 @@ def evaluate_first_paint_slo(
             "cold_elapsed_ms": cold_ms,
             "warm_elapsed_ms": warm_ms,
             "cold_first_paint_packet_query_count": cold_packet,
+            "query_boundary": query_boundary,
             "warm_first_paint_query_count": warm_queries,
             "evidence_query_count": evidence,
             "account_usage_count": account_usage,

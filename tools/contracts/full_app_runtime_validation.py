@@ -3419,6 +3419,7 @@ class RuntimeValidationHarness:
                     "workflow": workflow,
                     "product_boundary": "first_paint_packet",
                     "execution_boundary": "decision_packet",
+                    "query_boundary": "decision_packet",
                     "cold_first_paint_packet_query_count": len(packet_execs),
                     "warm_first_paint_query_count": 0,
                     "non_packet_first_paint_event_count": len(non_packet_first_paint),

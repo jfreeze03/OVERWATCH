@@ -14,6 +14,7 @@ def _first_paint_row(section: str, **overrides):
         "workflow": "Overview",
         "product_boundary": "first_paint_packet",
         "execution_boundary": "decision_packet",
+        "query_boundary": "decision_packet",
         "cold_first_paint_packet_query_count": 1,
         "warm_first_paint_query_count": 0,
         "non_packet_first_paint_event_count": 0,
@@ -122,6 +123,18 @@ class PerformanceBudgetGateTests(unittest.TestCase):
         self.assertFalse(gate["passed"])
         reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
         self.assertIn("boundary", reasons)
+
+    def test_first_paint_row_wrong_query_boundary_fails(self):
+        from tools.contracts.performance_budget_gate import evaluate_performance_budget_gate
+
+        gate = evaluate_performance_budget_gate(
+            {"rows": [_first_paint_row("Executive Landing", query_boundary="compact_evidence")]},
+            {"rows": []},
+        )
+
+        self.assertFalse(gate["passed"])
+        reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
+        self.assertIn("decision_packet", reasons)
 
     def test_cost_overview_autoload_artifact_blocks_performance_gate(self):
         from tools.contracts.performance_budget_gate import (

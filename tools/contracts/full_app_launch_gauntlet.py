@@ -567,6 +567,7 @@ def build_first_paint_performance_results(payloads: Mapping[str, Any]) -> dict[s
             "workflow": str(view.get("workflow") or ""),
             "product_boundary": "first_paint_packet",
             "execution_boundary": "decision_packet",
+            "query_boundary": "decision_packet",
             "cold_first_paint_packet_query_count": packet_queries,
             "warm_first_paint_query_count": warm_queries,
             "non_packet_first_paint_event_count": non_packet,

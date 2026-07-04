@@ -29,6 +29,7 @@ class FirstPaintSloTests(unittest.TestCase):
                     "workflow": "Overview",
                     "elapsed_ms": elapsed_ms,
                     "cold_first_paint_packet_query_count": 1,
+                    "query_boundary": "decision_packet",
                     "warm_first_paint_query_count": warm_queries,
                     "evidence_query_count": 0,
                     "account_usage_count": 0,
@@ -105,6 +106,18 @@ class FirstPaintSloTests(unittest.TestCase):
         self.assertFalse(gate["passed"])
         reasons = " ".join(row["failure_reason"] for row in gate["failures"])
         self.assertIn("missing first-paint telemetry fields", reasons)
+
+    def test_non_decision_packet_query_boundary_fails(self):
+        from tools.contracts.first_paint_slo import evaluate_first_paint_slo
+
+        payload = self._rows()
+        payload["rows"][0]["query_boundary"] = "compact_evidence"
+
+        gate = evaluate_first_paint_slo(payload, packet_size_payload={"max_packet_bytes": 42_000})
+
+        self.assertFalse(gate["passed"])
+        reasons = " ".join(row["failure_reason"] for row in gate["failures"])
+        self.assertIn("decision_packet", reasons)
 
     def test_shell_session_probe_or_autoload_counters_fail(self):
         from tools.contracts.first_paint_slo import evaluate_first_paint_slo

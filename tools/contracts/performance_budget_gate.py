@@ -14,6 +14,8 @@ LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
 PERFORMANCE_BUDGET_RESULTS_REL = f"{FULL_APP_DIR}/performance_budget_results.json"
 PERFORMANCE_BUDGET_GATE_REL = f"{LAUNCH_READINESS_DIR}/performance_budget_gate_results.json"
 COST_OVERVIEW_NO_AUTOLOAD_RESULTS_REL = f"{FULL_APP_DIR}/cost_overview_no_autoload_results.json"
+TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL = f"{FULL_APP_DIR}/targeted_evidence_sql_pushdown_results.json"
+QUERY_SEARCH_AUTORUN_RESULTS_REL = f"{FULL_APP_DIR}/query_search_autorun_results.json"
 
 PRIMARY_SECTIONS = (
     "Executive Landing",
@@ -36,6 +38,18 @@ REQUIRED_FIRST_PAINT_FIELDS = (
     "query_search_query_count",
     "direct_sql_count",
     "session_open_count",
+    "pre_first_paint_session_open_count",
+    "shell_session_open_count",
+    "active_session_probe_count",
+    "admin_connection_test_count",
+    "explicit_connection_test_count",
+    "metadata_probe_count",
+    "metadata_probe_violation_count",
+    "cost_overview_autoload_violation_count",
+    "query_search_broad_autorun_count",
+    "target_pushdown_violation_count",
+    "packet_cache_hit",
+    "packet_size_bytes",
     "elapsed_ms",
     "product_boundary",
     "execution_boundary",
@@ -124,7 +138,14 @@ def _evaluate_first_paint_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[
         session_open = _row_count(row, "session_open_count")
         pre_first_paint_session_open = _row_count(row, "pre_first_paint_session_open_count")
         shell_session_open = _row_count(row, "shell_session_open_count")
+        active_session_probe = _row_count(row, "active_session_probe_count")
+        admin_connection_test = _row_count(row, "admin_connection_test_count")
+        explicit_connection_test = _row_count(row, "explicit_connection_test_count")
         metadata_probe_count = _row_count(row, "metadata_probe_count", "metadata_probe_events")
+        metadata_probe_violation = _row_count(row, "metadata_probe_violation_count")
+        cost_autoload_violation = _row_count(row, "cost_overview_autoload_violation_count")
+        query_search_broad_autorun = _row_count(row, "query_search_broad_autorun_count")
+        target_pushdown_violation = _row_count(row, "target_pushdown_violation_count")
         reasons: list[str] = []
         if missing_fields:
             reasons.append(f"first-paint telemetry missing required fields: {', '.join(missing_fields)}")
@@ -158,8 +179,22 @@ def _evaluate_first_paint_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[
             reasons.append("session opened before first-paint boundary")
         if shell_session_open:
             reasons.append("shell opened a Snowflake session before section first paint")
+        if active_session_probe:
+            reasons.append("active session probe ran before section first paint")
+        if admin_connection_test:
+            reasons.append("admin connection test ran before section first paint")
+        if explicit_connection_test:
+            reasons.append("explicit connection test ran before section first paint")
         if metadata_probe_count > 1:
             reasons.append("metadata probing exceeded one probe for the object/session boundary")
+        if metadata_probe_violation:
+            reasons.append("metadata probe violation was recorded")
+        if cost_autoload_violation:
+            reasons.append("Cost Overview autoload violation was recorded")
+        if query_search_broad_autorun:
+            reasons.append("Query Search broad/deep autorun was recorded")
+        if target_pushdown_violation:
+            reasons.append("targeted evidence SQL pushdown violation was recorded")
         if session_open and section in PRIMARY_SECTIONS and cold_packet == 0:
             reasons.append("first paint opened a session outside the packet lookup")
         checked.append(
@@ -181,7 +216,14 @@ def _evaluate_first_paint_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[
                 "session_open_count": session_open,
                 "pre_first_paint_session_open_count": pre_first_paint_session_open,
                 "shell_session_open_count": shell_session_open,
+                "active_session_probe_count": active_session_probe,
+                "admin_connection_test_count": admin_connection_test,
+                "explicit_connection_test_count": explicit_connection_test,
                 "metadata_probe_count": metadata_probe_count,
+                "metadata_probe_violation_count": metadata_probe_violation,
+                "cost_overview_autoload_violation_count": cost_autoload_violation,
+                "query_search_broad_autorun_count": query_search_broad_autorun,
+                "target_pushdown_violation_count": target_pushdown_violation,
                 "passed": not reasons,
                 "failure_reason": "; ".join(reasons),
                 "raw_sql_included": False,
@@ -207,6 +249,13 @@ def _evaluate_budget_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[dict[
         direct_sql = _row_count(row, "direct_sql_count", "direct_sql_events")
         account_usage = _row_count(row, "account_usage_count", "account_usage_events")
         metadata_probe_count = _row_count(row, "metadata_probe_count", "metadata_probe_events")
+        active_session_probe = _row_count(row, "active_session_probe_count")
+        admin_connection_test = _row_count(row, "admin_connection_test_count")
+        explicit_connection_test = _row_count(row, "explicit_connection_test_count")
+        metadata_probe_violation = _row_count(row, "metadata_probe_violation_count")
+        cost_autoload_violation = _row_count(row, "cost_overview_autoload_violation_count")
+        query_search_broad_autorun = _row_count(row, "query_search_broad_autorun_count")
+        target_pushdown_violation = _row_count(row, "target_pushdown_violation_count")
         pre_first_paint_session_open = _row_count(row, "pre_first_paint_session_open_count")
         shell_session_open = _row_count(row, "shell_session_open_count")
         reasons: list[str] = []
@@ -226,8 +275,22 @@ def _evaluate_budget_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[dict[
             reasons.append("session opened before first-paint boundary")
         if shell_session_open:
             reasons.append("shell opened a Snowflake session before section first paint")
+        if active_session_probe:
+            reasons.append("active session probe ran before section first paint")
+        if admin_connection_test:
+            reasons.append("admin connection test ran before section first paint")
+        if explicit_connection_test:
+            reasons.append("explicit connection test ran before section first paint")
         if metadata_probe_count > 1:
             reasons.append("metadata probing exceeded one probe for the object/session boundary")
+        if metadata_probe_violation:
+            reasons.append("metadata probe violation was recorded")
+        if cost_autoload_violation:
+            reasons.append("Cost Overview autoload violation was recorded")
+        if query_search_broad_autorun:
+            reasons.append("Query Search broad/deep autorun was recorded")
+        if target_pushdown_violation:
+            reasons.append("targeted evidence SQL pushdown violation was recorded")
         checked.append(
             {
                 "section": section,
@@ -238,6 +301,13 @@ def _evaluate_budget_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[dict[
                 "direct_sql_count": direct_sql,
                 "account_usage_count": account_usage,
                 "metadata_probe_count": metadata_probe_count,
+                "active_session_probe_count": active_session_probe,
+                "admin_connection_test_count": admin_connection_test,
+                "explicit_connection_test_count": explicit_connection_test,
+                "metadata_probe_violation_count": metadata_probe_violation,
+                "cost_overview_autoload_violation_count": cost_autoload_violation,
+                "query_search_broad_autorun_count": query_search_broad_autorun,
+                "target_pushdown_violation_count": target_pushdown_violation,
                 "pre_first_paint_session_open_count": pre_first_paint_session_open,
                 "shell_session_open_count": shell_session_open,
                 "passed": not reasons,
@@ -254,6 +324,8 @@ def evaluate_performance_budget_gate(
     first_paint_payload: Any = None,
     query_budget_payload: Any = None,
     cost_overview_payload: Any = None,
+    target_pushdown_payload: Any = None,
+    query_search_autorun_payload: Any = None,
     telemetry_rows: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     first_paint_rows, first_paint_failures = _evaluate_first_paint_rows(_rows(first_paint_payload))
@@ -283,7 +355,57 @@ def evaluate_performance_budget_gate(
             )
             if not cost_violation_count:
                 cost_violation_count = max(1, len(cost_failures))
-    failures = first_paint_failures + budget_failures + cost_failures
+    target_pushdown_supplied = target_pushdown_payload is not None
+    target_pushdown_payload = target_pushdown_payload if isinstance(target_pushdown_payload, Mapping) else {}
+    target_pushdown_failures: list[dict[str, Any]] = []
+    target_pushdown_violation_count = _as_int(target_pushdown_payload.get("target_pushdown_violation_count"))
+    if target_pushdown_payload:
+        if not bool(target_pushdown_payload.get("passed")):
+            target_pushdown_failures.extend(
+                {
+                    "section": str(row.get("section") or "Targeted Evidence"),
+                    "workflow": str(row.get("workflow") or "Evidence"),
+                    "failure_reason": str(row.get("failure_reason") or "target SQL pushdown proof failed"),
+                }
+                for row in _rows(target_pushdown_payload)
+                if not bool(row.get("passed"))
+            )
+            if not target_pushdown_violation_count:
+                target_pushdown_violation_count = max(1, len(target_pushdown_failures))
+    elif target_pushdown_supplied:
+        target_pushdown_failures.append({
+            "section": "Targeted Evidence",
+            "workflow": "Evidence",
+            "failure_reason": "missing target SQL pushdown proof",
+        })
+        target_pushdown_violation_count = 1
+
+    query_search_autorun_supplied = query_search_autorun_payload is not None
+    query_search_autorun_payload = query_search_autorun_payload if isinstance(query_search_autorun_payload, Mapping) else {}
+    query_autorun_failures: list[dict[str, Any]] = []
+    query_search_broad_autorun_count = _as_int(query_search_autorun_payload.get("query_search_broad_autorun_count"))
+    if query_search_autorun_payload:
+        if not bool(query_search_autorun_payload.get("passed")):
+            query_autorun_failures.extend(
+                {
+                    "section": "Query Search",
+                    "workflow": str(row.get("case") or row.get("workflow") or "Query Investigation"),
+                    "failure_reason": str(row.get("failure_reason") or "Query Search autorun proof failed"),
+                }
+                for row in _rows(query_search_autorun_payload)
+                if not bool(row.get("passed"))
+            )
+            if not query_search_broad_autorun_count:
+                query_search_broad_autorun_count = max(1, len(query_autorun_failures))
+    elif query_search_autorun_supplied:
+        query_autorun_failures.append({
+            "section": "Query Search",
+            "workflow": "No click",
+            "failure_reason": "missing Query Search autorun proof",
+        })
+        query_search_broad_autorun_count = 1
+
+    failures = first_paint_failures + budget_failures + cost_failures + target_pushdown_failures + query_autorun_failures
     metadata_probe_violation_count = sum(
         1
         for row in [*first_paint_rows, *budget_checks]
@@ -302,6 +424,8 @@ def evaluate_performance_budget_gate(
         "query_budget_rows": budget_checks,
         "cost_overview_no_autoload_rows": cost_rows,
         "cost_overview_autoload_violation_count": cost_violation_count,
+        "target_pushdown_violation_count": target_pushdown_violation_count,
+        "query_search_broad_autorun_count": query_search_broad_autorun_count,
         "metadata_probe_violation_count": metadata_probe_violation_count,
         "pre_first_paint_session_open_count": pre_first_paint_session_open_count,
         "shell_session_open_count": shell_session_open_count,
@@ -315,7 +439,9 @@ def write_performance_budget_gate_artifacts(root: Path | str = ".") -> dict[str,
     first_paint = _load_json(root_path / f"{FULL_APP_DIR}/first_paint_performance_results.json")
     query_budget = _load_json(root_path / f"{FULL_APP_DIR}/query_budget_results.json")
     cost_overview = _load_json(root_path / COST_OVERVIEW_NO_AUTOLOAD_RESULTS_REL)
-    gate = evaluate_performance_budget_gate(first_paint, query_budget, cost_overview)
+    target_pushdown = _load_json(root_path / TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL)
+    query_search_autorun = _load_json(root_path / QUERY_SEARCH_AUTORUN_RESULTS_REL)
+    gate = evaluate_performance_budget_gate(first_paint, query_budget, cost_overview, target_pushdown, query_search_autorun)
     results = {
         "source": "performance_budget_results",
         "generated_at": _now(),
@@ -325,6 +451,8 @@ def write_performance_budget_gate_artifacts(root: Path | str = ".") -> dict[str,
         "query_budget_rows": gate.get("query_budget_rows", []),
         "cost_overview_no_autoload_rows": gate.get("cost_overview_no_autoload_rows", []),
         "cost_overview_autoload_violation_count": int(gate.get("cost_overview_autoload_violation_count") or 0),
+        "target_pushdown_violation_count": int(gate.get("target_pushdown_violation_count") or 0),
+        "query_search_broad_autorun_count": int(gate.get("query_search_broad_autorun_count") or 0),
         "metadata_probe_violation_count": int(gate.get("metadata_probe_violation_count") or 0),
         "pre_first_paint_session_open_count": int(gate.get("pre_first_paint_session_open_count") or 0),
         "shell_session_open_count": int(gate.get("shell_session_open_count") or 0),
@@ -347,6 +475,8 @@ if __name__ == "__main__":
 
 __all__ = [
     "COST_OVERVIEW_NO_AUTOLOAD_RESULTS_REL",
+    "QUERY_SEARCH_AUTORUN_RESULTS_REL",
+    "TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL",
     "PERFORMANCE_BUDGET_GATE_REL",
     "PERFORMANCE_BUDGET_RESULTS_REL",
     "PRIMARY_SECTIONS",

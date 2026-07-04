@@ -13,6 +13,9 @@ if str(ROOT) not in sys.path:
 class AGradeExecutionMatrixTests(unittest.TestCase):
     REQUIRED_GATES = [
         "artifacts/launch_readiness/first_paint_slo_gate_results.json",
+        "artifacts/launch_readiness/access_control_runtime_gate_results.json",
+        "artifacts/launch_readiness/targeted_evidence_sql_pushdown_gate_results.json",
+        "artifacts/launch_readiness/query_search_autorun_gate_results.json",
         "artifacts/launch_readiness/ui_system_grade_gate_results.json",
         "artifacts/launch_readiness/action_click_gate_results.json",
         "artifacts/launch_readiness/import_laziness_gate_results.json",

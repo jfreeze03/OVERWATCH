@@ -2446,6 +2446,7 @@ class RuntimeValidationHarness:
             row_limit = _safe_int(kwargs.get("row_limit") or kwargs.get("max_rows") or 200, 200)
             runtime_error = str(state.get("_runtime_qs_error") or "")
             no_result = bool(state.get("_runtime_qs_empty"))
+            query_boundary = str(kwargs.get("query_boundary") or "query_search_exact")
             result_rows = pd.DataFrame([{
                 "SECTION": "Workload Operations",
                 "EVIDENCE_ID": "QUERY-123",
@@ -2463,7 +2464,7 @@ class RuntimeValidationHarness:
                 args=(sql, *args),
                 kwargs=kwargs,
                 rows=result_rows,
-                boundary="query_search",
+                boundary=query_boundary,
                 compact_table_family="FACT_QUERY_DETAIL_RECENT",
                 max_rows=min(row_limit, 500),
                 normal_evidence_source_allowed=True,
@@ -2491,7 +2492,7 @@ class RuntimeValidationHarness:
                     max_rows=min(row_limit, 500),
                     actual_query_executed=True,
                     cache_layer="none",
-                    query_boundary="query_search",
+                    query_boundary=query_boundary,
                     query_contract_id=str(kwargs.get("contract_id") or ""),
                     target_label=str(kwargs.get("target_label") or ""),
                     target_context_present=target_context_present if isinstance(target_context_present, bool) else None,
@@ -2516,7 +2517,7 @@ class RuntimeValidationHarness:
                 ttl_key=str(kwargs.get("ttl_key") or "query_search_runtime"),
                 tier="recent",
                 max_rows=min(row_limit, 500),
-                query_boundary="query_search",
+                query_boundary=query_boundary,
                 target_label=str(kwargs.get("target_label") or ""),
                 target_context_present=kwargs.get("target_context_present"),
                 target_columns_used=kwargs.get("target_columns_used"),
@@ -2807,6 +2808,8 @@ class RuntimeValidationHarness:
             click_html = "\n".join(capture.fragments)[:12000]
             events = _state_events(capture.state, UI_QUERY_EVENTS_KEY)
             execs = _state_events(capture.state, SNOWFLAKE_EXECUTION_EVENTS_KEY)
+            observed_boundaries = dict(Counter(str(event.get("query_boundary") or "") for event in events))
+            expected_boundary = "query_search_broad_explicit" if name == "text_contains_explicit_search" else "query_search_exact"
             cases.append({
                 "case": name,
                 "source": "runtime_query_search_click",
@@ -2820,14 +2823,14 @@ class RuntimeValidationHarness:
                 "action_like_elements": _action_like_elements_from_buttons(capture.buttons, section="Query Search", workflow="Explicit search"),
                 "control_key_clicked": click_key,
                 "observed_contexts": [str(context.get("name") or "") for context in contexts],
-                "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in events)),
+                "observed_boundaries": observed_boundaries,
                 "max_rows": max([int(event.get("max_rows") or 0) for event in events] or [0]),
                 "projects_query_text": False,
                 "session_open_count": 0,
                 "direct_sql_event_count": 0,
                 "metadata_probe_count": 0,
                 "snowflake_execution_count": len(execs),
-                "passed": True,
+                "passed": observed_boundaries.get(expected_boundary, 0) == 1,
                 "button_count": len(capture.buttons),
                 "rendered_buttons": [{"key": button.get("key", ""), "disabled": bool(button.get("disabled"))} for button in capture.buttons],
                 "loader_calls": capture.evidence_loader_calls,
@@ -2856,6 +2859,7 @@ class RuntimeValidationHarness:
             direct = _state_events(capture.state, DIRECT_SQL_EVENTS_KEY)
             fragments = "\n".join(capture.fragments)
             sanitized_error_state = name in {"slow_query_timeout", "permission_denied"}
+            observed_boundaries = dict(Counter(str(event.get("query_boundary") or "") for event in events))
             cases.append({
                 "case": name,
                 "source": "runtime_query_search_click",
@@ -2865,7 +2869,7 @@ class RuntimeValidationHarness:
                 "action_surfaces": ["No click", "Explicit search"],
                 "control_key_clicked": "qs_run",
                 "observed_contexts": [str(context.get("name") or "") for context in contexts],
-                "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in events)),
+                "observed_boundaries": observed_boundaries,
                 "max_rows": max([int(event.get("max_rows") or 0) for event in events] or [0]),
                 "projects_query_text": False,
                 "query_text_included": False,
@@ -2884,7 +2888,7 @@ class RuntimeValidationHarness:
                 "loader_calls": capture.evidence_loader_calls,
                 "passed": (
                     bool(contexts)
-                    and dict(Counter(str(event.get("query_boundary") or "") for event in events)).get("query_search", 0) == 1
+                    and observed_boundaries.get("query_search_exact", 0) == 1
                     and len(sessions) == 0
                     and len(direct) == 0
                     and not any(token in fragments.upper() for token in ("SELECT", " WITH ", " JOIN ", " CALL "))
@@ -3318,6 +3322,11 @@ class RuntimeValidationHarness:
                 active_session_probes = _safe_int(
                     capture.state.get("_overwatch_active_session_probe_count")
                 )
+                admin_connection_test_count = _safe_int(
+                    capture.state.get("_overwatch_admin_connection_test_count")
+                )
+                explicit_connection_test_count = admin_connection_test_count
+                access_gate_state = str(capture.state.get("_overwatch_access_gate_state") or "")
                 metadata_probe_count = _count_runtime_events(first_paint_events, "metadata_probe")
                 metadata_probe_violation_count = max(0, metadata_probe_count - 1)
                 cost_autoload_violation_count = (
@@ -3331,6 +3340,7 @@ class RuntimeValidationHarness:
                     "deep_history",
                     "account_usage_fallback",
                 )
+                target_pushdown_violation_count = 0
                 first_paint_passed = (
                     not raised
                     and len(packet_execs) <= 1
@@ -3339,9 +3349,12 @@ class RuntimeValidationHarness:
                     and pre_first_paint_sessions == 0
                     and shell_session_opens == 0
                     and active_session_probes == 0
+                    and admin_connection_test_count == 0
+                    and explicit_connection_test_count == 0
                     and metadata_probe_violation_count == 0
                     and cost_autoload_violation_count == 0
                     and query_search_broad_autorun_count == 0
+                    and target_pushdown_violation_count == 0
                 )
                 row = {
                     "id": f"{_token(section)}::{_token(workflow)}",
@@ -3376,10 +3389,14 @@ class RuntimeValidationHarness:
                         "pre_first_paint_session_open_count": pre_first_paint_sessions,
                         "shell_session_open_count": shell_session_opens,
                         "active_session_probe_count": active_session_probes,
+                        "admin_connection_test_count": admin_connection_test_count,
+                        "explicit_connection_test_count": explicit_connection_test_count,
+                        "access_gate_state": access_gate_state,
                         "metadata_probe_count": metadata_probe_count,
                         "metadata_probe_violation_count": metadata_probe_violation_count,
                         "cost_overview_autoload_violation_count": cost_autoload_violation_count,
                         "query_search_broad_autorun_count": query_search_broad_autorun_count,
+                        "target_pushdown_violation_count": target_pushdown_violation_count,
                         "packet_cache_hit": True,
                         "packet_size_bytes": 42000,
                     },
@@ -3415,10 +3432,14 @@ class RuntimeValidationHarness:
                     "pre_first_paint_session_open_count": pre_first_paint_sessions,
                     "shell_session_open_count": shell_session_opens,
                     "active_session_probe_count": active_session_probes,
+                    "admin_connection_test_count": admin_connection_test_count,
+                    "explicit_connection_test_count": explicit_connection_test_count,
+                    "access_gate_state": access_gate_state,
                     "metadata_probe_count": metadata_probe_count,
                     "metadata_probe_violation_count": metadata_probe_violation_count,
                     "cost_overview_autoload_violation_count": cost_autoload_violation_count,
                     "query_search_broad_autorun_count": query_search_broad_autorun_count,
+                    "target_pushdown_violation_count": target_pushdown_violation_count,
                     "packet_cache_hit": True,
                     "packet_size_bytes": 42000,
                     "elapsed_ms": elapsed_ms,

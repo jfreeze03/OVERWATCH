@@ -20,7 +20,7 @@ class QueryBoundaryLintTests(unittest.TestCase):
             target.write_text(
                 "from utils.query import run_query\n"
                 "def ok():\n"
-                "    return run_query('select 1', query_boundary='query_search')\n"
+                "    return run_query('select 1', query_boundary='query_search_exact')\n"
                 "def bad():\n"
                 "    return run_query('select 2')\n",
                 encoding="utf-8",
@@ -41,7 +41,7 @@ class QueryBoundaryLintTests(unittest.TestCase):
             target.write_text(
                 "from utils.query import run_query\n"
                 "def ok():\n"
-                "    return run_query('select 1', query_boundary='query_search')\n",
+                "    return run_query('select 1', query_boundary='query_search_exact')\n",
                 encoding="utf-8",
             )
 

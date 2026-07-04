@@ -132,6 +132,7 @@ def search_recent_query_summary(
     *,
     ttl_key: str,
     row_limit: int,
+    query_boundary: str = "query_search_exact",
     target_label: str = "",
     target_context_present: bool | None = None,
     target_columns_used: tuple[str, ...] | list[str] | None = None,
@@ -145,7 +146,7 @@ def search_recent_query_summary(
         tier="recent",
         section="Query Search & History",
         max_rows=min(int(row_limit), 500),
-        query_boundary="query_search",
+        query_boundary=query_boundary,
         target_label=target_label,
         target_context_present=target_context_present,
         target_columns_used=target_columns_used,
@@ -361,6 +362,11 @@ def render():
                         sql,
                         ttl_key=ttl_key,
                         row_limit=row_limit,
+                        query_boundary=(
+                            "query_search_exact"
+                            if resolved_mode in {"Exact query ID", "Query signature"}
+                            else "query_search_broad_explicit"
+                        ),
                         target_label=query_target_label,
                         target_context_present=bool(proof_target),
                         target_columns_used=target_plan.columns_used,
@@ -430,6 +436,7 @@ def render():
                         related_sql,
                         ttl_key=f"query_search_related_{company}_{selected_hash}_{selected_preview_id}_50",
                         row_limit=50,
+                        query_boundary="query_search_exact",
                         target_label=f"query hash: {selected_hash[:12]}",
                         target_context_present=True,
                         target_columns_used=("QUERY_HASH", "QUERY_ID"),

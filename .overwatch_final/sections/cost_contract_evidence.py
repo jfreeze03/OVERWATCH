@@ -328,7 +328,7 @@ def load_cost_evidence(
             section="Cost & Contract",
             max_rows=row_limit,
             use_cache=False,
-            query_boundary="evidence",
+            query_boundary="evidence_targeted",
             target_label=target_label,
             target_context_present=bool(target),
             target_columns_used=target_plan.columns_used,

@@ -18,6 +18,10 @@ from typing import Any, Iterable, Mapping
 from tools.contracts.cleanup_inventory import write_cleanup_artifacts
 from tools.contracts.direct_sql_contract import direct_sql_scan_artifact, scan_direct_sql_usage
 from tools.contracts.action_click_gauntlet import write_action_click_gauntlet_artifacts
+from tools.contracts.access_control_runtime import (
+    ACCESS_CONTROL_RUNTIME_RESULTS_REL,
+    write_access_control_runtime_artifacts,
+)
 from tools.contracts.browser_render_gauntlet import (
     BROWSER_RENDER_ARTIFACTS,
     BROWSER_RENDER_GATE_REL,
@@ -48,6 +52,10 @@ from tools.contracts.metric_source_governance import (
     METRIC_SOURCE_GOVERNANCE_REL,
     write_metric_source_governance_artifacts,
 )
+from tools.contracts.query_search_autorun import (
+    QUERY_SEARCH_AUTORUN_RESULTS_REL,
+    write_query_search_autorun_artifacts,
+)
 from tools.contracts.render_provenance_reconciliation import (
     RENDER_PROVENANCE_RECONCILIATION_GATE_REL,
     RENDER_PROVENANCE_RECONCILIATION_REL,
@@ -62,6 +70,10 @@ from tools.contracts.session_open_contract import scan_session_open_usage, sessi
 from tools.contracts.source_internal_leak_scan import (
     SOURCE_INTERNAL_LEAK_RESULTS_REL,
     write_source_internal_leak_scan_artifacts,
+)
+from tools.contracts.targeted_evidence_sql_pushdown import (
+    TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL,
+    write_targeted_evidence_sql_pushdown_artifacts,
 )
 from tools.contracts.sql_dead_code_scan import (
     SQL_DEAD_CODE_SCAN_REL,
@@ -101,6 +113,9 @@ REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
     "artifacts/full_app_validation/query_budget_results.json",
     "artifacts/full_app_validation/query_budget_violation_results.json",
     "artifacts/full_app_validation/session_direct_sql_results.json",
+    ACCESS_CONTROL_RUNTIME_RESULTS_REL,
+    TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL,
+    QUERY_SEARCH_AUTORUN_RESULTS_REL,
     "artifacts/full_app_validation/connection_policy_results.json",
     "artifacts/full_app_validation/fallback_render_results.json",
     "artifacts/full_app_validation/summary_board_results.json",
@@ -1260,6 +1275,21 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
     source_leak_artifacts = write_source_internal_leak_scan_artifacts(root_path)
     sql_value_artifacts = write_sql_value_inventory_artifacts(root_path)
     sql_dead_code_artifacts = write_sql_dead_code_scan_artifacts(root_path)
+    access_control_runtime_artifacts = {
+        rel: payload
+        for rel, payload in write_access_control_runtime_artifacts(root_path).items()
+        if rel.startswith("artifacts/full_app_validation/")
+    }
+    targeted_evidence_sql_pushdown_artifacts = {
+        rel: payload
+        for rel, payload in write_targeted_evidence_sql_pushdown_artifacts(root_path).items()
+        if rel.startswith("artifacts/full_app_validation/")
+    }
+    query_search_autorun_artifacts = {
+        rel: payload
+        for rel, payload in write_query_search_autorun_artifacts(root_path).items()
+        if rel.startswith("artifacts/full_app_validation/")
+    }
     runtime_provenance_artifacts = write_runtime_artifact_provenance_artifacts(root_path)
     render_provenance_artifacts = write_render_provenance_reconciliation_artifacts(root_path)
     ui_kit_alignment_artifacts = {
@@ -1287,6 +1317,9 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
         **source_leak_artifacts,
         **sql_value_artifacts,
         **sql_dead_code_artifacts,
+        **access_control_runtime_artifacts,
+        **targeted_evidence_sql_pushdown_artifacts,
+        **query_search_autorun_artifacts,
         **runtime_provenance_artifacts,
         **render_provenance_artifacts,
         **ui_kit_alignment_artifacts,
@@ -1327,6 +1360,9 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             SOURCE_INTERNAL_LEAK_RESULTS_REL,
             SQL_VALUE_INVENTORY_REL,
             SQL_DEAD_CODE_SCAN_REL,
+            ACCESS_CONTROL_RUNTIME_RESULTS_REL,
+            TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL,
+            QUERY_SEARCH_AUTORUN_RESULTS_REL,
             RUNTIME_ARTIFACT_PROVENANCE_REL,
             RUNTIME_ARTIFACT_PROVENANCE_GATE_REL,
             RENDER_PROVENANCE_RECONCILIATION_REL,
@@ -1384,6 +1420,9 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             SOURCE_INTERNAL_LEAK_RESULTS_REL,
             SQL_VALUE_INVENTORY_REL,
             SQL_DEAD_CODE_SCAN_REL,
+            ACCESS_CONTROL_RUNTIME_RESULTS_REL,
+            TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL,
+            QUERY_SEARCH_AUTORUN_RESULTS_REL,
             RUNTIME_ARTIFACT_PROVENANCE_REL,
             RUNTIME_ARTIFACT_PROVENANCE_GATE_REL,
             RENDER_PROVENANCE_RECONCILIATION_REL,

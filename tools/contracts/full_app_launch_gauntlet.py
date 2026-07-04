@@ -518,10 +518,13 @@ def build_first_paint_performance_results(payloads: Mapping[str, Any]) -> dict[s
         pre_first_paint_sessions = _as_int(first_paint.get("pre_first_paint_session_open_count"))
         shell_session_opens = _as_int(first_paint.get("shell_session_open_count"))
         active_session_probes = _as_int(first_paint.get("active_session_probe_count"))
+        admin_connection_tests = _as_int(first_paint.get("admin_connection_test_count"))
+        explicit_connection_tests = _as_int(first_paint.get("explicit_connection_test_count"))
         metadata_probe_count = _as_int(first_paint.get("metadata_probe_count") or first_paint.get("observed_metadata_probes"))
         metadata_probe_violations = _as_int(first_paint.get("metadata_probe_violation_count")) or max(0, metadata_probe_count - 1)
         cost_autoload_violations = _as_int(first_paint.get("cost_overview_autoload_violation_count"))
         query_search_broad_autoruns = _as_int(first_paint.get("query_search_broad_autorun_count"))
+        target_pushdown_violations = _as_int(first_paint.get("target_pushdown_violation_count"))
         packet_cache_hit = bool(first_paint.get("packet_cache_hit", True))
         packet_size_bytes = _as_int(first_paint.get("packet_size_bytes") or view.get("packet_size_bytes") or 42000)
         passed = (
@@ -536,9 +539,12 @@ def build_first_paint_performance_results(payloads: Mapping[str, Any]) -> dict[s
                 and pre_first_paint_sessions == 0
                 and shell_session_opens == 0
                 and active_session_probes == 0
+                and admin_connection_tests == 0
+                and explicit_connection_tests == 0
                 and metadata_probe_violations == 0
                 and cost_autoload_violations == 0
                 and query_search_broad_autoruns == 0
+                and target_pushdown_violations == 0
                 and packet_cache_hit
                 and packet_size_bytes <= 100_000
             )
@@ -574,10 +580,13 @@ def build_first_paint_performance_results(payloads: Mapping[str, Any]) -> dict[s
             "pre_first_paint_session_open_count": pre_first_paint_sessions,
             "shell_session_open_count": shell_session_opens,
             "active_session_probe_count": active_session_probes,
+            "admin_connection_test_count": admin_connection_tests,
+            "explicit_connection_test_count": explicit_connection_tests,
             "metadata_probe_count": metadata_probe_count,
             "metadata_probe_violation_count": metadata_probe_violations,
             "cost_overview_autoload_violation_count": cost_autoload_violations,
             "query_search_broad_autorun_count": query_search_broad_autoruns,
+            "target_pushdown_violation_count": target_pushdown_violations,
             "packet_cache_hit": packet_cache_hit,
             "packet_size_bytes": packet_size_bytes,
             "elapsed_ms": float(view.get("elapsed_ms") or 0),

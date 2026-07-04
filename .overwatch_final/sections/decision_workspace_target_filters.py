@@ -431,6 +431,34 @@ def build_target_sql_filter_contract(
     )
 
 
+def build_target_plan_metadata(
+    section: str,
+    target: dict[str, str] | None,
+    alias: str = "",
+    available_columns: tuple[str, ...] | list[str] | set[str] = (),
+) -> dict[str, object]:
+    """Return release-proof metadata for a pushed-down target predicate."""
+    contract = build_target_sql_filter_contract(section, target, alias=alias, available_columns=available_columns)
+    target_present = bool(target_values(target or {}))
+    return {
+        "section": str(section),
+        "target_context_present": target_present,
+        "sql_fragment": contract.sql_fragment,
+        "matched_columns": contract.matched_columns,
+        "match_mode": contract.match_mode,
+        "reason": contract.reason,
+        "plan_id": contract.plan_id,
+        "query_boundary": "evidence_targeted",
+        "default_row_limit": TARGETED_EVIDENCE_DEFAULT_LIMIT,
+        "max_rows": TARGETED_EVIDENCE_MAX_LIMIT,
+        "target_predicate_marker_required": target_present and bool(contract.matched_columns),
+        "target_predicate_marker_present": TARGET_PREDICATE_MARKER in contract.sql_fragment,
+        "target_columns_present": bool(contract.matched_columns),
+        "safe_literal_count": len(contract.safe_literals),
+        "raw_sql_included": False,
+    }
+
+
 def _series_mask(rows: Any, column: str, value: str, *, display: bool = False):
     series = rows[column].fillna("").astype(str)
     if display:
@@ -480,7 +508,7 @@ def apply_target_dataframe_filter(rows: object, section: str, target: dict[str, 
             error="Display target fallback skipped for large evidence frame.",
             actual_query_executed=False,
             cache_layer="none",
-            query_boundary="evidence",
+            query_boundary="evidence_targeted",
             first_paint_sensitive=False,
         )
         return rows, label
@@ -506,6 +534,7 @@ __all__ = [
     "TargetSqlFilter",
     "apply_target_dataframe_filter",
     "build_target_predicate_plan",
+    "build_target_plan_metadata",
     "build_target_sql_filter",
     "build_target_sql_filter_contract",
     "clear_decision_evidence_target",

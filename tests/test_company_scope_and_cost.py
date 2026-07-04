@@ -430,8 +430,8 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         )
 
         self.assertEqual(existing, ["QUERY_ID", "WAREHOUSE_SIZE"])
-        self.assertEqual(len(session.statements), 2)
-        self.assertIn("SELECT QUERY_ID, WAREHOUSE_SIZE", session.statements[1])
+        self.assertEqual(len(session.statements), 1)
+        self.assertIn("SELECT *", session.statements[0])
 
         for key in (
             "_overwatch_available_columns",

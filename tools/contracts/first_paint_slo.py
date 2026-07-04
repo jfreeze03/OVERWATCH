@@ -31,10 +31,13 @@ FIRST_PAINT_REQUIRED_TELEMETRY_FIELDS = (
     "pre_first_paint_session_open_count",
     "shell_session_open_count",
     "active_session_probe_count",
+    "admin_connection_test_count",
+    "explicit_connection_test_count",
     "metadata_probe_count",
     "metadata_probe_violation_count",
     "cost_overview_autoload_violation_count",
     "query_search_broad_autorun_count",
+    "target_pushdown_violation_count",
     "packet_cache_hit",
     "packet_size_bytes",
 )
@@ -108,6 +111,14 @@ def _packet_size_bytes(packet_payload: Any, rows: Iterable[Mapping[str, Any]]) -
     return max(sizes or [0])
 
 
+def _commit_from_rows(rows: Iterable[Mapping[str, Any]]) -> str:
+    for row in rows:
+        value = str(row.get("commit_sha") or "")
+        if value:
+            return value
+    return ""
+
+
 def evaluate_first_paint_slo(
     first_paint_payload: Any,
     *,
@@ -117,6 +128,7 @@ def evaluate_first_paint_slo(
 
     source_rows = _rows(first_paint_payload)
     packet_size = _packet_size_bytes(packet_size_payload, source_rows)
+    commit_sha = _commit_from_rows(source_rows)
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     seen_sections: set[str] = set()
@@ -126,6 +138,10 @@ def evaluate_first_paint_slo(
             failures.append({"section": section, "workflow": "Overview", "failure_reason": "missing first-paint SLO telemetry"})
         return {
             "source": "first_paint_slo_gate",
+            "producer": "first_paint_slo",
+            "producer_signature": "first_paint_slo_gate::v1",
+            "provenance_origin": "producer",
+            "commit_sha": commit_sha,
             "generated_at": _now(),
             "passed": False,
             "failure_count": len(failures),
@@ -135,9 +151,12 @@ def evaluate_first_paint_slo(
             "pre_first_paint_session_open_count": 0,
             "shell_session_open_count": 0,
             "active_session_probe_count": 0,
+            "admin_connection_test_count": 0,
+            "explicit_connection_test_count": 0,
             "metadata_probe_violation_count": 0,
             "cost_overview_autoload_violation_count": 0,
             "query_search_broad_autorun_count": 0,
+            "target_pushdown_violation_count": 0,
             "rows": rows,
             "failures": failures,
             "raw_sql_included": False,
@@ -162,10 +181,13 @@ def evaluate_first_paint_slo(
         pre_first_paint_sessions = _row_count(row, "pre_first_paint_session_open_count")
         shell_sessions = _row_count(row, "shell_session_open_count")
         active_session_probes = _row_count(row, "active_session_probe_count")
+        admin_connection_tests = _row_count(row, "admin_connection_test_count")
+        explicit_connection_tests = _row_count(row, "explicit_connection_test_count")
         metadata_probes = _row_count(row, "metadata_probe_count")
         metadata_probe_violations = _row_count(row, "metadata_probe_violation_count")
         cost_autoload_violations = _row_count(row, "cost_overview_autoload_violation_count")
         query_search_broad_autoruns = _row_count(row, "query_search_broad_autorun_count")
+        target_pushdown_violations = _row_count(row, "target_pushdown_violation_count")
         packet_cache_hit = bool(row.get("packet_cache_hit"))
         row_packet_size = _row_count(row, "packet_size_bytes", "packet_bytes")
         reasons: list[str] = []
@@ -201,12 +223,18 @@ def evaluate_first_paint_slo(
             reasons.append("shell opened a Snowflake session")
         if active_session_probes:
             reasons.append("shell performed active-session probe")
+        if admin_connection_tests:
+            reasons.append("admin connection test ran on first paint")
+        if explicit_connection_tests:
+            reasons.append("explicit connection test ran on first paint")
         if metadata_probe_violations or metadata_probes > 1:
             reasons.append("metadata probe exceeded first-paint budget")
         if cost_autoload_violations:
             reasons.append("Cost Overview autoloaded non-packet work")
         if query_search_broad_autoruns:
             reasons.append("Query Search broad/deep path autoran")
+        if target_pushdown_violations:
+            reasons.append("targeted evidence SQL pushdown violation was recorded")
         if "packet_cache_hit" in row and section in PRIMARY_SECTIONS and not packet_cache_hit and warm_queries == 0:
             reasons.append("warm first paint did not prove packet cache hit")
         if "packet_size_bytes" in row and row_packet_size > PACKET_SIZE_SLO_BYTES:
@@ -227,10 +255,13 @@ def evaluate_first_paint_slo(
             "pre_first_paint_session_open_count": pre_first_paint_sessions,
             "shell_session_open_count": shell_sessions,
             "active_session_probe_count": active_session_probes,
+            "admin_connection_test_count": admin_connection_tests,
+            "explicit_connection_test_count": explicit_connection_tests,
             "metadata_probe_count": metadata_probes,
             "metadata_probe_violation_count": metadata_probe_violations,
             "cost_overview_autoload_violation_count": cost_autoload_violations,
             "query_search_broad_autorun_count": query_search_broad_autoruns,
+            "target_pushdown_violation_count": target_pushdown_violations,
             "packet_cache_hit": packet_cache_hit,
             "packet_size_bytes": row_packet_size,
             "passed": not reasons,
@@ -252,6 +283,10 @@ def evaluate_first_paint_slo(
 
     return {
         "source": "first_paint_slo_gate",
+        "producer": "first_paint_slo",
+        "producer_signature": "first_paint_slo_gate::v1",
+        "provenance_origin": "producer",
+        "commit_sha": commit_sha,
         "generated_at": _now(),
         "passed": not failures,
         "failure_count": len(failures),
@@ -263,9 +298,12 @@ def evaluate_first_paint_slo(
         "pre_first_paint_session_open_count": sum(_row_count(row, "pre_first_paint_session_open_count") for row in rows),
         "shell_session_open_count": sum(_row_count(row, "shell_session_open_count") for row in rows),
         "active_session_probe_count": sum(_row_count(row, "active_session_probe_count") for row in rows),
+        "admin_connection_test_count": sum(_row_count(row, "admin_connection_test_count") for row in rows),
+        "explicit_connection_test_count": sum(_row_count(row, "explicit_connection_test_count") for row in rows),
         "metadata_probe_violation_count": sum(_row_count(row, "metadata_probe_violation_count") for row in rows),
         "cost_overview_autoload_violation_count": sum(_row_count(row, "cost_overview_autoload_violation_count") for row in rows),
         "query_search_broad_autorun_count": sum(_row_count(row, "query_search_broad_autorun_count") for row in rows),
+        "target_pushdown_violation_count": sum(_row_count(row, "target_pushdown_violation_count") for row in rows),
         "rows": rows,
         "failures": failures,
         "raw_sql_included": False,
@@ -279,6 +317,10 @@ def write_first_paint_slo_artifacts(root: Path | str = ".") -> dict[str, Any]:
     gate = evaluate_first_paint_slo(first_paint, packet_size_payload=packet_size)
     results = {
         "source": "first_paint_slo_results",
+        "producer": "first_paint_slo",
+        "producer_signature": "first_paint_slo_results::v1",
+        "provenance_origin": "producer",
+        "commit_sha": str(gate.get("commit_sha") or ""),
         "generated_at": _now(),
         "passed": bool(gate.get("passed")),
         "failure_count": int(gate.get("failure_count") or 0),
@@ -288,9 +330,12 @@ def write_first_paint_slo_artifacts(root: Path | str = ".") -> dict[str, Any]:
         "pre_first_paint_session_open_count": int(gate.get("pre_first_paint_session_open_count") or 0),
         "shell_session_open_count": int(gate.get("shell_session_open_count") or 0),
         "active_session_probe_count": int(gate.get("active_session_probe_count") or 0),
+        "admin_connection_test_count": int(gate.get("admin_connection_test_count") or 0),
+        "explicit_connection_test_count": int(gate.get("explicit_connection_test_count") or 0),
         "metadata_probe_violation_count": int(gate.get("metadata_probe_violation_count") or 0),
         "cost_overview_autoload_violation_count": int(gate.get("cost_overview_autoload_violation_count") or 0),
         "query_search_broad_autorun_count": int(gate.get("query_search_broad_autorun_count") or 0),
+        "target_pushdown_violation_count": int(gate.get("target_pushdown_violation_count") or 0),
         "rows": gate.get("rows", []),
         "failures": gate.get("failures", []),
         "raw_sql_included": False,

@@ -1193,7 +1193,7 @@ def render() -> None:
         with render_load_status(status_label, "Control Room telemetry ready"):
             session = get_session(
                 reason="dba_control_room_evidence_load",
-                query_boundary="evidence",
+                query_boundary="evidence_targeted",
                 section="DBA Control Room",
                 max_rows=500,
             )
@@ -1771,7 +1771,7 @@ def render() -> None:
                 try:
                     session = get_session(
                         reason="dba_release_compare_admin_load",
-                        query_boundary="admin",
+                        query_boundary="setup_admin",
                         section="DBA Control Room",
                     )
                     st.session_state["dba_release_compare_data"] = _load_release_compare(

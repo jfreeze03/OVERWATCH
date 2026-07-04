@@ -191,10 +191,13 @@ REQUIRED_FIRST_PAINT_FIELDS = (
     "pre_first_paint_session_open_count",
     "shell_session_open_count",
     "active_session_probe_count",
+    "admin_connection_test_count",
+    "explicit_connection_test_count",
     "metadata_probe_count",
     "metadata_probe_violation_count",
     "cost_overview_autoload_violation_count",
     "query_search_broad_autorun_count",
+    "target_pushdown_violation_count",
     "packet_cache_hit",
     "packet_size_bytes",
     "elapsed_ms",
@@ -1177,8 +1180,11 @@ def build_full_app_release_sweep(
         ("export_download_gauntlet", "export_download_gate_results"),
         ("settings_live_feature_gauntlet", "settings_live_feature_gate_results"),
         ("connection_policy_gate", "connection_policy_gate_results"),
+        ("access_control_runtime", "access_control_runtime_gate_results"),
         ("import_laziness_gate", "import_laziness_gate_results"),
         ("performance_budget_gate", "performance_budget_gate_results"),
+        ("targeted_evidence_sql_pushdown", "targeted_evidence_sql_pushdown_gate_results"),
+        ("query_search_autorun", "query_search_autorun_gate_results"),
         ("user_stress_test", "user_stress_gate_results"),
         ("sql_cleanup_gate", "sql_cleanup_gate_results"),
         ("delete_first_cleanup_gate", "delete_first_cleanup_gate_results"),
@@ -1287,6 +1293,9 @@ def build_full_app_release_sweep(
     import_laziness_gate = _gate(payloads, "import_laziness_gate_results")
     cortex_live_gate = _gate(payloads, "cortex_token_efficiency_live_gate_results")
     performance_budget_gate = _gate(payloads, "performance_budget_gate_results")
+    access_control_runtime_gate = _gate(payloads, "access_control_runtime_gate_results")
+    targeted_evidence_sql_pushdown_gate = _gate(payloads, "targeted_evidence_sql_pushdown_gate_results")
+    query_search_autorun_gate = _gate(payloads, "query_search_autorun_gate_results")
     missing_connection_policy_gate = sum(
         1
         for row in gate_rows
@@ -1400,6 +1409,22 @@ def build_full_app_release_sweep(
         "cost_overview_autoload_violation_count": _as_int(
             performance_budget_gate.get("cost_overview_autoload_violation_count")
         ),
+        "access_control_runtime_passed": bool(access_control_runtime_gate.get("passed")),
+        "pre_first_paint_session_open_count": _as_int(
+            access_control_runtime_gate.get("pre_first_paint_session_open_count")
+        ),
+        "shell_session_open_count": _as_int(access_control_runtime_gate.get("shell_session_open_count")),
+        "active_session_probe_count": _as_int(access_control_runtime_gate.get("active_session_probe_count")),
+        "admin_connection_test_count": _as_int(access_control_runtime_gate.get("admin_connection_test_count")),
+        "explicit_connection_test_count": _as_int(access_control_runtime_gate.get("explicit_connection_test_count")),
+        "target_pushdown_passed": bool(targeted_evidence_sql_pushdown_gate.get("passed")),
+        "target_pushdown_violation_count": _as_int(
+            targeted_evidence_sql_pushdown_gate.get("target_pushdown_violation_count")
+        ),
+        "query_search_autorun_passed": bool(query_search_autorun_gate.get("passed")),
+        "query_search_broad_autorun_count": _as_int(
+            query_search_autorun_gate.get("query_search_broad_autorun_count")
+        ),
         "missing_first_paint_row_count": sum(1 for row in rows if bool(row.get("missing_first_paint_row"))),
         "missing_render_surface_count": sum(1 for row in rows if not row.get("rendered")),
         "producer_provenance_failure_count": sum(_as_int(row.get("producer_provenance_failure_count")) for row in rows),
@@ -1496,6 +1521,16 @@ def evaluate_full_app_release_sweep_gate(payload: object) -> dict[str, Any]:
         "sql_cleanup_failure_count": _as_int(results.get("sql_cleanup_failure_count")),
         "first_paint_failure_count": _as_int(results.get("first_paint_failure_count")),
         "cost_overview_autoload_violation_count": _as_int(results.get("cost_overview_autoload_violation_count")),
+        "access_control_runtime_passed": bool(results.get("access_control_runtime_passed")),
+        "pre_first_paint_session_open_count": _as_int(results.get("pre_first_paint_session_open_count")),
+        "shell_session_open_count": _as_int(results.get("shell_session_open_count")),
+        "active_session_probe_count": _as_int(results.get("active_session_probe_count")),
+        "admin_connection_test_count": _as_int(results.get("admin_connection_test_count")),
+        "explicit_connection_test_count": _as_int(results.get("explicit_connection_test_count")),
+        "target_pushdown_passed": bool(results.get("target_pushdown_passed")),
+        "target_pushdown_violation_count": _as_int(results.get("target_pushdown_violation_count")),
+        "query_search_autorun_passed": bool(results.get("query_search_autorun_passed")),
+        "query_search_broad_autorun_count": _as_int(results.get("query_search_broad_autorun_count")),
         "missing_first_paint_row_count": _as_int(results.get("missing_first_paint_row_count")),
         "missing_render_surface_count": _as_int(results.get("missing_render_surface_count")),
         "producer_provenance_failure_count": _as_int(results.get("producer_provenance_failure_count")),
@@ -1566,10 +1601,13 @@ def write_full_app_release_sweep_artifacts(
                 "artifacts/launch_readiness/export_download_gate_results.json",
                 "artifacts/launch_readiness/settings_live_feature_gate_results.json",
                 "artifacts/launch_readiness/connection_policy_gate_results.json",
+                "artifacts/launch_readiness/access_control_runtime_gate_results.json",
                 "artifacts/launch_readiness/import_laziness_gate_results.json",
                 "artifacts/full_app_validation/runtime_import_graph_results.json",
                 "artifacts/full_app_validation/cost_overview_no_autoload_results.json",
                 "artifacts/launch_readiness/performance_budget_gate_results.json",
+                "artifacts/launch_readiness/targeted_evidence_sql_pushdown_gate_results.json",
+                "artifacts/launch_readiness/query_search_autorun_gate_results.json",
                 "artifacts/launch_readiness/user_stress_gate_results.json",
                 "artifacts/launch_readiness/sql_cleanup_gate_results.json",
                 "artifacts/launch_readiness/delete_first_cleanup_gate_results.json",

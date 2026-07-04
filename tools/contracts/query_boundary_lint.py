@@ -30,7 +30,6 @@ CRITICAL_QUERY_PATH_SUFFIXES = (
 ALLOWED_QUERY_BOUNDARIES = {
     "decision_packet",
     "evidence_targeted",
-    "query_search",
     "query_search_exact",
     "query_search_broad_explicit",
     "setup_admin",
@@ -40,12 +39,7 @@ ALLOWED_QUERY_BOUNDARIES = {
     "export_case",
     "admin_setup_health",
     "explicit_connection_test",
-    "action_queue",
-    "alert_delivery",
-    "alert_triage",
-    "cost_evidence",
-    "security_evidence",
-    "workload_evidence",
+    "metadata_bounded",
 }
 
 DIRECT_SQL_RELEASE_BLOCKING_SUFFIXES = (

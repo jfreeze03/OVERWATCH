@@ -46,6 +46,7 @@ from runtime_state import (
     ensure_default_state,
     get_state,
     pop_state,
+    record_runtime_event,
     set_state,
 )
 from .session import apply_overwatch_query_tag, build_overwatch_query_tag, get_session
@@ -111,6 +112,64 @@ def _perf_run_id() -> str:
         value = ""
     value = value or os.environ.get("OVERWATCH_PERF_RUN_ID", "")
     return re.sub(r"[^A-Za-z0-9_.:-]+", "", str(value or ""))[:80]
+
+
+def _record_query_source_event(
+    *,
+    event_type: str,
+    section: str,
+    workflow: str,
+    boundary: str,
+    tier: str,
+    ttl_key: str,
+    use_cache: bool,
+    elapsed_ms: float,
+    row_count: int,
+    max_rows: int | None,
+    started_at: str,
+    finished_at: str,
+    error: str = "",
+    actual_query_executed: object = None,
+) -> None:
+    """Record the query module's source event without storing SQL text."""
+    boundary_text = str(boundary or "")
+    marker_text = " ".join([boundary_text, str(ttl_key or ""), str(section or "")]).lower()
+    before_first_paint = bool(is_first_paint_active() or current_first_paint_render_id())
+    try:
+        record_runtime_event(
+            event_type=event_type,
+            route=section,
+            section=_infer_telemetry_section(section, ttl_key),
+            workflow=workflow,
+            boundary=boundary_text,
+            product_boundary=boundary_text,
+            execution_boundary=boundary_text,
+            query_tier=tier,
+            ttl_key=ttl_key,
+            cache_hit=bool(use_cache),
+            elapsed_ms=elapsed_ms,
+            row_count=row_count,
+            max_rows=max_rows,
+            error=error,
+            source_module="utils.query",
+            before_first_paint=before_first_paint,
+            after_first_paint=not before_first_paint,
+            user_initiated=False,
+            account_usage_marker_present=boundary_text == "account_usage" or "account_usage" in marker_text,
+            evidence_loader_marker_present="evidence" in marker_text,
+            cost_evidence_marker_present="cost" in marker_text,
+            query_search_broad_marker_present="query_search_broad" in marker_text or "deep_history" in marker_text,
+            setup_live_validation_marker_present=boundary_text in {"setup_health", "admin", "live_validation"},
+            raw_sql_included=False,
+            started_at=started_at,
+            finished_at=finished_at,
+            extra={
+                "actual_query_executed": actual_query_executed,
+                "source_query_runner": event_type,
+            },
+        )
+    except Exception:
+        pass
 
 
 def _estimate_result_mb(result: pd.DataFrame) -> float:
@@ -1473,6 +1532,22 @@ def run_query(
         target_predicate_plan_id=target_predicate_plan_id,
         first_paint_sensitive=bool(query_meta.get("first_paint_sensitive")),
     )
+    _record_query_source_event(
+        event_type="run_query_source",
+        section=section,
+        workflow=str(get_state(NAV_SECTION, "") or ""),
+        boundary=str(query_meta.get("query_boundary") or "other"),
+        tier=tier,
+        ttl_key=ttl_key,
+        use_cache=use_cache,
+        elapsed_ms=elapsed_ms,
+        row_count=len(result),
+        max_rows=max_rows,
+        started_at=started_at,
+        finished_at=finished_at,
+        error=str(query_meta.get("error") or ""),
+        actual_query_executed=query_meta.get("actual_query_executed"),
+    )
     return result
 
 
@@ -1567,6 +1642,21 @@ def run_query_or_raise(
             target_predicate_plan_id=target_predicate_plan_id,
             first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         )
+        _record_query_source_event(
+            event_type="run_query_or_raise_source",
+            section=section,
+            workflow=str(get_state(NAV_SECTION, "") or ""),
+            boundary=boundary,
+            tier=tier,
+            ttl_key=ttl_key,
+            use_cache=use_cache,
+            elapsed_ms=(time.perf_counter() - started) * 1000,
+            row_count=0,
+            max_rows=max_rows,
+            started_at=started_at,
+            finished_at=finished_at,
+            actual_query_executed=False,
+        )
         return empty_paused_result(ttl_key=ttl_key, section=section)
     if not _check_query_budget(tier, ttl_key, query_text):
         finished_at = datetime.now().isoformat(timespec="milliseconds")
@@ -1600,6 +1690,21 @@ def run_query_or_raise(
             ),
             target_predicate_plan_id=target_predicate_plan_id,
             first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
+        )
+        _record_query_source_event(
+            event_type="run_query_or_raise_source",
+            section=section,
+            workflow=str(get_state(NAV_SECTION, "") or ""),
+            boundary=boundary,
+            tier=tier,
+            ttl_key=ttl_key,
+            use_cache=use_cache,
+            elapsed_ms=(time.perf_counter() - started) * 1000,
+            row_count=0,
+            max_rows=max_rows,
+            started_at=started_at,
+            finished_at=finished_at,
+            actual_query_executed=False,
         )
         return result
     error_message = ""
@@ -1667,6 +1772,22 @@ def run_query_or_raise(
             ),
             target_predicate_plan_id=target_predicate_plan_id,
             first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
+        )
+        _record_query_source_event(
+            event_type="run_query_or_raise_source",
+            section=section,
+            workflow=str(get_state(NAV_SECTION, "") or ""),
+            boundary=boundary,
+            tier=tier,
+            ttl_key=ttl_key,
+            use_cache=use_cache,
+            elapsed_ms=elapsed_ms,
+            row_count=len(result),
+            max_rows=max_rows,
+            started_at=started_at,
+            finished_at=finished_at,
+            error=error_message,
+            actual_query_executed=None if use_cache else True,
         )
 
 

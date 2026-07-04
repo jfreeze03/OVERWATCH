@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from tools.contracts.release_evidence_registry import registry_gate_specs
+
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -13,22 +15,23 @@ if str(ROOT) not in sys.path:
 
 
 class AGradeExecutionMatrixTests(unittest.TestCase):
-    REQUIRED_GATES = [
-        "artifacts/launch_readiness/first_paint_slo_gate_results.json",
-        "artifacts/launch_readiness/access_control_runtime_gate_results.json",
-        "artifacts/launch_readiness/targeted_evidence_sql_pushdown_gate_results.json",
-        "artifacts/launch_readiness/query_search_autorun_gate_results.json",
-        "artifacts/launch_readiness/ui_system_grade_gate_results.json",
-        "artifacts/launch_readiness/action_click_gate_results.json",
-        "artifacts/launch_readiness/import_laziness_gate_results.json",
-        "artifacts/launch_readiness/ci_artifact_reality_gate_results.json",
-        "artifacts/launch_readiness/artifact_integrity_gate_results.json",
-        "artifacts/launch_readiness/release_evidence_registry_gate_results.json",
-        "artifacts/launch_readiness/runtime_event_ledger_gate_results.json",
-        "artifacts/launch_readiness/route_action_replay_gate_results.json",
-        "artifacts/launch_readiness/export_case_parity_gate_results.json",
-        "artifacts/launch_readiness/metric_source_governance_gate_results.json",
-    ]
+    REQUIRED_GATES = sorted(
+        {
+            str(row["artifact_path"])
+            for row in registry_gate_specs()
+            if bool(row.get("artifact_required", True))
+            and bool(row.get("proof_rows_required", True))
+        }
+        | {
+            "artifacts/launch_readiness/artifact_integrity_gate_results.json",
+            "artifacts/launch_readiness/action_click_gate_results.json",
+            "artifacts/launch_readiness/ci_artifact_reality_gate_results.json",
+            "artifacts/launch_readiness/import_laziness_gate_results.json",
+            "artifacts/launch_readiness/metric_source_governance_gate_results.json",
+            "artifacts/launch_readiness/release_evidence_registry_gate_results.json",
+            "artifacts/launch_readiness/ui_system_grade_gate_results.json",
+        }
+    )
 
     def _write_gate(self, root: Path, rel: str, passed: bool = True, **extra) -> None:
         path = root / rel
@@ -103,6 +106,35 @@ class AGradeExecutionMatrixTests(unittest.TestCase):
         self.assertTrue(metric_rows[0]["release_blocking"])
         self.assertEqual(metric_rows[0]["target_dimension"], "packet-backed high-impact metrics")
 
+    def test_matrix_contains_every_registry_gate(self):
+        from tools.contracts.a_grade_execution_matrix import build_a_grade_execution_matrix
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in self.REQUIRED_GATES:
+                self._write_gate(root, rel)
+            results = build_a_grade_execution_matrix(root)
+
+        matrix_gates = {row["required_gate"] for row in results["rows"]}
+        expected_registry_gates = {
+            str(row["artifact_path"])
+            for row in registry_gate_specs()
+            if bool(row.get("artifact_required", True))
+            and bool(row.get("proof_rows_required", True))
+        }
+        expected_registry_gates.update(
+            {
+                "artifacts/launch_readiness/artifact_integrity_gate_results.json",
+                "artifacts/launch_readiness/action_click_gate_results.json",
+                "artifacts/launch_readiness/ci_artifact_reality_gate_results.json",
+                "artifacts/launch_readiness/import_laziness_gate_results.json",
+                "artifacts/launch_readiness/metric_source_governance_gate_results.json",
+                "artifacts/launch_readiness/release_evidence_registry_gate_results.json",
+                "artifacts/launch_readiness/ui_system_grade_gate_results.json",
+            }
+        )
+        self.assertTrue(expected_registry_gates.issubset(matrix_gates))
+
     def test_release_blocking_failure_blocks_matrix(self):
         from tools.contracts.a_grade_execution_matrix import build_a_grade_execution_matrix
 
@@ -169,6 +201,29 @@ class AGradeExecutionMatrixTests(unittest.TestCase):
         self.assertFalse(results["passed"])
         reasons = " ".join(row["failure_reason"] for row in results["failures"])
         self.assertIn("hash does not match", reasons)
+
+    def test_artifact_integrity_gate_hash_is_self_referential(self):
+        from tools.contracts.a_grade_execution_matrix import build_a_grade_execution_matrix
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in self.REQUIRED_GATES:
+                self._write_gate(root, rel)
+            integrity_gate = root / "artifacts/launch_readiness/artifact_integrity_gate_results.json"
+            payload = json.loads(integrity_gate.read_text(encoding="utf-8"))
+            payload["generated_at"] = "after-final-hash"
+            integrity_gate.write_text(json.dumps(payload), encoding="utf-8")
+            results = build_a_grade_execution_matrix(root)
+
+        self.assertTrue(results["passed"], results.get("failures"))
+        integrity_rows = [
+            row
+            for row in results["rows"]
+            if row["required_gate"] == "artifacts/launch_readiness/artifact_integrity_gate_results.json"
+        ]
+        self.assertEqual(len(integrity_rows), 1)
+        self.assertFalse(integrity_rows[0]["artifact_hash_matched"])
+        self.assertTrue(integrity_rows[0]["passed"])
 
     def test_release_blocking_gate_commit_must_match_current_commit(self):
         from tools.contracts.a_grade_execution_matrix import build_a_grade_execution_matrix

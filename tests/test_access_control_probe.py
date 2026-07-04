@@ -17,6 +17,7 @@ from runtime_state import (  # noqa: E402
     ADMIN_CONNECTION_TEST_COUNT,
     CONNECTION_AVAILABLE,
     CONNECTION_UNAVAILABLE,
+    get_runtime_event_ledger,
 )
 
 
@@ -67,6 +68,12 @@ class AccessControlProbeTests(unittest.TestCase):
         self.assertFalse(st.session_state[CONNECTION_UNAVAILABLE])
         self.assertEqual(st.session_state[ADMIN_CONNECTION_TEST_COUNT], 1)
         self.assertEqual(st.session_state[ACCESS_GATE_STATE], "admin_connection_test_available")
+        events = get_runtime_event_ledger()
+        admin_events = [event for event in events if event["event_type"] == "explicit_admin_connection_test"]
+        self.assertEqual(len(admin_events), 1)
+        self.assertEqual(admin_events[0]["source_module"], "access_control.explicit_admin_connection_test")
+        self.assertTrue(admin_events[0]["setup_live_validation_marker_present"])
+        self.assertFalse(admin_events[0]["raw_sql_included"])
 
     def test_non_forced_probe_never_calls_get_active_session_or_get_session(self):
         context = types.ModuleType("snowflake.snowpark.context")

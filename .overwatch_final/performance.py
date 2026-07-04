@@ -542,6 +542,25 @@ def record_snowflake_session_open_event(
         query_boundary=boundary,
         session_open=True,
     )
+    try:
+        from runtime_state import record_runtime_event
+
+        record_runtime_event(
+            event_type="session_open",
+            section=str(event.get("section") or ""),
+            workflow=str(event.get("workflow") or ""),
+            boundary=boundary,
+            product_boundary=str(query_boundary or ""),
+            execution_boundary=boundary,
+            source_module="performance.record_snowflake_session_open_event",
+            session_open_count_delta=1,
+            started_at=str(event.get("recorded_at") or ""),
+            finished_at=str(event.get("recorded_at") or ""),
+            raw_sql_included=False,
+            extra={"allowed": bool(allowed), "reason": str(event.get("reason") or "")},
+        )
+    except Exception:
+        pass
     return event
 
 
@@ -798,6 +817,27 @@ def record_direct_sql_event(
         metadata_probe=metadata_probe,
         role_capture=bool(role_capture),
     )
+    try:
+        from runtime_state import record_runtime_event
+
+        record_runtime_event(
+            event_type="direct_sql",
+            section=str(event.get("section") or ""),
+            workflow=str(event.get("workflow") or ""),
+            boundary=boundary,
+            product_boundary=str(query_boundary or ""),
+            execution_boundary=boundary,
+            source_module="performance.record_direct_sql_event",
+            direct_sql_count_delta=1,
+            metadata_probe_count_delta=1 if metadata_probe else 0,
+            account_usage_count_delta=1 if boundary == "account_usage" else 0,
+            started_at=str(event.get("recorded_at") or ""),
+            finished_at=str(event.get("recorded_at") or ""),
+            raw_sql_included=False,
+            extra={"allowed": bool(allowed), "direct_sql_kind": direct_sql_kind},
+        )
+    except Exception:
+        pass
     return event
 
 
@@ -894,6 +934,25 @@ def record_role_capture_event(
         metadata_probe=bool(executed),
         role_capture=True,
     )
+    try:
+        from runtime_state import record_runtime_event
+
+        record_runtime_event(
+            event_type="role_capture",
+            section=str(event.get("section") or ""),
+            workflow=str(event.get("workflow") or ""),
+            boundary=boundary,
+            product_boundary=str(query_boundary or ""),
+            execution_boundary=boundary,
+            source_module="performance.record_role_capture_event",
+            metadata_probe_count_delta=1 if executed else 0,
+            started_at=str(event.get("recorded_at") or ""),
+            finished_at=str(event.get("recorded_at") or ""),
+            raw_sql_included=False,
+            extra={"deferred": bool(deferred), "executed": bool(executed)},
+        )
+    except Exception:
+        pass
     return event
 
 
@@ -1056,6 +1115,37 @@ def record_ui_query_event(
         # events so a single runner call is not counted twice.
         actual_execution=False,
     )
+    try:
+        from runtime_state import record_runtime_event
+
+        record_runtime_event(
+            event_type="query",
+            section=str(event.get("section") or ""),
+            workflow=str(event.get("workflow") or ""),
+            boundary=query_boundary,
+            product_boundary=original_boundary,
+            execution_boundary=query_boundary,
+            query_tier=str(query_tier or ""),
+            ttl_key=str(ttl_key or ""),
+            cache_hit=bool(event.get("cache_hit")),
+            elapsed_ms=float(event.get("elapsed_ms") or 0),
+            row_count=int(event.get("row_count") or 0),
+            max_rows=event.get("max_rows") if isinstance(event.get("max_rows"), int) else None,
+            error=str(event.get("error") or ""),
+            source_module="performance.record_ui_query_event",
+            query_count_delta=1,
+            account_usage_count_delta=1 if query_boundary == "account_usage" else 0,
+            started_at=str(event.get("started_at") or ""),
+            finished_at=str(event.get("finished_at") or ""),
+            raw_sql_included=False,
+            extra={
+                "actual_query_executed": event.get("actual_query_executed"),
+                "cache_layer": cache_layer,
+                "first_paint_sensitive": bool(first_paint_sensitive),
+            },
+        )
+    except Exception:
+        pass
     return event
 
 
@@ -1144,6 +1234,27 @@ def increment_snowflake_execution_counter(
     except Exception:
         pass
     _record_query_budget_context_event(query_boundary=boundary, actual_execution=True)
+    try:
+        from runtime_state import record_runtime_event
+
+        record_runtime_event(
+            event_type="snowflake_execution",
+            section=str(event.get("section") or ""),
+            workflow="",
+            boundary=boundary,
+            product_boundary=str(query_boundary or ""),
+            execution_boundary=boundary,
+            query_tier=str(tier or ""),
+            ttl_key=str(ttl_key or ""),
+            source_module="performance.increment_snowflake_execution_counter",
+            query_count_delta=1,
+            account_usage_count_delta=1 if boundary == "account_usage" else 0,
+            started_at=str(event.get("timestamp") or ""),
+            finished_at=str(event.get("timestamp") or ""),
+            raw_sql_included=False,
+        )
+    except Exception:
+        pass
     return event
 
 

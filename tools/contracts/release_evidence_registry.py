@@ -34,6 +34,10 @@ class RegistryRow:
     waiver_policy: str = "profile-aware signed waiver only where supported"
     proof_rows_required: bool = True
     artifact_required: bool = True
+    support_artifact_paths: tuple[str, ...] = ()
+    launch_readiness_field: str = ""
+    release_summary_field: str = ""
+    blocking_reason: str = "release-blocking proof required"
     admin_only_allowed: bool = False
     daily_output_facing: bool = False
     allowed_profiles: tuple[str, ...] = ("internal_fixture", "internal_live", "prod_candidate")
@@ -44,7 +48,8 @@ REGISTRY_ROWS: tuple[RegistryRow, ...] = (
     RegistryRow("runtime_event_ledger", True, True, "artifacts/launch_readiness/runtime_event_ledger_gate_results.json", "runtime_event_ledger", "tools/contracts/runtime_event_ledger.py", ("launch_readiness.py", "production_release_candidate.py", "a_grade_execution_matrix.py")),
     RegistryRow("first_paint_slo", True, True, "artifacts/launch_readiness/first_paint_slo_gate_results.json", "first_paint_slo", "tools/contracts/first_paint_slo.py", ("launch_readiness.py", "a_grade_execution_matrix.py")),
     RegistryRow("performance_budget", True, True, "artifacts/launch_readiness/performance_budget_gate_results.json", "performance_budget_gate", "tools/contracts/performance_budget_gate.py", ("launch_readiness.py", "a_grade_execution_matrix.py"), proof_rows_required=False),
-    RegistryRow("artifact_integrity", True, True, "artifacts/launch_readiness/artifact_integrity_gate_results.json", "artifact_verifier", "tools/contracts/artifact_verifier.py", ("launch_readiness.py", "production_release_candidate.py", "a_grade_execution_matrix.py")),
+    RegistryRow("artifact_integrity", True, True, "artifacts/launch_readiness/artifact_integrity_gate_results.json", "artifact_verifier", "tools/contracts/artifact_verifier.py", ("launch_readiness.py", "production_release_candidate.py", "a_grade_execution_matrix.py"), artifact_required=False),
+    RegistryRow("release_evidence_registry", True, True, "artifacts/launch_readiness/release_evidence_registry_gate_results.json", "release_evidence_registry", "tools/contracts/release_evidence_registry.py", ("launch_readiness.py", "production_release_candidate.py", "a_grade_execution_matrix.py"), artifact_required=False),
     RegistryRow("targeted_evidence_sql_pushdown", True, True, "artifacts/launch_readiness/targeted_evidence_sql_pushdown_gate_results.json", "targeted_evidence_sql_pushdown", "tools/contracts/targeted_evidence_sql_pushdown.py", ("launch_readiness.py", "a_grade_execution_matrix.py")),
     RegistryRow("cost_overview_no_autoload", True, True, "artifacts/launch_readiness/cost_overview_no_autoload_gate_results.json", "performance_budget_gate", "tools/contracts/performance_budget_gate.py", ("launch_readiness.py",)),
     RegistryRow("query_search_autorun", True, True, "artifacts/launch_readiness/query_search_autorun_gate_results.json", "query_search_autorun", "tools/contracts/query_search_autorun.py", ("launch_readiness.py", "a_grade_execution_matrix.py")),
@@ -52,6 +57,7 @@ REGISTRY_ROWS: tuple[RegistryRow, ...] = (
     RegistryRow("export_case_parity", True, True, "artifacts/launch_readiness/export_case_parity_gate_results.json", "export_case_parity", "tools/contracts/export_case_parity.py", ("launch_readiness.py", "production_release_candidate.py", "a_grade_execution_matrix.py")),
     RegistryRow("daily_ui_export_snapshot_leak_safety", True, True, "artifacts/launch_readiness/rendered_ui_leak_gate_results.json", "rendered_ui_leak_scan", "tools/contracts/rendered_ui_leak_scan.py", ("launch_readiness.py",), proof_rows_required=False),
     RegistryRow("ci_artifact_reality", True, True, "artifacts/launch_readiness/ci_artifact_reality_gate_results.json", "ci_artifact_reality", "tools/contracts/ci_artifact_reality.py", ("launch_readiness.py", "production_release_candidate.py", "a_grade_execution_matrix.py"), proof_rows_required=False),
+    RegistryRow("import_laziness", True, True, "artifacts/launch_readiness/import_laziness_gate_results.json", "import_laziness", "tools/contracts/import_laziness.py", ("launch_readiness.py", "production_release_candidate.py", "a_grade_execution_matrix.py"), proof_rows_required=False),
     RegistryRow("a_grade_execution_matrix", True, True, "artifacts/launch_readiness/a_grade_execution_matrix_gate_results.json", "a_grade_execution_matrix", "tools/contracts/a_grade_execution_matrix.py", ("launch_readiness.py", "production_release_candidate.py"), artifact_required=False),
     RegistryRow("launch_readiness", True, True, "artifacts/launch_readiness/launch_readiness_summary.json", "launch_readiness", "tools/contracts/launch_readiness.py", ("production_release_candidate.py",), proof_rows_required=False, artifact_required=False),
     RegistryRow("production_release_candidate", True, True, "artifacts/release_candidate/production_release_candidate_results.json", "production_release_candidate", "tools/contracts/production_release_candidate.py", ("production_release_candidate.py",), proof_rows_required=True, artifact_required=False),
@@ -63,7 +69,125 @@ REGISTRY_ROWS: tuple[RegistryRow, ...] = (
     RegistryRow("sql_cleanup", True, True, "artifacts/launch_readiness/sql_cleanup_gate_results.json", "sql_value_inventory", "tools/contracts/sql_value_inventory.py", ("launch_readiness.py",), proof_rows_required=False),
     RegistryRow("stress_status", True, True, "artifacts/launch_readiness/user_stress_gate_results.json", "user_stress_test", "tools/contracts/user_stress_test.py", ("launch_readiness.py",), proof_rows_required=False),
     RegistryRow("route_action_replay", True, True, "artifacts/launch_readiness/route_action_replay_gate_results.json", "route_action_replay", "tools/contracts/route_action_replay.py", ("launch_readiness.py", "production_release_candidate.py", "a_grade_execution_matrix.py")),
+    RegistryRow("metric_source_governance", True, True, "artifacts/launch_readiness/metric_source_governance_gate_results.json", "metric_source_governance", "tools/contracts/metric_source_governance.py", ("launch_readiness.py", "a_grade_execution_matrix.py"), proof_rows_required=False),
 )
+
+
+def _result_artifact_for_gate(artifact_path: str) -> str:
+    """Return the producer result artifact paired with a launch gate when conventional."""
+    if not artifact_path.startswith(f"{LAUNCH_READINESS_DIR}/"):
+        return ""
+    name = Path(artifact_path).name
+    if not name.endswith("_gate_results.json"):
+        return ""
+    result_name = name.replace("_gate_results.json", "_results.json")
+    return f"{FULL_APP_DIR}/{result_name}"
+
+
+def iter_required_release_artifacts(
+    *,
+    production_deployable: bool = True,
+    a_grade_ready: bool | None = None,
+    include_support_artifacts: bool = True,
+    require_proof_rows: bool = True,
+) -> tuple[str, ...]:
+    """Return the registry-owned artifact list used by release consumers.
+
+    This is intentionally the canonical list; consumers should not maintain
+    parallel tuples of required launch artifacts.
+    """
+    artifacts: list[str] = []
+    seen: set[str] = set()
+    for row in REGISTRY_ROWS:
+        if not row.artifact_required:
+            continue
+        if require_proof_rows and not row.proof_rows_required:
+            continue
+        if production_deployable and not row.required_for_production_deployable:
+            continue
+        if a_grade_ready is True and not row.required_for_a_grade_ready:
+            continue
+        candidates = [row.artifact_path]
+        if include_support_artifacts:
+            candidates.extend(row.support_artifact_paths)
+        for artifact in candidates:
+            if artifact and artifact not in seen:
+                seen.add(artifact)
+                artifacts.append(artifact)
+    return tuple(artifacts)
+
+
+def required_artifacts_for_consumer(consumer: str, *, include_support_artifacts: bool = False) -> tuple[str, ...]:
+    """Return registry artifacts that a contract consumer is expected to use."""
+    requested = str(consumer or "").replace("\\", "/")
+    artifacts: list[str] = []
+    seen: set[str] = set()
+    for row in REGISTRY_ROWS:
+        if not any(str(item).replace("\\", "/").endswith(requested) or requested.endswith(str(item).replace("\\", "/")) for item in row.required_consumers):
+            continue
+        if not row.artifact_required:
+            continue
+        candidates = [row.artifact_path]
+        if include_support_artifacts:
+            candidates.extend(row.support_artifact_paths)
+        for artifact in candidates:
+            if artifact and artifact not in seen:
+                seen.add(artifact)
+                artifacts.append(artifact)
+    return tuple(artifacts)
+
+
+def registry_row_for_gate(gate_id_or_artifact_path: str) -> dict[str, Any]:
+    """Return the normalized registry row for a gate id or artifact path."""
+    needle = str(gate_id_or_artifact_path or "").replace("\\", "/")
+    for row in REGISTRY_ROWS:
+        if needle in {row.gate_id, row.artifact_path.replace("\\", "/")}:
+            return {
+                "gate_id": row.gate_id,
+                "artifact_path": row.artifact_path,
+                "support_artifact_paths": list(row.support_artifact_paths),
+                "expected_producer": row.producer,
+                "producer_file": row.producer_file,
+                "required_consumers": list(row.required_consumers),
+                "required_for_production_deployable": row.required_for_production_deployable,
+                "required_for_a_grade_ready": row.required_for_a_grade_ready,
+                "proof_rows_required": row.proof_rows_required,
+                "artifact_required": row.artifact_required,
+                "owner": row.owner,
+                "blocker_severity": row.blocker_severity,
+                "waiver_policy": row.waiver_policy,
+                "launch_readiness_field": row.launch_readiness_field or f"{row.gate_id}_passed",
+                "release_summary_field": row.release_summary_field or f"{row.gate_id}_passed",
+                "blocking_reason": row.blocking_reason,
+                "admin_only_allowed": row.admin_only_allowed,
+                "daily_output_facing": row.daily_output_facing,
+                "allowed_profiles": list(row.allowed_profiles),
+            }
+    raise KeyError(f"release evidence registry has no gate for {gate_id_or_artifact_path!r}")
+
+
+def registry_gate_specs() -> tuple[dict[str, Any], ...]:
+    """Return normalized gate metadata for A-grade and release summaries."""
+    return tuple(
+        {
+            "gate_id": row.gate_id,
+            "artifact_path": row.artifact_path,
+            "support_artifact_paths": list(row.support_artifact_paths),
+            "expected_producer": row.producer,
+            "producer_file": row.producer_file,
+            "required_for_production_deployable": row.required_for_production_deployable,
+            "required_for_a_grade_ready": row.required_for_a_grade_ready,
+            "proof_rows_required": row.proof_rows_required,
+            "artifact_required": row.artifact_required,
+            "owner": row.owner,
+            "blocker_severity": row.blocker_severity,
+            "waiver_policy": row.waiver_policy,
+            "launch_readiness_field": row.launch_readiness_field or f"{row.gate_id}_passed",
+            "release_summary_field": row.release_summary_field or f"{row.gate_id}_passed",
+            "blocking_reason": row.blocking_reason,
+        }
+        for row in REGISTRY_ROWS
+    )
 
 
 def _now() -> str:
@@ -131,8 +255,17 @@ def _consumer_has_artifact(root: Path, consumer: str, artifact_path: str) -> boo
         return False
     stem = Path(artifact_path).stem
     gate_token = stem.replace("_gate_results", "").replace("_results", "")
+    uses_registry_helper = any(
+        helper in text
+        for helper in (
+            "iter_required_release_artifacts",
+            "required_artifacts_for_consumer",
+            "registry_gate_specs",
+        )
+    )
     return (
-        artifact_path in text
+        uses_registry_helper
+        or artifact_path in text
         or stem in text
         or gate_token in text
         or gate_token.upper() in text
@@ -181,7 +314,7 @@ def _registry_row(root: Path, spec: RegistryRow, commit_sha: str) -> dict[str, A
     if artifact_exists and strict_artifact and spec.proof_rows_required and proof_rows <= 0:
         reasons.append("registered artifact lacks proof rows")
     if consumer_misses:
-        reasons.append("required consumer mismatch: " + ", ".join(consumer_misses))
+        reasons.append("required consumer does not import/use registry artifact helper: " + ", ".join(consumer_misses))
     if not spec.owner:
         reasons.append("registry row missing owner")
     if spec.blocker_severity == "advisory" and (not spec.owner or not spec.waiver_policy):
@@ -192,6 +325,7 @@ def _registry_row(root: Path, spec: RegistryRow, commit_sha: str) -> dict[str, A
         "required_for_production_deployable": spec.required_for_production_deployable,
         "required_for_a_grade_ready": spec.required_for_a_grade_ready,
         "artifact_path": spec.artifact_path,
+        "support_artifact_paths": list(spec.support_artifact_paths),
         "launch_readiness_artifact_path": spec.artifact_path,
         "artifact_exists": artifact_exists,
         "artifact_producer": str(payload.get("producer") or payload.get("source") or ""),
@@ -211,6 +345,9 @@ def _registry_row(root: Path, spec: RegistryRow, commit_sha: str) -> dict[str, A
         "owner": spec.owner,
         "blocker_severity": spec.blocker_severity,
         "waiver_policy": spec.waiver_policy,
+        "launch_readiness_field": spec.launch_readiness_field or f"{spec.gate_id}_passed",
+        "release_summary_field": spec.release_summary_field or f"{spec.gate_id}_passed",
+        "blocking_reason": spec.blocking_reason,
         "producer": PRODUCER,
         "producer_signature": _row_signature(spec.gate_id, commit_sha),
         "provenance_origin": "producer",
@@ -232,6 +369,7 @@ def build_release_evidence_registry_results(root: Path | str = ".") -> dict[str,
             "first_paint_slo",
             "performance_budget",
             "artifact_integrity",
+            "release_evidence_registry",
             "targeted_evidence_sql_pushdown",
             "cost_overview_no_autoload",
             "query_search_autorun",
@@ -249,6 +387,8 @@ def build_release_evidence_registry_results(root: Path | str = ".") -> dict[str,
             "export_parse",
             "sql_cleanup",
             "stress_status",
+            "import_laziness",
+            "metric_source_governance",
         }
         - registered_ids
     )
@@ -363,5 +503,9 @@ __all__ = [
     "REGISTRY_ROWS",
     "build_release_evidence_registry_gate",
     "build_release_evidence_registry_results",
+    "iter_required_release_artifacts",
+    "registry_row_for_gate",
+    "registry_gate_specs",
+    "required_artifacts_for_consumer",
     "write_release_evidence_registry_artifacts",
 ]

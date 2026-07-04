@@ -10,6 +10,10 @@ from tools.contracts.release_evidence_registry import (
     REGISTRY_ROWS,
     RELEASE_EVIDENCE_REGISTRY_GATE_REL,
     build_release_evidence_registry_results,
+    iter_required_release_artifacts,
+    registry_gate_specs,
+    registry_row_for_gate,
+    required_artifacts_for_consumer,
     write_release_evidence_registry_artifacts,
 )
 
@@ -130,6 +134,33 @@ class ReleaseEvidenceRegistryTests(unittest.TestCase):
                 results = build_release_evidence_registry_results(root)
 
         self.assertTrue(results["passed"], results["failures"])
+
+    def test_required_artifact_helpers_are_registry_backed(self) -> None:
+        required = iter_required_release_artifacts(include_support_artifacts=False)
+        self.assertEqual(
+            {
+                row.artifact_path
+                for row in REGISTRY_ROWS
+                if row.artifact_required and row.proof_rows_required
+            },
+            set(required),
+        )
+        specs = registry_gate_specs()
+        self.assertEqual({row.gate_id for row in REGISTRY_ROWS}, {str(row["gate_id"]) for row in specs})
+        launch_required = required_artifacts_for_consumer("launch_readiness.py")
+        self.assertIn("artifacts/launch_readiness/runtime_event_ledger_gate_results.json", launch_required)
+        self.assertIn("artifacts/launch_readiness/metric_source_governance_gate_results.json", launch_required)
+        self.assertNotIn("artifacts/launch_readiness/metric_source_governance_gate_results.json", required)
+        self.assertNotIn("artifacts/launch_readiness/artifact_integrity_gate_results.json", required)
+        self.assertNotIn("artifacts/launch_readiness/release_evidence_registry_gate_results.json", required)
+
+    def test_registry_row_for_gate_resolves_id_and_artifact(self) -> None:
+        by_id = registry_row_for_gate("runtime_event_ledger")
+        by_artifact = registry_row_for_gate("artifacts/launch_readiness/runtime_event_ledger_gate_results.json")
+
+        self.assertEqual(by_id["gate_id"], "runtime_event_ledger")
+        self.assertEqual(by_artifact["gate_id"], "runtime_event_ledger")
+        self.assertIn("launch_readiness.py", by_id["required_consumers"])
 
 
 if __name__ == "__main__":

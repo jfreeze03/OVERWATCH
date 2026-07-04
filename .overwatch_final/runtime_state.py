@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 import streamlit as st
 
@@ -58,6 +59,7 @@ PRE_FIRST_PAINT_SESSION_OPEN_COUNT = "_overwatch_pre_first_paint_session_open_co
 SHELL_SESSION_OPEN_COUNT = "_overwatch_shell_session_open_count"
 ADMIN_CONNECTION_TEST_COUNT = "_overwatch_admin_connection_test_count"
 ACTIVE_SESSION_PROBE_COUNT = "_overwatch_active_session_probe_count"
+RUNTIME_EVENT_LEDGER = "_overwatch_runtime_event_ledger"
 ACCESS_GATE_STATE = "_overwatch_access_gate_state"
 ACTIVE_SECTION = "_overwatch_active_section"
 PENDING_SECTION = "_overwatch_pending_section"
@@ -242,6 +244,147 @@ def mark_widget_key_rendered(key: str) -> None:
     key_text = str(key)
     if key_text not in {str(item) for item in rendered if item is not None}:
         rendered.append(key_text)
+
+
+def _runtime_event_list() -> list[Any]:
+    try:
+        value = st.session_state.setdefault(RUNTIME_EVENT_LEDGER, [])
+    except Exception:
+        return []
+    if not isinstance(value, list):
+        try:
+            st.session_state[RUNTIME_EVENT_LEDGER] = []
+            return st.session_state[RUNTIME_EVENT_LEDGER]
+        except Exception:
+            return []
+    return value
+
+
+def record_runtime_event(
+    *,
+    event_type: str,
+    route: str = "",
+    section: str = "",
+    workflow: str = "",
+    boundary: str = "",
+    query_tier: str = "",
+    ttl_key: str = "",
+    cache_hit: bool | None = None,
+    elapsed_ms: float | int = 0,
+    row_count: int = 0,
+    max_rows: int | None = None,
+    error: str = "",
+    source_module: str = "",
+    product_boundary: str = "",
+    execution_boundary: str = "",
+    action_id: str = "",
+    before_first_paint: bool = False,
+    after_first_paint: bool = False,
+    user_initiated: bool = False,
+    query_count_delta: int = 0,
+    session_open_count_delta: int = 0,
+    active_session_probe_count_delta: int = 0,
+    direct_sql_count_delta: int = 0,
+    account_usage_count_delta: int = 0,
+    metadata_probe_count_delta: int = 0,
+    account_usage_marker_present: bool = False,
+    evidence_loader_marker_present: bool = False,
+    cost_evidence_marker_present: bool = False,
+    query_search_broad_marker_present: bool = False,
+    setup_live_validation_marker_present: bool = False,
+    route_action_marker_present: bool = False,
+    raw_sql_included: bool = False,
+    started_at: str = "",
+    finished_at: str = "",
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Record an app-source runtime event without storing SQL or secrets."""
+    now = datetime.now().isoformat(timespec="milliseconds")
+    event = {
+        "event_id": uuid4().hex[:16],
+        "event_type": str(event_type or "runtime"),
+        "route": str(route or section or ""),
+        "section": str(section or ""),
+        "workflow": str(workflow or ""),
+        "boundary": str(boundary or execution_boundary or product_boundary or ""),
+        "product_boundary": str(product_boundary or boundary or ""),
+        "execution_boundary": str(execution_boundary or boundary or ""),
+        "query_tier": str(query_tier or ""),
+        "ttl_key": str(ttl_key or "")[:160],
+        "cache_hit": cache_hit,
+        "elapsed_ms": round(float(elapsed_ms or 0), 2),
+        "row_count": int(row_count or 0),
+        "max_rows": None if max_rows is None else int(max_rows),
+        "error": str(error or "")[:300],
+        "source_module": str(source_module or ""),
+        "action_id": str(action_id or ""),
+        "before_first_paint": bool(before_first_paint),
+        "after_first_paint": bool(after_first_paint),
+        "user_initiated": bool(user_initiated),
+        "query_count_delta": int(query_count_delta or 0),
+        "session_open_count_delta": int(session_open_count_delta or 0),
+        "active_session_probe_count_delta": int(active_session_probe_count_delta or 0),
+        "direct_sql_count_delta": int(direct_sql_count_delta or 0),
+        "account_usage_count_delta": int(account_usage_count_delta or 0),
+        "metadata_probe_count_delta": int(metadata_probe_count_delta or 0),
+        "account_usage_marker_present": bool(account_usage_marker_present),
+        "evidence_loader_marker_present": bool(evidence_loader_marker_present),
+        "cost_evidence_marker_present": bool(cost_evidence_marker_present),
+        "query_search_broad_marker_present": bool(query_search_broad_marker_present),
+        "setup_live_validation_marker_present": bool(setup_live_validation_marker_present),
+        "route_action_marker_present": bool(route_action_marker_present),
+        "started_at": started_at or now,
+        "finished_at": finished_at or now,
+        "producer": "runtime_state",
+        "provenance_origin": "producer",
+        "raw_sql_included": bool(raw_sql_included),
+    }
+    if extra:
+        for key, value in extra.items():
+            if key not in event and key not in {"query_text", "sql", "raw_sql", "token_file_path"}:
+                event[str(key)] = value
+    events = _runtime_event_list()
+    try:
+        events.append(event)
+        if len(events) > 500:
+            del events[:-500]
+    except Exception:
+        pass
+    return event
+
+
+def get_runtime_event_ledger() -> list[dict[str, Any]]:
+    """Return the source runtime event ledger for release harness capture."""
+    return [dict(event) for event in _runtime_event_list() if isinstance(event, dict)]
+
+
+def clear_runtime_event_ledger() -> None:
+    """Clear source runtime event ledger rows for a fresh validation capture."""
+    try:
+        st.session_state[RUNTIME_EVENT_LEDGER] = []
+    except Exception:
+        pass
+
+
+def summarize_runtime_event_ledger() -> dict[str, Any]:
+    """Summarize source runtime events without needing raw SQL."""
+    rows = get_runtime_event_ledger()
+    return {
+        "event_count": len(rows),
+        "query_count": sum(int(row.get("query_count_delta") or 0) for row in rows),
+        "session_open_count": sum(int(row.get("session_open_count_delta") or 0) for row in rows),
+        "active_session_probe_count": sum(int(row.get("active_session_probe_count_delta") or 0) for row in rows),
+        "direct_sql_count": sum(int(row.get("direct_sql_count_delta") or 0) for row in rows),
+        "account_usage_count": sum(int(row.get("account_usage_count_delta") or 0) for row in rows),
+        "metadata_probe_count": sum(int(row.get("metadata_probe_count_delta") or 0) for row in rows),
+        "account_usage_marker_count": sum(1 for row in rows if bool(row.get("account_usage_marker_present"))),
+        "evidence_loader_marker_count": sum(1 for row in rows if bool(row.get("evidence_loader_marker_present"))),
+        "cost_evidence_marker_count": sum(1 for row in rows if bool(row.get("cost_evidence_marker_present"))),
+        "query_search_broad_marker_count": sum(1 for row in rows if bool(row.get("query_search_broad_marker_present"))),
+        "setup_live_validation_marker_count": sum(1 for row in rows if bool(row.get("setup_live_validation_marker_present"))),
+        "route_action_marker_count": sum(1 for row in rows if bool(row.get("route_action_marker_present"))),
+        "raw_sql_included": any(bool(row.get("raw_sql_included")) for row in rows),
+    }
 
 
 def ensure_default_state(key: str, value: Any) -> Any:

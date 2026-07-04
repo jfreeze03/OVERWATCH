@@ -14,6 +14,7 @@ from tools.contracts.runtime_event_ledger import (
     PRIMARY_SECTIONS,
     QUERY_SEARCH_AUTORUN_REL,
     RUNTIME_EVENT_LEDGER_GATE_REL,
+    SOURCE_RUNTIME_EVENT_LEDGER_REL,
     build_runtime_event_ledger_results,
     write_runtime_event_ledger_artifacts,
 )
@@ -131,6 +132,39 @@ class RuntimeEventLedgerTests(unittest.TestCase):
                 ]
             },
         )
+        self._write_json(
+            root,
+            SOURCE_RUNTIME_EVENT_LEDGER_REL,
+            {
+                "producer": "full_app_runtime_validation",
+                "producer_signature": "sig",
+                "commit_sha": self.commit,
+                "passed": True,
+                "rows": [
+                    {
+                        "event_id": "source-query-1",
+                        "event_type": "query",
+                        "section": "Executive Landing",
+                        "workflow": "Overview",
+                        "execution_boundary": "decision_packet",
+                        "query_tier": "command_summary",
+                        "ttl_key": "decision_packet",
+                        "query_count_delta": 1,
+                        "session_open_count_delta": 0,
+                        "direct_sql_count_delta": 0,
+                        "account_usage_count_delta": 0,
+                        "metadata_probe_count_delta": 0,
+                        "before_first_paint": True,
+                        "account_usage_marker_present": False,
+                        "producer": "runtime_state",
+                        "producer_signature": "sig",
+                        "commit_sha": self.commit,
+                        "raw_sql_included": False,
+                    }
+                ],
+                "raw_sql_included": False,
+            },
+        )
 
     def test_passing_runtime_artifacts_emit_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -166,6 +200,50 @@ class RuntimeEventLedgerTests(unittest.TestCase):
 
         self.assertFalse(results["passed"])
         self.assertGreater(results["route_action_sql_violation_count"], 0)
+
+    def test_missing_source_runtime_ledger_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._seed_passing(root)
+            (root / SOURCE_RUNTIME_EVENT_LEDGER_REL).unlink()
+            with patch("tools.contracts.runtime_event_ledger._git_commit", return_value=self.commit):
+                results = build_runtime_event_ledger_results(root)
+
+        self.assertFalse(results["passed"])
+        self.assertIn("source runtime event", json.dumps(results["failures"]))
+
+    def test_source_runtime_markers_are_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._seed_passing(root)
+            payload = json.loads((root / SOURCE_RUNTIME_EVENT_LEDGER_REL).read_text(encoding="utf-8"))
+            payload["rows"].append(
+                {
+                    "event_id": "source-admin-1",
+                    "event_type": "explicit_admin_connection_test",
+                    "section": "Settings/Admin Setup Health",
+                    "workflow": "Setup Health",
+                    "execution_boundary": "explicit_connection_test",
+                    "session_open_count_delta": 1,
+                    "active_session_probe_count_delta": 0,
+                    "setup_live_validation_marker_present": True,
+                    "producer": "runtime_state",
+                    "producer_signature": "sig",
+                    "commit_sha": self.commit,
+                    "raw_sql_included": False,
+                }
+            )
+            self._write_json(root, SOURCE_RUNTIME_EVENT_LEDGER_REL, payload)
+            with patch("tools.contracts.runtime_event_ledger._git_commit", return_value=self.commit):
+                results = build_runtime_event_ledger_results(root)
+
+        source_rows = [
+            row for row in results["rows"]
+            if row["row_id"].startswith("source_runtime_event::source-admin-1")
+        ]
+        self.assertEqual(len(source_rows), 1)
+        self.assertTrue(source_rows[0]["setup_live_validation_marker_present"])
+        self.assertEqual(source_rows[0]["session_open_count_delta"], 1)
 
 
 if __name__ == "__main__":

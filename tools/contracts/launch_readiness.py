@@ -7758,8 +7758,52 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
 
     # Late launch artifacts such as CI artifact reality and the release evidence
     # registry are intentionally written after the first bundle pass. Re-run the
-    # hash-sensitive A-grade gate once the release hash manifest can see those
-    # exact artifacts, then refresh the bundle summary with the final decision.
+    # artifact integrity gate after those producers exist, refresh the release
+    # hash manifest around that updated gate, then run the hash-sensitive A-grade
+    # matrix against the current manifest.
+    artifact_integrity_artifacts = write_artifact_integrity_artifacts(root_path)
+    payloads.update(artifact_integrity_artifacts)
+    launch_artifacts["artifact_integrity_gate_results"] = artifact_integrity_artifacts[
+        ARTIFACT_INTEGRITY_GATE_REL
+    ]
+    for name, payload in launch_artifacts.items():
+        rel = f"{LAUNCH_READINESS_DIR}/{name}.json"
+        _write_json(root_path / rel, payload)
+        written[rel] = payload
+    product_gauntlet = _product_gauntlet_release_results(root_path, payloads, launch_artifacts)
+    (
+        release_manifest,
+        release_hashes,
+        release_reconciliation,
+        release_gate,
+        rel_summary,
+        rel_failures,
+        rel_matrix,
+        rel_notes,
+    ) = _write_release_candidate_bundle(
+        root_path,
+        profile=profile,
+        launch_summary=launch_summary,
+        launch_failures=launch_failures,
+        matrix=matrix,
+        product_gauntlet=product_gauntlet,
+        ci_context=launch_artifacts["release_candidate_ci_context"],
+    )
+    launch_artifacts["release_candidate_gate_results"] = release_gate
+    _write_json(root_path / f"{LAUNCH_READINESS_DIR}/release_candidate_gate_results.json", release_gate)
+    written[f"{LAUNCH_READINESS_DIR}/release_candidate_gate_results.json"] = release_gate
+    for name, payload in {
+        "artifact_manifest": release_manifest,
+        "artifact_hashes": release_hashes,
+        "artifact_reconciliation_results": release_reconciliation,
+        "product_gauntlet_release_results": product_gauntlet,
+        "release_candidate_summary": rel_summary,
+        "release_candidate_failures": rel_failures,
+        "release_gate_matrix": rel_matrix,
+        "release_notes": rel_notes,
+    }.items():
+        written[f"{RELEASE_CANDIDATE_DIR}/{name}.json"] = payload
+
     a_grade_artifacts = write_a_grade_execution_matrix_artifacts(
         root_path,
         launch_artifacts=launch_artifacts,

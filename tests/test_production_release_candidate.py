@@ -214,6 +214,43 @@ class ProductionReleaseCandidateTests(unittest.TestCase):
         self.assertTrue(summary["plan_adherence_report_passed"], summary)
         self.assertEqual(summary["plan_adherence_deviation_count"], 1)
 
+    def test_plan_failure_blocks_final_deployable_and_a_grade(self):
+        from tools.contracts.production_release_candidate import (
+            _final_release_candidate_summary,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_json(
+                root / "artifacts" / "launch_readiness" / "launch_readiness_summary.json",
+                {"passed": True, "production_deployable": True},
+            )
+            self._write_json(
+                root / "artifacts" / "launch_readiness" / "a_grade_execution_matrix_gate_results.json",
+                {"passed": True, "a_grade_ready": True},
+            )
+            self._write_json(
+                root / "artifacts" / "release_candidate" / "plan_adherence_report.json",
+                {"passed": False, "failure_count": 1, "deviation_count": 1},
+            )
+
+            summary = _final_release_candidate_summary(
+                root,
+                {
+                    "passed": True,
+                    "production_deployable": True,
+                    "phase_count": 20,
+                    "failures": [],
+                    "token_path_leak_count": 0,
+                    "temp_sql_file_leftover_count": 0,
+                },
+            )
+
+        self.assertFalse(summary["production_deployable"], summary)
+        self.assertFalse(summary["a_grade_ready"], summary)
+        self.assertFalse(summary["passed"], summary)
+        self.assertEqual(summary["plan_adherence_failure_count"], 1)
+
     @staticmethod
     def _write_json(path: Path, payload: dict) -> None:
         import json

@@ -44,7 +44,19 @@ class PlanAdherenceReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self._seed_phase_artifacts(root)
-            with patch("tools.contracts.plan_adherence_report._git_commit", return_value=self.commit):
+            self._write_json(
+                root,
+                "artifacts/release_candidate/release_notes.json",
+                {"validation_commands": ["python -m unittest tests.test_plan_adherence_report"]},
+            )
+            changed = {
+                *[item for phase in PHASES for item in phase.files_changed],
+                *[item for phase in PHASES for item in phase.tests_added_or_updated],
+            }
+            with (
+                patch("tools.contracts.plan_adherence_report._git_commit", return_value=self.commit),
+                patch("tools.contracts.plan_adherence_report._git_changed_files", return_value=changed),
+            ):
                 artifacts = write_plan_adherence_report(root)
 
         report = artifacts[PLAN_ADHERENCE_REPORT_REL]
@@ -52,6 +64,10 @@ class PlanAdherenceReportTests(unittest.TestCase):
         self.assertEqual(report["phase_count"], len(PHASES))
         self.assertEqual(report["failure_count"], 0)
         self.assertTrue(all(row["raw_sql_included"] is False for row in report["rows"]))
+        self.assertTrue(all("actual_changed_files" in row for row in report["rows"]))
+        self.assertTrue(all("actual_tests_added_or_updated" in row for row in report["rows"]))
+        self.assertTrue(all("commands_run" in row for row in report["rows"]))
+        self.assertTrue(all(row["commands_run"] for row in report["rows"]))
 
     def test_missing_phase_artifact_blocks_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -59,12 +75,59 @@ class PlanAdherenceReportTests(unittest.TestCase):
             self._seed_phase_artifacts(root)
             missing = PHASES[0].artifacts[0]
             (root / missing).unlink()
-            with patch("tools.contracts.plan_adherence_report._git_commit", return_value=self.commit):
+            with (
+                patch("tools.contracts.plan_adherence_report._git_commit", return_value=self.commit),
+                patch("tools.contracts.plan_adherence_report._git_changed_files", return_value=set()),
+            ):
                 report = build_plan_adherence_report(root)
 
         self.assertFalse(report["passed"])
         self.assertEqual(report["failure_count"], 1)
         self.assertIn(missing, report["failures"][0]["blockers"][0])
+
+    def test_false_deployable_summary_blocks_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._seed_phase_artifacts(root)
+            (root / PHASES[0].artifacts[0]).unlink()
+            self._write_json(
+                root,
+                "artifacts/release_candidate/release_candidate_summary.json",
+                {"production_deployable": True, "a_grade_ready": True},
+            )
+            with (
+                patch("tools.contracts.plan_adherence_report._git_commit", return_value=self.commit),
+                patch("tools.contracts.plan_adherence_report._git_changed_files", return_value=set()),
+            ):
+                report = build_plan_adherence_report(root)
+
+        self.assertFalse(report["passed"])
+        self.assertTrue(report["production_deployable_blocked_by_plan"])
+        reasons = json.dumps(report["failures"])
+        self.assertIn("production_deployable=true", reasons)
+        self.assertIn("a_grade_ready=true", reasons)
+
+    def test_unrecorded_deviation_summary_blocks_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._seed_phase_artifacts(root)
+            self._write_json(
+                root,
+                "artifacts/release_candidate/release_candidate_summary.json",
+                {"unrecorded_deviation_count": 1},
+            )
+            changed = {
+                *[item for phase in PHASES for item in phase.files_changed],
+                *[item for phase in PHASES for item in phase.tests_added_or_updated],
+            }
+            with (
+                patch("tools.contracts.plan_adherence_report._git_commit", return_value=self.commit),
+                patch("tools.contracts.plan_adherence_report._git_changed_files", return_value=changed),
+            ):
+                report = build_plan_adherence_report(root)
+
+        self.assertFalse(report["passed"])
+        self.assertIn("unrecorded deviations", json.dumps(report["failures"]))
 
 
 if __name__ == "__main__":

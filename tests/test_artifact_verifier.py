@@ -10,11 +10,13 @@ from tools.contracts.artifact_verifier import (
     ARTIFACT_HASHES_REL,
     ARTIFACT_INTEGRITY_GATE_REL,
     ARTIFACT_INTEGRITY_RESULTS_REL,
+    DEFAULT_RELEASE_BLOCKING_ARTIFACTS,
     build_artifact_integrity_gate,
     build_artifact_integrity_results,
     verify_artifact,
     write_artifact_integrity_artifacts,
 )
+from tools.contracts.release_evidence_registry import iter_required_release_artifacts
 
 
 class ArtifactVerifierTests(unittest.TestCase):
@@ -271,6 +273,9 @@ class ArtifactVerifierTests(unittest.TestCase):
 
         self.assertFalse(gate["passed"])
         self.assertEqual(gate["failure_count"], 1)
+
+    def test_default_release_artifacts_are_registry_derived(self) -> None:
+        self.assertEqual(DEFAULT_RELEASE_BLOCKING_ARTIFACTS, iter_required_release_artifacts())
 
 
 if __name__ == "__main__":

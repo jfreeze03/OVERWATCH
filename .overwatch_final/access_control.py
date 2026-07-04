@@ -20,6 +20,7 @@ from runtime_state import (
     CURRENT_ROLE_SOURCE,
     LAST_ALLOWED_ROLE,
     get_state,
+    record_runtime_event,
     set_state,
 )
 
@@ -178,6 +179,7 @@ def explicit_admin_connection_test() -> bool:
     """Run the real connection test only from explicit admin/setup actions."""
     global _SNOWFLAKE_AVAILABLE_PROCESS_CACHE
     _bump_counter(ADMIN_CONNECTION_TEST_COUNT)
+    event_error = ""
     acquired = _SNOWFLAKE_AVAILABLE_LOCK.acquire(blocking=False)
     if not acquired:
         acquired = _SNOWFLAKE_AVAILABLE_LOCK.acquire(blocking=True)
@@ -199,6 +201,7 @@ def explicit_admin_connection_test() -> bool:
         except Exception as exc:
             available = False
             sanitized_error = _sanitize_connection_error(exc)
+        event_error = sanitized_error
         set_state(CONNECTION_AVAILABLE, available)
         set_state(CONNECTION_UNAVAILABLE, not available)
         set_state("_overwatch_connection_test_error", sanitized_error)
@@ -206,6 +209,28 @@ def explicit_admin_connection_test() -> bool:
         _set_access_gate_state("admin_connection_test_available" if available else "admin_connection_test_unavailable")
         return available
     finally:
+        try:
+            record_runtime_event(
+                event_type="explicit_admin_connection_test",
+                route="Settings/Admin Setup Health",
+                section="Settings/Admin Setup Health",
+                workflow="Setup Health",
+                boundary="setup_health",
+                product_boundary="setup_health",
+                execution_boundary="explicit_connection_test",
+                query_tier="setup_admin",
+                ttl_key="explicit_admin_connection_test",
+                error=event_error,
+                source_module="access_control.explicit_admin_connection_test",
+                before_first_paint=False,
+                after_first_paint=True,
+                user_initiated=True,
+                session_open_count_delta=1 if get_state(CONNECTION_AVAILABLE, False) else 0,
+                setup_live_validation_marker_present=True,
+                raw_sql_included=False,
+            )
+        except Exception:
+            pass
         if acquired:
             _SNOWFLAKE_AVAILABLE_LOCK.release()
 

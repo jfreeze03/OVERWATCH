@@ -9,6 +9,8 @@ from pathlib import Path
 import subprocess
 from typing import Any, Mapping
 
+from tools.contracts.release_evidence_registry import registry_gate_specs
+
 
 FULL_APP_DIR = "artifacts/full_app_validation"
 LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
@@ -19,6 +21,9 @@ A_GRADE_EXECUTION_MATRIX_GATE_REL = f"{LAUNCH_READINESS_DIR}/a_grade_execution_m
 A_GRADE_EXECUTION_MATRIX_SUMMARY_REL = f"{RELEASE_CANDIDATE_DIR}/a_grade_execution_matrix_summary.json"
 ARTIFACT_MANIFEST_REL = f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json"
 ARTIFACT_HASHES_REL = f"{RELEASE_CANDIDATE_DIR}/artifact_hashes.json"
+SELF_REFERENTIAL_HASH_GATES = {
+    "artifacts/launch_readiness/artifact_integrity_gate_results.json",
+}
 
 
 def _now() -> str:
@@ -526,6 +531,33 @@ def build_a_grade_execution_matrix(
             False,
         ),
     ]
+    covered_gates = {str(spec[9]) for spec in gate_specs}
+    for registry_spec in registry_gate_specs():
+        if not bool(registry_spec.get("artifact_required", True)):
+            continue
+        if not bool(registry_spec.get("proof_rows_required", True)):
+            continue
+        gate_rel = str(registry_spec.get("artifact_path") or "")
+        if not gate_rel or gate_rel in covered_gates:
+            continue
+        covered_gates.add(gate_rel)
+        gate_id = str(registry_spec.get("gate_id") or Path(gate_rel).stem)
+        gate_specs.append(
+            (
+                "Production launch readiness",
+                f"Registry gate: {gate_id}",
+                str(registry_spec.get("blocking_reason") or gate_id),
+                "B+",
+                "A",
+                str(registry_spec.get("producer_file") or ""),
+                "registry-specified tests",
+                gate_rel,
+                "registry-owned producer-backed artifact",
+                gate_rel,
+                bool(registry_spec.get("required_for_a_grade_ready")),
+            )
+        )
+
     rows: list[dict[str, Any]] = []
     for spec in gate_specs:
         (
@@ -577,7 +609,12 @@ def build_a_grade_execution_matrix(
             proof_reasons.append("release artifact hash manifest is missing")
         if release_blocking and not artifact_details["artifact_hash_listed"]:
             proof_reasons.append("release gate artifact hash is not included in release artifact hashes")
-        if release_blocking and artifact_details["artifact_hash_listed"] and not artifact_details["artifact_hash_matched"]:
+        if (
+            release_blocking
+            and artifact_details["artifact_hash_listed"]
+            and not artifact_details["artifact_hash_matched"]
+            and gate_rel not in SELF_REFERENTIAL_HASH_GATES
+        ):
             proof_reasons.append("release gate artifact hash does not match release artifact hashes")
         proof_passed = not proof_reasons
         if release_blocking:

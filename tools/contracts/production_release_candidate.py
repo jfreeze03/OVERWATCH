@@ -647,6 +647,20 @@ def _final_release_candidate_summary(root: Path, results: Mapping[str, Any]) -> 
         summary["production_deployable"] = False
         summary["all_passed"] = False
         summary["passed"] = False
+    if plan_adherence_report and not bool(plan_adherence_report.get("passed")):
+        plan_failure = {
+            "phase": "plan_adherence_report",
+            "artifact_path": PLAN_ADHERENCE_REPORT_REL,
+            "failure_reason": "Plan adherence report failed; production deployable and A-grade-ready status are blocked.",
+        }
+        summary["production_deployable"] = False
+        summary["a_grade_ready"] = False
+        summary["all_passed"] = False
+        summary["passed"] = False
+        summary["hard_gate_failures"] = [*list(summary.get("hard_gate_failures") or []), plan_failure]
+        summary["failures"] = [*list(summary.get("failures") or []), plan_failure]
+        summary["failure_count"] = _as_int(summary.get("failure_count")) + 1
+        summary["hard_gate_failure_count"] = _as_int(summary.get("hard_gate_failure_count")) + 1
     return summary
 
 
@@ -942,6 +956,20 @@ def run_production_release_candidate(
     final_summary["plan_adherence_report_passed"] = bool(plan_report.get("passed"))
     final_summary["plan_adherence_failure_count"] = _as_int(plan_report.get("failure_count"))
     final_summary["plan_adherence_deviation_count"] = _as_int(plan_report.get("deviation_count"))
+    if not bool(plan_report.get("passed")) and bool(final_summary.get("production_deployable", True)):
+        plan_failure = {
+            "phase": "plan_adherence_report",
+            "artifact_path": PLAN_ADHERENCE_REPORT_REL,
+            "failure_reason": "Plan adherence report failed; production deployable and A-grade-ready status are blocked.",
+        }
+        final_summary["production_deployable"] = False
+        final_summary["a_grade_ready"] = False
+        final_summary["all_passed"] = False
+        final_summary["passed"] = False
+        final_summary["hard_gate_failures"] = [*list(final_summary.get("hard_gate_failures") or []), plan_failure]
+        final_summary["failures"] = [*list(final_summary.get("failures") or []), plan_failure]
+        final_summary["failure_count"] = _as_int(final_summary.get("failure_count")) + 1
+        final_summary["hard_gate_failure_count"] = _as_int(final_summary.get("hard_gate_failure_count")) + 1
     _write_json(root_path / RELEASE_CANDIDATE_SUMMARY_REL, final_summary)
     artifact_manifest = _artifact_manifest(root_path)
     artifact_hashes = _artifact_hashes(artifact_manifest)

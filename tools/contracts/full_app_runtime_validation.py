@@ -71,6 +71,7 @@ SNOWFLAKE_EXECUTION_EVENTS_KEY = "_overwatch_snowflake_execution_events"
 SNOWFLAKE_SESSION_OPEN_EVENTS_KEY = "_overwatch_snowflake_session_open_events"
 DIRECT_SQL_EVENTS_KEY = "_overwatch_direct_sql_events"
 QUERY_BUDGET_CONTEXT_EVENTS_KEY = "_overwatch_query_budget_context_events"
+RUNTIME_EVENT_LEDGER_KEY = "_overwatch_runtime_event_ledger"
 
 MARKER_BUDGET_TO_CONTEXT = {
     "admin_setup": "admin_setup",
@@ -933,6 +934,7 @@ def _scan_text_rows(
 class RuntimeValidationHarness:
     def __init__(self, root: Path):
         self.root = root.resolve()
+        self.commit_sha = _git_commit(self.root)
         _ensure_app_path(self.root)
 
     def _contract_payload(
@@ -3287,6 +3289,7 @@ class RuntimeValidationHarness:
         evidence_loader_results: list[dict[str, Any]] = []
         all_loader_boundary_calls: list[dict[str, Any]] = []
         first_paint_performance_results: list[dict[str, Any]] = []
+        source_runtime_event_ledger: list[dict[str, Any]] = []
         control_inventory: list[dict[str, Any]] = []
         timings: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
@@ -3302,6 +3305,15 @@ class RuntimeValidationHarness:
                 execs = _state_events(capture.state, SNOWFLAKE_EXECUTION_EVENTS_KEY)
                 sessions = _state_events(capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
                 direct = _state_events(capture.state, DIRECT_SQL_EVENTS_KEY)
+                source_runtime_events = _state_events(capture.state, RUNTIME_EVENT_LEDGER_KEY)
+                source_runtime_event_ledger.extend(
+                    {
+                        **event,
+                        "source_render_section": section,
+                        "source_render_workflow": workflow,
+                    }
+                    for event in source_runtime_events
+                )
                 all_context_events.extend(_state_events(capture.state, QUERY_BUDGET_CONTEXT_EVENTS_KEY))
                 html = "\n".join(capture.fragments)
                 packet_execs = [event for event in execs if event.get("query_boundary") == "decision_packet"]
@@ -5273,6 +5285,24 @@ class RuntimeValidationHarness:
                 "check_count": len(first_paint_performance_results),
                 "failure_count": sum(1 for row in first_paint_performance_results if not bool(row.get("passed"))),
                 "passed": all(bool(row.get("passed")) for row in first_paint_performance_results),
+                "raw_sql_included": False,
+            },
+            "source_runtime_event_ledger_results.json": {
+                "source": "source_runtime_event_ledger_results",
+                "proof_source": "runtime_state",
+                "runtime_source": "actual_app_runtime_state",
+                "producer": "full_app_runtime_validation",
+                "producer_signature": _producer_signature("source_runtime_event_ledger", self.commit_sha),
+                "commit_sha": self.commit_sha,
+                "rows": source_runtime_event_ledger,
+                "event_count": len(source_runtime_event_ledger),
+                "query_count": sum(_safe_int(row.get("query_count_delta")) for row in source_runtime_event_ledger),
+                "session_open_count": sum(_safe_int(row.get("session_open_count_delta")) for row in source_runtime_event_ledger),
+                "direct_sql_count": sum(_safe_int(row.get("direct_sql_count_delta")) for row in source_runtime_event_ledger),
+                "account_usage_count": sum(_safe_int(row.get("account_usage_count_delta")) for row in source_runtime_event_ledger),
+                "metadata_probe_count": sum(_safe_int(row.get("metadata_probe_count_delta")) for row in source_runtime_event_ledger),
+                "failure_count": sum(1 for row in source_runtime_event_ledger if bool(row.get("raw_sql_included"))),
+                "passed": all(not bool(row.get("raw_sql_included")) for row in source_runtime_event_ledger),
                 "raw_sql_included": False,
             },
             "performance_timings.json": timings,

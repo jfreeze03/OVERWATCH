@@ -14,6 +14,7 @@ from typing import Any, Mapping
 RELEASE_CANDIDATE_DIR = "artifacts/release_candidate"
 PLAN_ADHERENCE_REPORT_REL = f"{RELEASE_CANDIDATE_DIR}/plan_adherence_report.json"
 PRODUCER = "plan_adherence_report"
+RECENT_CHANGE_WINDOW = "HEAD~30..HEAD"
 
 
 @dataclass(frozen=True)
@@ -225,6 +226,29 @@ def _git_commit(root: Path) -> str:
     return proc.stdout.strip() if proc.returncode == 0 else ""
 
 
+def _git_changed_files(root: Path) -> set[str]:
+    """Return files changed in the release-hardening window and worktree."""
+    commands = (
+        ["git", "diff", "--name-only", RECENT_CHANGE_WINDOW],
+        ["git", "diff", "--name-only", "HEAD"],
+        ["git", "show", "--name-only", "--format=", "HEAD"],
+    )
+    changed: set[str] = set()
+    for command in commands:
+        try:
+            proc = subprocess.run(command, cwd=root, text=True, capture_output=True, check=False, timeout=10)
+        except OSError:
+            continue
+        if proc.returncode != 0:
+            continue
+        changed.update(
+            line.strip().replace("\\", "/")
+            for line in proc.stdout.splitlines()
+            if line.strip()
+        )
+    return changed
+
+
 def _producer_signature() -> str:
     try:
         body = Path(__file__).read_bytes()
@@ -245,6 +269,13 @@ def _load_json(root: Path, rel: str) -> Mapping[str, Any]:
     return payload if isinstance(payload, Mapping) else {"rows": payload if isinstance(payload, list) else []}
 
 
+def _as_int(value: Any) -> int:
+    try:
+        return int(float(str(value or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _artifact_status(root: Path, rel: str) -> dict[str, Any]:
     path = root / rel
     payload = _load_json(root, rel) if path.exists() else {}
@@ -254,7 +285,7 @@ def _artifact_status(root: Path, rel: str) -> dict[str, Any]:
         passed = bool(payload.get("all_passed"))
     else:
         passed = path.exists()
-    failure_count = int(float(str(payload.get("failure_count") or payload.get("hard_gate_failure_count") or 0))) if payload else 0
+    failure_count = _as_int(payload.get("failure_count") or payload.get("hard_gate_failure_count")) if payload else 0
     return {
         "path": rel,
         "exists": path.exists(),
@@ -264,13 +295,61 @@ def _artifact_status(root: Path, rel: str) -> dict[str, Any]:
     }
 
 
-def _phase_row(root: Path, spec: PhaseSpec, commit_sha: str) -> dict[str, Any]:
+def _command_evidence(root: Path) -> list[dict[str, Any]]:
+    """Return sanitized command evidence from release artifacts when present."""
+    commands: list[dict[str, Any]] = []
+    for rel in (
+        "artifacts/release_candidate/release_notes.json",
+        "artifacts/release_candidate/release_candidate_summary.json",
+        "artifacts/launch_readiness/launch_readiness_summary.json",
+    ):
+        payload = _load_json(root, rel)
+        values = payload.get("validation_commands") if isinstance(payload, Mapping) else None
+        if not isinstance(values, list):
+            continue
+        for index, value in enumerate(values):
+            command = str(value or "")
+            if not command:
+                continue
+            if any(token in command.lower() for token in ("token-file-path", "password", "secret", "raw sql", ".sql")):
+                command = "[redacted command with sensitive argument]"
+            commands.append(
+                {
+                    "artifact_path": rel,
+                    "command_index": index,
+                    "command": command[:300],
+                    "raw_sql_included": False,
+                }
+            )
+    return commands
+
+
+def _phase_row(
+    root: Path,
+    spec: PhaseSpec,
+    commit_sha: str,
+    changed_files: set[str],
+    command_evidence: list[dict[str, Any]],
+) -> dict[str, Any]:
     artifact_rows = [_artifact_status(root, rel) for rel in spec.artifacts]
     blockers = [
         f"{row['path']}: missing or failed"
         for row in artifact_rows
         if not bool(row.get("passed"))
     ]
+    planned_files = [item.replace("\\", "/") for item in spec.files_changed]
+    planned_tests = [item.replace("\\", "/") for item in spec.tests_added_or_updated]
+    actual_changed_files = [item for item in planned_files if item in changed_files]
+    actual_tests = [item for item in planned_tests if item in changed_files]
+    deviations = list(spec.deviations)
+    if planned_files and not actual_changed_files:
+        deviations.append("No planned implementation files changed in the release evidence window.")
+    if planned_tests and not actual_tests:
+        deviations.append("No planned tests changed in the release evidence window.")
+    if any(not bool(row.get("exists")) for row in artifact_rows):
+        deviations.append("One or more planned artifacts were not produced.")
+    if any(bool(row.get("exists")) and not bool(row.get("passed")) for row in artifact_rows):
+        deviations.append("One or more planned artifacts were produced but failed.")
     passed = not blockers
     return {
         "phase_id": spec.phase_id,
@@ -280,9 +359,15 @@ def _phase_row(root: Path, spec: PhaseSpec, commit_sha: str) -> dict[str, Any]:
         "files_changed": list(spec.files_changed),
         "tests_added_or_updated": list(spec.tests_added_or_updated),
         "artifacts_produced": artifact_rows,
-        "deviations": list(spec.deviations),
+        "actual_changed_files": actual_changed_files,
+        "actual_tests_added_or_updated": actual_tests,
+        "actual_artifacts_produced": [row for row in artifact_rows if bool(row.get("exists"))],
+        "commands_run": command_evidence,
+        "deviations": deviations,
+        "unrecorded_deviation_count": 0,
         "blockers": blockers,
         "acceptance_criteria_met": passed,
+        "hard_gate_left_failing": bool(blockers),
         "passed": passed,
         "producer": PRODUCER,
         "producer_signature": _phase_signature(spec.phase_id, commit_sha),
@@ -295,8 +380,43 @@ def _phase_row(root: Path, spec: PhaseSpec, commit_sha: str) -> dict[str, Any]:
 def build_plan_adherence_report(root: Path | str = ".") -> dict[str, Any]:
     root_path = Path(root).resolve()
     commit_sha = _git_commit(root_path)
-    rows = [_phase_row(root_path, spec, commit_sha) for spec in PHASES]
+    changed_files = _git_changed_files(root_path)
+    command_evidence = _command_evidence(root_path)
+    rows = [_phase_row(root_path, spec, commit_sha, changed_files, command_evidence) for spec in PHASES]
     failures = [row for row in rows if not bool(row.get("passed"))]
+    summary = _load_json(root_path, f"{RELEASE_CANDIDATE_DIR}/release_candidate_summary.json")
+    summary_failures: list[dict[str, Any]] = []
+    if failures and bool(summary.get("production_deployable")):
+        summary_failures.append(
+            {
+                "phase_id": "release_candidate_summary",
+                "phase_name": "Release candidate summary",
+                "blockers": ["production_deployable=true while plan adherence has failing phases"],
+                "passed": False,
+                "raw_sql_included": False,
+            }
+        )
+    if failures and bool(summary.get("a_grade_ready")):
+        summary_failures.append(
+            {
+                "phase_id": "release_candidate_summary",
+                "phase_name": "Release candidate summary",
+                "blockers": ["a_grade_ready=true while plan adherence has failing phases"],
+                "passed": False,
+                "raw_sql_included": False,
+            }
+        )
+    if _as_int(summary.get("unrecorded_deviation_count")) > 0:
+        summary_failures.append(
+            {
+                "phase_id": "release_candidate_summary",
+                "phase_name": "Release candidate summary",
+                "blockers": ["release summary reports unrecorded deviations"],
+                "passed": False,
+                "raw_sql_included": False,
+            }
+        )
+    all_failures = [*failures, *summary_failures]
     return {
         "source": "plan_adherence_report",
         "producer": PRODUCER,
@@ -304,12 +424,15 @@ def build_plan_adherence_report(root: Path | str = ".") -> dict[str, Any]:
         "provenance_origin": "producer",
         "generated_at": _now(),
         "commit_sha": commit_sha,
-        "passed": not failures,
-        "failure_count": len(failures),
+        "passed": not all_failures,
+        "failure_count": len(all_failures),
         "phase_count": len(rows),
         "deviation_count": sum(len(row.get("deviations") or []) for row in rows),
+        "command_evidence_count": len(command_evidence),
+        "actual_changed_file_count": len(changed_files),
+        "production_deployable_blocked_by_plan": bool(summary_failures),
         "rows": rows,
-        "failures": failures,
+        "failures": all_failures,
         "raw_sql_included": False,
     }
 

@@ -68,6 +68,23 @@ STRESS_CASES = [
 
 
 class FullAppGauntletTests(unittest.TestCase):
+    def test_artifact_cleanup_removes_nested_directories_on_windows(self):
+        from tools.contracts.full_app_gauntlet import _clean_artifact_directories
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            nested = root / "artifacts" / "launch_readiness" / "nested"
+            nested.mkdir(parents=True)
+            (nested / "gate.json").write_text("{}", encoding="utf-8")
+            (root / "artifacts" / "full_app_validation").mkdir(parents=True)
+            (root / "artifacts" / "full_app_inventory").mkdir(parents=True)
+            (root / "artifacts" / "cleanup").mkdir(parents=True)
+
+            _clean_artifact_directories(root)
+
+            self.assertFalse((root / "artifacts" / "launch_readiness").exists())
+            self.assertTrue((root / "artifacts").exists())
+
     def test_full_app_gauntlet_is_runtime_product_gate(self):
         from tools.contracts.full_app_gauntlet import (
             REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS,

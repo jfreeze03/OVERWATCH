@@ -7,6 +7,7 @@ summary, and every query is scoped to the section-summary boundary.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
@@ -32,6 +33,24 @@ def _limit(value: int | None) -> int:
     return max(1, min(parsed, DEFAULT_SUMMARY_LIMIT))
 
 
+def _fallback_frame(section: str, workflow: str, *, max_rows: int) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "SECTION": section,
+                "WORKFLOW": workflow,
+                "SOURCE_STATUS": "summary_mart_unavailable",
+                "SUMMARY_STATUS": "pending",
+                "FRESHNESS_TS": datetime.now(UTC).isoformat(timespec="seconds"),
+                "SOURCE_FAMILY": "summary_mart",
+                "IS_FALLBACK": True,
+                "ROW_LIMIT": max_rows,
+                "RAW_SQL_INCLUDED": False,
+            }
+        ]
+    )
+
+
 def _summary_query(
     *,
     section: str,
@@ -47,16 +66,30 @@ def _summary_query(
         workflow=workflow,
         budget=SUMMARY_AUTOLOAD_QUERY_BUDGET,
     ):
-        return run_query(
-            sql,
-            ttl_key=ttl_key,
-            use_cache=True,
-            spinner_msg="Loading summary...",
-            tier="section_summary",
-            section=section,
-            max_rows=max_rows,
-            query_boundary="section_summary_autoload",
-        )
+        try:
+            result = run_query(
+                sql,
+                ttl_key=ttl_key,
+                use_cache=True,
+                spinner_msg="Loading summary...",
+                tier="section_summary",
+                section=section,
+                max_rows=max_rows,
+                query_boundary="section_summary_autoload",
+            )
+            if isinstance(result, pd.DataFrame) and not result.empty:
+                return result
+        except Exception:
+            pass
+    return _fallback_frame(section, workflow, max_rows=max_rows)
+
+
+def _safe_window_days(value: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 7
+    return max(1, min(parsed, 365))
 
 
 @st.cache_data(ttl=SUMMARY_TTL_SECONDS, show_spinner=False)
@@ -67,6 +100,7 @@ def load_query_daily_summary(
     *,
     limit: int = DEFAULT_SUMMARY_LIMIT,
 ) -> pd.DataFrame:
+    days = _safe_window_days(window_days)
     sql = f"""
         SELECT
           COMPANY,
@@ -85,14 +119,14 @@ def load_query_daily_summary(
         FROM OVERWATCH_QUERY_DAILY_SUMMARY
         WHERE COMPANY = {_sql_literal(company)}
           AND ENVIRONMENT = {_sql_literal(environment)}
-          AND WINDOW_END_DATE >= DATEADD('day', -{int(window_days)}, CURRENT_DATE())
+          AND WINDOW_END_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
         ORDER BY WINDOW_END_DATE DESC
         LIMIT {_limit(limit)}
     """
     return _summary_query(
         section="Workload Operations",
         workflow="Workload Overview",
-        ttl_key=f"summary_mart_query_daily_{company}_{environment}_{window_days}",
+        ttl_key=f"summary_mart_query_daily_{company}_{environment}_{days}",
         sql=sql,
         limit=limit,
     )
@@ -106,6 +140,7 @@ def load_warehouse_daily_credits(
     *,
     limit: int = DEFAULT_SUMMARY_LIMIT,
 ) -> pd.DataFrame:
+    days = _safe_window_days(window_days)
     sql = f"""
         SELECT
           COMPANY,
@@ -121,14 +156,14 @@ def load_warehouse_daily_credits(
         FROM OVERWATCH_WAREHOUSE_DAILY_CREDITS
         WHERE COMPANY = {_sql_literal(company)}
           AND ENVIRONMENT = {_sql_literal(environment)}
-          AND USAGE_DATE >= DATEADD('day', -{int(window_days)}, CURRENT_DATE())
+          AND USAGE_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
         ORDER BY USAGE_DATE DESC, CREDITS_USED DESC, WAREHOUSE_NAME
         LIMIT {_limit(limit)}
     """
     return _summary_query(
         section="Cost & Contract",
         workflow="Cost Overview",
-        ttl_key=f"summary_mart_warehouse_credits_{company}_{environment}_{window_days}",
+        ttl_key=f"summary_mart_warehouse_credits_{company}_{environment}_{days}",
         sql=sql,
         limit=limit,
     )
@@ -142,6 +177,7 @@ def load_cortex_daily_usage(
     *,
     limit: int = DEFAULT_SUMMARY_LIMIT,
 ) -> pd.DataFrame:
+    days = _safe_window_days(window_days)
     sql = f"""
         SELECT
           COMPANY,
@@ -163,14 +199,14 @@ def load_cortex_daily_usage(
         FROM OVERWATCH_CORTEX_DAILY_USAGE
         WHERE COMPANY = {_sql_literal(company)}
           AND ENVIRONMENT = {_sql_literal(environment)}
-          AND USAGE_DATE >= DATEADD('day', -{int(window_days)}, CURRENT_DATE())
+          AND USAGE_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
         ORDER BY USAGE_DATE DESC, COST_USD DESC, USER_CHART_LABEL
         LIMIT {_limit(limit)}
     """
     return _summary_query(
         section="Cost & Contract",
         workflow="Cortex Efficiency",
-        ttl_key=f"summary_mart_cortex_daily_{company}_{environment}_{window_days}",
+        ttl_key=f"summary_mart_cortex_daily_{company}_{environment}_{days}",
         sql=sql,
         limit=limit,
     )
@@ -208,6 +244,7 @@ def load_login_security_daily(
     *,
     limit: int = DEFAULT_SUMMARY_LIMIT,
 ) -> pd.DataFrame:
+    days = _safe_window_days(window_days)
     sql = f"""
         SELECT
           COMPANY,
@@ -222,14 +259,14 @@ def load_login_security_daily(
         FROM OVERWATCH_LOGIN_SECURITY_DAILY
         WHERE COMPANY = {_sql_literal(company)}
           AND ENVIRONMENT = {_sql_literal(environment)}
-          AND EVENT_DATE >= DATEADD('day', -{int(window_days)}, CURRENT_DATE())
+          AND EVENT_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
         ORDER BY EVENT_DATE DESC
         LIMIT {_limit(limit)}
     """
     return _summary_query(
         section="Security Monitoring",
         workflow="Security Overview",
-        ttl_key=f"summary_mart_login_security_{company}_{environment}_{window_days}",
+        ttl_key=f"summary_mart_login_security_{company}_{environment}_{days}",
         sql=sql,
         limit=limit,
     )
@@ -243,6 +280,7 @@ def load_task_status_daily(
     *,
     limit: int = DEFAULT_SUMMARY_LIMIT,
 ) -> pd.DataFrame:
+    days = _safe_window_days(window_days)
     sql = f"""
         SELECT
           COMPANY,
@@ -257,14 +295,14 @@ def load_task_status_daily(
         FROM OVERWATCH_TASK_STATUS_DAILY
         WHERE COMPANY = {_sql_literal(company)}
           AND ENVIRONMENT = {_sql_literal(environment)}
-          AND EVENT_DATE >= DATEADD('day', -{int(window_days)}, CURRENT_DATE())
+          AND EVENT_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
         ORDER BY EVENT_DATE DESC
         LIMIT {_limit(limit)}
     """
     return _summary_query(
         section="DBA Control Room",
         workflow="Morning Cockpit",
-        ttl_key=f"summary_mart_task_status_{company}_{environment}_{window_days}",
+        ttl_key=f"summary_mart_task_status_{company}_{environment}_{days}",
         sql=sql,
         limit=limit,
     )
@@ -278,6 +316,7 @@ def load_security_posture_daily(
     *,
     limit: int = DEFAULT_SUMMARY_LIMIT,
 ) -> pd.DataFrame:
+    days = _safe_window_days(window_days)
     sql = f"""
         SELECT
           COMPANY,
@@ -293,14 +332,14 @@ def load_security_posture_daily(
         FROM OVERWATCH_SECURITY_POSTURE_DAILY
         WHERE COMPANY = {_sql_literal(company)}
           AND ENVIRONMENT = {_sql_literal(environment)}
-          AND EVENT_DATE >= DATEADD('day', -{int(window_days)}, CURRENT_DATE())
+          AND EVENT_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
         ORDER BY EVENT_DATE DESC
         LIMIT {_limit(limit)}
     """
     return _summary_query(
         section="Security Monitoring",
         workflow="Security Overview",
-        ttl_key=f"summary_mart_security_posture_{company}_{environment}_{window_days}",
+        ttl_key=f"summary_mart_security_posture_{company}_{environment}_{days}",
         sql=sql,
         limit=limit,
     )
@@ -314,6 +353,7 @@ def load_executive_packet_current(
     *,
     limit: int = 20,
 ) -> pd.DataFrame:
+    days = _safe_window_days(window_days)
     sql = f"""
         SELECT
           COMPANY,
@@ -327,14 +367,14 @@ def load_executive_packet_current(
         FROM OVERWATCH_EXECUTIVE_PACKET_CURRENT
         WHERE COMPANY = {_sql_literal(company)}
           AND ENVIRONMENT = {_sql_literal(environment)}
-          AND WINDOW_DAYS = {int(window_days)}
+          AND WINDOW_DAYS = {days}
         ORDER BY UPDATED_AT DESC, SECTION
         LIMIT {_limit(limit)}
     """
     return _summary_query(
         section="Executive Landing",
         workflow="Overview",
-        ttl_key=f"summary_mart_executive_packet_{company}_{environment}_{window_days}",
+        ttl_key=f"summary_mart_executive_packet_{company}_{environment}_{days}",
         sql=sql,
         limit=limit,
     )

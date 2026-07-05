@@ -12,6 +12,7 @@ import hashlib
 import json
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -217,7 +218,38 @@ def _clean_artifact_directories(root: Path) -> None:
         if target == artifacts_root or artifacts_root not in target.parents:
             raise ValueError(f"refusing to clean outside artifacts root: {target}")
         if target.exists():
+            _remove_artifact_tree(target)
+
+
+def _remove_artifact_tree(target: Path) -> None:
+    """Remove an artifact subtree with Windows-friendly retry cleanup."""
+    last_error: OSError | None = None
+    for _attempt in range(4):
+        try:
             shutil.rmtree(target)
+            return
+        except OSError as exc:
+            last_error = exc
+            for child in sorted(target.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+                try:
+                    child.chmod(0o700)
+                except OSError:
+                    pass
+                try:
+                    if child.is_dir():
+                        child.rmdir()
+                    else:
+                        child.unlink()
+                except OSError:
+                    pass
+            try:
+                target.rmdir()
+                return
+            except OSError as cleanup_exc:
+                last_error = cleanup_exc
+                time.sleep(0.15)
+    if target.exists() and last_error is not None:
+        raise last_error
 
 
 def _scan_files(root: Path) -> tuple[list[Path], list[Path]]:

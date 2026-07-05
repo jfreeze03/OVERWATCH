@@ -100,7 +100,7 @@ PHASES: tuple[PhaseSpec, ...] = (
             "tools/contracts/full_app_release_sweep.py",
             "tools/contracts/release_evidence_registry.py",
         ),
-        ("tests/test_account_usage_query_audit.py", "tests/test_summary_mart_setup.py"),
+        ("tests/test_account_usage_query_audit.py", "tests/test_summary_mart_setup.py", "tests/test_summary_mart_loaders.py"),
         (
             "artifacts/full_app_validation/account_usage_query_audit_results.json",
             "artifacts/launch_readiness/account_usage_query_audit_gate_results.json",

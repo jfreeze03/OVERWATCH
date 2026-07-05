@@ -119,6 +119,7 @@ jobs:
             tests.test_query_boundary_lint \
             tests.test_account_usage_query_audit \
             tests.test_summary_mart_setup \
+            tests.test_summary_mart_loaders \
             tests.test_ui_system_grade \
             tests.test_compatibility
 

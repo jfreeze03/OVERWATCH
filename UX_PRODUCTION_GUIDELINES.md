@@ -51,11 +51,13 @@ freshness, expected lanes, and the next safe load action before detailed rows,
 exports, and specialist diagnostics appear. Heavy live proof and row-level
 account-history reads stay behind explicit load buttons.
 
-Executive Landing owns the Mission Control queue. That queue answers "what
-needs attention now" from already-loaded session evidence only: active alerts,
-loaded cost cockpit facts, and loaded security summary facts. It must never
-query Snowflake. If no evidence is loaded, it should clearly direct the operator
-to the explicit load boundaries instead of pretending a healthy state is known.
+Executive Landing owns the command-center overview. Its first viewport should
+look and behave like an operational control room: six packet-backed KPI cards,
+a single hero/attention row, account-health and warehouse-credit panels, real
+recommended-action buttons, recent status, and operational context. It must
+never query live evidence on entry. When refreshed warehouse split or snapshot
+data is unavailable, show a compact unavailable state and route the operator to
+the explicit load boundaries instead of synthesizing facts.
 
 Visible section subtitles should explain the current operating surface in one
 short line. Workflow selectors may collapse advanced choices when the selected

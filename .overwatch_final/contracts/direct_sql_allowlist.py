@@ -393,6 +393,15 @@ DIRECT_SQL_ALLOWLIST = (
  'reason': 'metadata_probe',
  'review_note': 'Current admin/setup or post-click diagnostic path; migrated from local marker during Decision '
                 'Workspace cleanup.'},
+    {'boundary': 'metadata',
+ 'budget': 'metadata_probe',
+ 'call_type': 'session.sql',
+ 'expected_runtime_context': 'metadata',
+ 'function': 'get_setting',
+ 'module': '.overwatch_final/utils/settings_provider.py',
+ 'owner': 'platform',
+ 'reason': 'governed_settings_lookup',
+ 'review_note': 'Governed settings lookup uses an existing session only and is blocked during first paint.'},
 )
 
 

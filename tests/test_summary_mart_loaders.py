@@ -62,7 +62,7 @@ class SummaryMartLoaderTests(unittest.TestCase):
                 section="Cost & Contract",
                 workflow="Cost Overview",
                 ttl_key="unit_summary",
-                sql="SELECT COST_USD FROM OVERWATCH_WAREHOUSE_DAILY_CREDITS LIMIT 500",
+                sql="SELECT COST_USD FROM V_WAREHOUSE_DAILY_CREDITS LIMIT 500",
                 limit=999,
             )
 
@@ -79,7 +79,7 @@ class SummaryMartLoaderTests(unittest.TestCase):
                 section="Alert Center",
                 workflow="Overview",
                 ttl_key="unit_empty",
-                sql="SELECT ACTIVE_ALERT_COUNT FROM OVERWATCH_EXECUTIVE_PACKET_CURRENT LIMIT 1",
+                sql="SELECT ACTIVE_ALERT_COUNT FROM V_EXECUTIVE_PACKET_CURRENT LIMIT 1",
                 limit=50,
             )
 
@@ -100,7 +100,7 @@ class SummaryMartLoaderTests(unittest.TestCase):
                 section="Security Monitoring",
                 workflow="Security Overview",
                 ttl_key="unit_exception",
-                sql="SELECT RISK_SCORE FROM OVERWATCH_SECURITY_POSTURE_DAILY LIMIT 1",
+                sql="SELECT RISK_SCORE FROM V_SECURITY_POSTURE_DAILY LIMIT 1",
                 limit=10,
             )
 
@@ -122,7 +122,7 @@ class SummaryMartLoaderTests(unittest.TestCase):
         self.assertFalse(result.empty)
         self.assertEqual(captured[0]["limit"], 999)
         sql = str(captured[0]["sql"])
-        self.assertIn("OVERWATCH_QUERY_DAILY_SUMMARY", sql)
+        self.assertIn("V_QUERY_DAILY_SUMMARY", sql)
         self.assertIn("DATEADD('day', -7, CURRENT_DATE())", sql)
         self.assertIn("LIMIT 200", sql)
         self.assertNotIn("ACCOUNT_USAGE", sql)

@@ -169,6 +169,7 @@ def _event_row(
     user_initiated: bool = False,
     source_module: str = "",
     query_count_delta: int = 0,
+    max_rows: int | None = None,
     session_open_count_delta: int = 0,
     active_session_probe_count_delta: int = 0,
     direct_sql_count_delta: int = 0,
@@ -199,6 +200,7 @@ def _event_row(
         "user_initiated": user_initiated,
         "source_module": source_module,
         "query_count_delta": query_count_delta,
+        "max_rows": None if max_rows is None else int(max_rows),
         "session_open_count_delta": session_open_count_delta,
         "active_session_probe_count_delta": active_session_probe_count_delta,
         "direct_sql_count_delta": direct_sql_count_delta,
@@ -593,6 +595,7 @@ def _source_runtime_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
                 user_initiated=user_initiated,
                 source_module=str(row.get("source_module") or row.get("producer") or ""),
                 query_count_delta=query_count_delta,
+                max_rows=None if max_rows_value is None else _as_int(max_rows_value),
                 session_open_count_delta=session_open_count_delta,
                 active_session_probe_count_delta=_as_int(
                     row.get("active_session_probe_count_delta")

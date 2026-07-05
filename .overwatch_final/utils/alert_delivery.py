@@ -27,6 +27,7 @@ from config import (
 from .compatibility import filter_existing_columns
 from .alert_status import normalize_alert_severity as _normalize_alert_severity
 from .query import format_snowflake_error, run_query, safe_identifier
+from .settings_provider import get_default_alert_recipient
 from .sql_safe import sql_literal
 from sections.decision_workspace_target_filters import (
     TARGET_PREDICATE_MARKER,
@@ -45,7 +46,7 @@ def current_alert_recipient(default: str = DEFAULT_ALERT_RECIPIENT) -> str:
         configured = str(get_state(ALERT_EMAIL_TARGETS, "") or "").strip()
     except Exception:
         configured = ""
-    return configured or default
+    return configured or get_default_alert_recipient(default)
 
 
 def alert_recipient_label(recipient: str | None = None) -> str:

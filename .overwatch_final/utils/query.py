@@ -145,11 +145,21 @@ def _record_query_source_event(
     current_section = _infer_telemetry_section(section, ttl_key)
     is_summary_autoload = boundary_text == "section_summary_autoload"
     pending_section = str(get_state(PENDING_AUTOLOAD_SECTION, "") or "").strip()
+    nav_section = str(get_state(NAV_SECTION, "") or "").strip()
+    section_transition_started = str(get_state(SECTION_TRANSITION_STARTED_AT, "") or "").strip()
     user_initiated_summary = bool(
         is_summary_autoload
-        and pending_section
-        and pending_section == current_section
-        and get_state(PENDING_AUTOLOAD_STARTED_AT, "")
+        and (
+            (
+                pending_section
+                and pending_section == current_section
+                and get_state(PENDING_AUTOLOAD_STARTED_AT, "")
+            )
+            or (
+                section_transition_started
+                and nav_section == current_section
+            )
+        )
     )
     try:
         record_runtime_event(
@@ -285,6 +295,28 @@ def _strip_sql_literals(sql: str) -> str:
 def _query_already_has_limit(sql: str) -> bool:
     """Return True when the SQL text already contains an explicit LIMIT clause."""
     return bool(re.search(r"\bLIMIT\s+\d+\b", _strip_sql_literals(sql), flags=re.IGNORECASE))
+
+
+def _explicit_limit_value(sql: str) -> int | None:
+    """Return the first literal LIMIT value already present in SQL text."""
+    match = re.search(r"\bLIMIT\s+(\d+)\b", _strip_sql_literals(sql), flags=re.IGNORECASE)
+    if not match:
+        return None
+    try:
+        value = int(match.group(1))
+    except Exception:
+        return None
+    return value if value > 0 else None
+
+
+def _effective_max_rows(sql: str, max_rows: int | None) -> int | None:
+    """Prefer the caller cap, otherwise use a literal SQL LIMIT already present."""
+    try:
+        if max_rows is not None and int(max_rows) > 0:
+            return int(max_rows)
+    except Exception:
+        pass
+    return _explicit_limit_value(sql)
 
 
 def _default_sql_read_limit() -> int:
@@ -1016,6 +1048,7 @@ def _execute_snowflake_query(
     query_boundary: str | None = None,
 ) -> pd.DataFrame:
     executable_query = _inject_read_limit(query_text, max_rows=max_rows)
+    effective_max_rows = _effective_max_rows(executable_query, max_rows)
     boundary = normalize_query_boundary(str(query_boundary or _infer_query_boundary(executable_query, ttl_key, tier)))
     telemetry_section = _infer_telemetry_section(section, ttl_key)
     _enforce_explicit_critical_boundary(
@@ -1031,21 +1064,21 @@ def _execute_snowflake_query(
         section=telemetry_section,
         ttl_key=ttl_key,
         tier=tier,
-        max_rows=max_rows,
+        max_rows=effective_max_rows,
     )
     assert_first_paint_query_allowed(
         boundary,
         section=telemetry_section,
         ttl_key=ttl_key,
         tier=tier,
-        max_rows=max_rows,
+        max_rows=effective_max_rows,
     )
     session = get_session(
         reason="query_execution",
         query_boundary=boundary,
         section=telemetry_section,
-        max_rows=max_rows,
-        defer_role_capture=bool(boundary == "decision_packet" and max_rows == 1 and is_first_paint_active()),
+        max_rows=effective_max_rows,
+        defer_role_capture=bool(boundary == "decision_packet" and effective_max_rows == 1 and is_first_paint_active()),
     )
     _apply_overwatch_query_tag(session, query_tag)
     _apply_statement_timeout(session, tier)
@@ -1054,12 +1087,13 @@ def _execute_snowflake_query(
         section=telemetry_section,
         ttl_key=ttl_key,
         tier=tier,
+        max_rows=effective_max_rows,
     )
     token = begin_direct_sql_allowance(
         query_boundary=boundary,
         section=telemetry_section,
         ttl_key=ttl_key,
-        max_rows=max_rows,
+        max_rows=effective_max_rows,
     )
     try:
         result = normalize_df(session.sql(executable_query).to_pandas())

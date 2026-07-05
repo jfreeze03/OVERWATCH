@@ -62,7 +62,7 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
             "render_section_first_paint_shell",
         ) as render_shell, patch.object(
             alert_center,
-            "_render_alert_command_lane_board",
+            "render_alert_inbox_shell",
         ), patch.object(alert_center.st, "info"):
             alert_center._render_alert_center_first_paint_shell(
                 source_view="Active Alerts",

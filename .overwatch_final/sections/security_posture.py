@@ -48,6 +48,7 @@ from sections.shell_helpers import (
 )
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import render_section_command_brief
+from sections.leadership_watchlist_panels import render_security_leadership_panels
 from sections.decision_workspace_controls import make_decision_refresh_action, make_evidence_action
 from sections.decision_workspace_performance import with_section_first_paint_entry
 from sections.decision_workspace_scope import active_decision_window_days
@@ -230,12 +231,10 @@ def render() -> None:
     days = int(st.session_state.get("security_posture_evidence_days", days) or days)
     renderer = SECURITY_POSTURE_RENDERERS.get(active_view)
     if renderer is not None:
-        if (
-            active_view == SECURITY_OVERVIEW_WORKFLOW
-            and not st.session_state.get("security_summary_current")
-            and not st.session_state.get("security_posture_load_evidence")
-        ):
-            return
+        if active_view == SECURITY_OVERVIEW_WORKFLOW and not st.session_state.get("security_posture_load_evidence"):
+            render_security_leadership_panels(company, environment, days=int(days or 7))
+            if not st.session_state.get("security_summary_current"):
+                return
         renderer(company, environment, days)
         return
     if active_view in WORKFLOW_MODULES:

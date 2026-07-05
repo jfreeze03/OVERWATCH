@@ -158,6 +158,12 @@ remediation.
 | `OVERWATCH_COMMAND_CENTER_RECOMMENDATION` | Transient table | Review-gated recommendations tied to closed-loop execution plan references when available. |
 | `MART_COMMAND_CENTER_SUMMARY` | Transient mart | Compact first-paint summary by investigation type. |
 | `SP_OVERWATCH_REFRESH_COMMAND_CENTER` | Procedure | Refreshes Command Center findings, evidence, recommendations, and summaries from existing OVERWATCH marts without executing remediation. |
+| `MART_EXECUTIVE_COMMAND_CENTER_KPI` | Transient mart | Executive Landing command-center KPI strip values derived from command brief packets. |
+| `MART_EXECUTIVE_COMMAND_CENTER_TIMESERIES` | Transient mart | Compact trend points for Executive Landing command-center visuals. |
+| `MART_EXECUTIVE_COMMAND_CENTER_WAREHOUSE` | Transient mart | Warehouse credit split for the Executive Landing warehouse donut when refreshed warehouse facts exist. |
+| `MART_EXECUTIVE_COMMAND_CENTER_ALERTS` | Transient mart | Compact recent status/alert rows derived from command brief exceptions and top signals. |
+| `MART_EXECUTIVE_COMMAND_CENTER_CONTEXT` | Transient mart | Operational context rows for freshness, source, evidence, and snapshot status. |
+| `SP_OVERWATCH_REFRESH_EXECUTIVE_COMMAND_CENTER` | Procedure | Refreshes the Executive Landing presentation marts after command brief refresh without adding first-paint live queries. |
 
 Details and manual validation steps live in `docs/COMMAND_CENTER.md`.
 

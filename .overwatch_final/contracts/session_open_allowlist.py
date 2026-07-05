@@ -362,6 +362,15 @@ SESSION_OPEN_ALLOWLIST = (
  'reason': 'admin_session',
  'review_note': 'Current admin/setup or post-click diagnostic path; migrated from local marker during Decision '
                 'Workspace cleanup.'},
+    {'boundary': 'metadata',
+ 'budget': 'metadata_probe',
+ 'call_type': 'get_session',
+ 'expected_runtime_context': 'metadata',
+ 'function': '_get_session_for_pipeline_action',
+ 'module': '.overwatch_final/sections/pipeline_health.py',
+ 'owner': 'workload_operations',
+ 'reason': 'explicit_pipeline_action',
+ 'review_note': 'Explicit Workload Operations pipeline action session; not invoked by first paint or route navigation.'},
 )
 
 

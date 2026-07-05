@@ -20,12 +20,15 @@ class SummaryMartSetupTests(unittest.TestCase):
             object_name = str(spec["object_name"])
             if object_name == omit_object:
                 continue
+            view_name = str(spec["view_name"])
             columns = ",\n  ".join(f"{column} STRING" for column in spec["required_columns"])
             chunks.append(
                 f"CREATE TABLE IF NOT EXISTS {object_name} (\n"
                 f"  {columns},\n"
                 f"  SOURCE_FAMILY STRING DEFAULT '{spec['source_family']}'\n"
                 ");"
+                f"\nCREATE OR REPLACE SECURE VIEW {view_name} AS SELECT "
+                f"{', '.join(spec['required_columns'])}, SOURCE_FAMILY FROM {object_name};"
             )
         if select_star:
             chunks.append("SELECT * FROM BAD_SOURCE;")
@@ -69,6 +72,7 @@ class SummaryMartSetupTests(unittest.TestCase):
         gate = artifacts[SUMMARY_MART_SETUP_GATE_REL]
         self.assertTrue(gate["passed"], gate.get("failures"))
         self.assertEqual(gate["proof_row_count"], len(EXPECTED_SUMMARY_MARTS))
+        self.assertTrue(all(row["app_consumes_secure_view"] for row in gate["proof_rows"]))
         self.assertFalse(gate["raw_sql_included"])
         self.assertNotIn("CREATE TABLE", str(gate))
 

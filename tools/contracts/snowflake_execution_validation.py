@@ -613,7 +613,7 @@ def _procedure_internal_calls(sql: str, rel: str) -> dict[str, list[str]]:
 
 def _extract_created_objects(sql: str) -> set[str]:
     pattern = re.compile(
-        r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:TRANSIENT\s+|TEMPORARY\s+)?(?:TABLE|VIEW|TASK|PROCEDURE)\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\"[^\"]+\"|[A-Z0-9_]+)(?:\.(?:\"[^\"]+\"|[A-Z0-9_]+))*)",
+        r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:TRANSIENT\s+|TEMPORARY\s+|SECURE\s+)?(?:TABLE|VIEW|TASK|PROCEDURE)\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\"[^\"]+\"|[A-Z0-9_]+)(?:\.(?:\"[^\"]+\"|[A-Z0-9_]+))*)",
         re.IGNORECASE,
     )
     return {_normalize_name(match.group(1)) for match in pattern.finditer(sql)}

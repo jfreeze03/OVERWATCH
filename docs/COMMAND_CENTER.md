@@ -13,9 +13,10 @@ leaders answer:
 - What evidence supports the recommendation?
 - What value can be created or protected?
 
-The Command Center is mart-first. Executive Landing reads only
-`MART_COMMAND_CENTER_SUMMARY` on first paint. Finding, evidence, and
-recommendation detail are explicit Load only.
+The Command Center is mart-first. Executive Landing first paint uses the
+current section command brief packet, then renders a command-center dashboard
+from packet-safe values. Finding, evidence, and recommendation detail are
+explicit Load only.
 
 ## Snowflake Objects
 
@@ -27,12 +28,18 @@ recommendation detail are explicit Load only.
 | `OVERWATCH_COMMAND_CENTER_RECOMMENDATION` | Review-gated recommended actions tied to closed-loop execution plan references when available. |
 | `MART_COMMAND_CENTER_SUMMARY` | Compact first-paint summary by investigation type. |
 | `SP_OVERWATCH_REFRESH_COMMAND_CENTER` | Refreshes findings, evidence, recommendations, and compact summary rows from existing OVERWATCH marts. |
+| `MART_EXECUTIVE_COMMAND_CENTER_KPI` | Packet-aligned KPI strip values for the Executive Landing command-center presentation. |
+| `MART_EXECUTIVE_COMMAND_CENTER_TIMESERIES` | Compact command-center trend points for packet-backed Executive Landing visuals. |
+| `MART_EXECUTIVE_COMMAND_CENTER_WAREHOUSE` | Warehouse credit split used by the Executive Landing warehouse donut when refreshed data exists. |
+| `MART_EXECUTIVE_COMMAND_CENTER_ALERTS` | Compact recent-status rows derived from command brief exceptions and top signals. |
+| `MART_EXECUTIVE_COMMAND_CENTER_CONTEXT` | Compact operational-context rows for source, freshness, evidence, and snapshot status. |
+| `SP_OVERWATCH_REFRESH_EXECUTIVE_COMMAND_CENTER` | Refreshes the Executive Landing command-center presentation marts from existing packet/fact marts without querying live account history. |
 
 ## UI Placement
 
 | Section | Panel | Load behavior |
 | --- | --- | --- |
-| Executive Landing | Command Center | First-paint summary from `MART_COMMAND_CENTER_SUMMARY`. |
+| Executive Landing | Command Center | First-paint dashboard from the current section command brief packet; the new presentation marts are refresh/setup proof and future packet feeders. |
 | DBA Control Room | Command Center Investigations | Explicit Load for findings, evidence, and recommendations. |
 | Alert Center | Alert Command Findings | Explicit Load for alert and incident-related findings. |
 | Cost & Contract | Cost Command Findings | Explicit Load for cost-spike investigations. |
@@ -85,6 +92,8 @@ After deploying DDL, run:
 
 ```sql
 CALL SP_OVERWATCH_REFRESH_COMMAND_CENTER();
+CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS();
+CALL SP_OVERWATCH_REFRESH_EXECUTIVE_COMMAND_CENTER();
 ```
 
 Then run `snowflake/OVERWATCH_MART_VALIDATION.sql` and confirm:
@@ -97,3 +106,5 @@ Then run `snowflake/OVERWATCH_MART_VALIDATION.sql` and confirm:
 - recommendations are review-gated,
 - execution plan references point to Closed Loop Operations when available,
 - no remediation SQL was executed by the refresh procedure.
+- Executive command-center marts exist, refresh cleanly, and are covered by
+  `OVERWATCH_MART_VALIDATION.sql`.

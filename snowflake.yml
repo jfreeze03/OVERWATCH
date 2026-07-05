@@ -69,6 +69,8 @@ entities:
         dest: environment.yml
       - src: .overwatch_final/pyproject.toml
         dest: pyproject.toml
+      - src: .overwatch_final/queries/
+        dest: queries/
       - src: .overwatch_final/utils/
         dest: utils/
       - src: .overwatch_final/sections/

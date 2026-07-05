@@ -34,6 +34,7 @@ STREAMLIT_SNOWFLAKE_ARTIFACTS = (
     "workflow_contracts.py",
     "environment.yml",
     "pyproject.toml",
+    "queries/",
     "utils/",
     "sections/",
 )
@@ -41,6 +42,7 @@ STREAMLIT_THEME_ASSETS = (
     "carbon.vars.css",
     "terminal.vars.css",
     "structural.css",
+    "command_center.css",
     "streamlit_icon_fix.css",
     "carbon.extra.css",
     "terminal.extra.css",

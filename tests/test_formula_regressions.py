@@ -2180,7 +2180,11 @@ class FormulaRegressionTests(unittest.TestCase):
             setup_sql,
             flags=re.MULTILINE,
         )
-        views = re.findall(r"^\s*CREATE\s+OR\s+REPLACE\s+VIEW\s+([A-Z0-9_]+)", setup_sql, flags=re.MULTILINE)
+        views = re.findall(
+            r"^\s*CREATE\s+OR\s+REPLACE\s+(?:SECURE\s+)?VIEW\s+([A-Z0-9_]+)",
+            setup_sql,
+            flags=re.MULTILINE,
+        )
         tasks = re.findall(r"^\s*CREATE\s+OR\s+REPLACE\s+TASK\s+([A-Z0-9_]+)", setup_sql, flags=re.MULTILINE)
         functions = re.findall(
             r"^\s*CREATE\s+OR\s+REPLACE\s+FUNCTION\s+([A-Z0-9_]+)\s*\(",
@@ -2193,11 +2197,11 @@ class FormulaRegressionTests(unittest.TestCase):
             flags=re.MULTILINE,
         )
 
-        self.assertEqual(len(tables), 114)
-        self.assertEqual(len(views), 3)
-        self.assertEqual(len(tasks), 16)
+        self.assertEqual(len(tables), 127)
+        self.assertEqual(len(views), 18)
+        self.assertEqual(len(tasks), 17)
         self.assertEqual(len(functions), 1)
-        self.assertEqual(len(procedures), 25)
+        self.assertEqual(len(procedures), 26)
 
         for table in tables:
             self.assertIn(f"DROP TABLE IF EXISTS {table}", drop_sql)
@@ -2227,12 +2231,22 @@ class FormulaRegressionTests(unittest.TestCase):
         ]
         for retired in retired_objects:
             with self.subTest(retired=retired):
-                self.assertNotIn(f"CREATE TABLE IF NOT EXISTS {retired}", setup_sql)
-                self.assertNotIn(f"CREATE TRANSIENT TABLE IF NOT EXISTS {retired}", setup_sql)
-                self.assertNotIn(f"CREATE OR REPLACE VIEW {retired}", setup_sql)
-                self.assertNotIn(f"INSERT INTO {retired}", setup_sql)
-                self.assertNotIn(f"MERGE INTO {retired}", setup_sql)
-                self.assertNotIn(f"DELETE FROM {retired}", setup_sql)
+                retired_pattern = re.escape(retired)
+                self.assertIsNone(
+                    re.search(rf"\bCREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+{retired_pattern}\b(?!_)", setup_sql)
+                )
+                self.assertIsNone(
+                    re.search(
+                        rf"\bCREATE\s+TRANSIENT\s+TABLE\s+IF\s+NOT\s+EXISTS\s+{retired_pattern}\b(?!_)",
+                        setup_sql,
+                    )
+                )
+                self.assertIsNone(
+                    re.search(rf"\bCREATE\s+OR\s+REPLACE\s+(?:SECURE\s+)?VIEW\s+{retired_pattern}\b(?!_)", setup_sql)
+                )
+                self.assertIsNone(re.search(rf"\bINSERT\s+INTO\s+{retired_pattern}\b(?!_)", setup_sql))
+                self.assertIsNone(re.search(rf"\bMERGE\s+INTO\s+{retired_pattern}\b(?!_)", setup_sql))
+                self.assertIsNone(re.search(rf"\bDELETE\s+FROM\s+{retired_pattern}\b(?!_)", setup_sql))
 
     def test_schema_migration_contract_tracks_setup_ledger(self):
         contract = build_schema_migration_contract()

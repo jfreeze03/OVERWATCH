@@ -171,9 +171,11 @@ and delivery state. When the Snowflake email notification integration is
 approved, alert digest procedures can call Snowflake email delivery instead of
 remaining dry-run packaging.
 
-Executive Landing reads compact observability marts for cost movement, top risk,
-open actions, incidents, and next DBA moves. Packet-style reporting should be
-generated from those monitoring marts instead of separate packet ledgers.
+Executive Landing first paint renders a Snowflake-style command-center
+dashboard from the current section command brief packet: six compact KPI cards,
+an attention panel, account-health trend, warehouse-credit split when refreshed
+facts exist, recommended actions, recent status rows, and operational context.
+The heavier Executive snapshot still loads only after the explicit action.
 
 ## UI Standards
 

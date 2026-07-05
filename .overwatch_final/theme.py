@@ -9,7 +9,7 @@ from pathlib import Path
 
 import streamlit as st
 
-THEME_VERSION = "2026-07-05-command-center-v2"
+THEME_VERSION = "2026-07-05-command-center-v3"
 
 _DEFAULT_THEME = "carbon"
 _ACTIVE_THEME_KEY = "_overwatch_active_theme"
@@ -49,6 +49,7 @@ _VARS = {
 }
 
 _STRUCTURAL_CSS = _read_theme_asset("structural.css")
+_COMMAND_CENTER_CSS = _read_theme_asset("command_center.css")
 _STREAMLIT_ICON_FIX = _read_theme_asset("streamlit_icon_fix.css")
 _THEME_EXTRAS = {
     "carbon": _read_theme_asset("carbon.extra.css"),
@@ -116,6 +117,7 @@ def _combined_theme_css(theme_key: str) -> str:
     vars_block = _VARS.get(theme_key, _VARS[_DEFAULT_THEME])
     combined = (
         _STRUCTURAL_CSS.replace("{vars}", vars_block)
+        + _COMMAND_CENTER_CSS
         + _STREAMLIT_ICON_FIX
         + _THEME_EXTRAS.get(theme_key, "")
     )

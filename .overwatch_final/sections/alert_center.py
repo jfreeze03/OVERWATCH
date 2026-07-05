@@ -16,13 +16,12 @@ from sections.shell_helpers import (
     render_secondary_lens_pills,
     render_section_breadcrumb,
     render_section_first_paint_shell,
-    render_shell_kpi_row,
-    render_shell_snapshot,
     render_shell_status_strip,
     with_loaded_at,
 )
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import render_section_command_brief
+from sections.leadership_watchlist_panels import render_alert_candidate_panel
 from sections.decision_workspace_controls import (
     filter_evidence_rows_for_target,
     make_decision_refresh_action,
@@ -53,6 +52,7 @@ from sections.alert_center_navigation import (
 )
 from sections.alert_center_lanes import _alert_command_lanes
 from sections.alert_center_data import _load_center_data
+from sections.alert_center_inbox_shell import render_alert_inbox_shell
 from sections.alert_center_admin_catalog_view import render_alert_detection_catalog_tool
 from sections.alert_center_admin_delivery_view import (
     _render_alert_action_queue_routing,
@@ -301,40 +301,6 @@ def _load_alert_center_view_data(
     return True
 
 
-def _render_alert_center_metric_rows(
-    *,
-    open_issues: int,
-    open_alerts: int,
-    critical_high: int,
-    overdue: int,
-    email_ready: int,
-    email_logged: int,
-    open_queue: int,
-    loaded: bool = True,
-) -> None:
-    if not loaded:
-        render_shell_kpi_row((
-            ("Scope", "Company"),
-            ("Window", "Selected"),
-            ("Telemetry", "Load view"),
-            ("Route", "Command"),
-        ))
-        return
-    render_shell_kpi_row((
-        ("Issues", f"{open_issues:,}"),
-        ("Alerts", f"{open_alerts:,}"),
-        ("Critical", f"{critical_high:,}"),
-        ("Overdue", f"{overdue:,}"),
-    ))
-    if loaded:
-        with st.expander("Delivery and queue counts", expanded=False):
-            render_shell_snapshot((
-                ("Email Ready", f"{email_ready:,}"),
-                ("Delivered", f"{email_logged:,}"),
-                ("Open Queue", f"{open_queue:,}"),
-            ))
-
-
 def _summary_count_label(summary: dict, *keys: str) -> tuple[str, int | None]:
     for key in keys:
         value = summary.get(key)
@@ -452,7 +418,7 @@ def _render_alert_center_first_paint_shell(
         section="Alert Center",
         state=state,
         headline=f"{source_view} is ready for explicit load.",
-        detail=note or f"Load {source_view} reads {source_summary} for {company} / {environment}.",
+        detail=note or f"Entry summaries come from compact marts; Load {source_view} reads {source_summary} for {company} / {environment}.",
         view=source_view,
         load_cta=f"Load {source_view}",
         metrics=(
@@ -468,33 +434,12 @@ def _render_alert_center_first_paint_shell(
         ),
     )
     render_section_first_paint_shell(spec)
-    loaded_for_summary = isinstance(data, dict)
-    _render_alert_command_lane_board(
-        _alert_command_lanes(
-            active_view=source_view,
-            required_sources=required_sources,
-            alerts=data.get("alerts") if loaded_for_summary else None,
-            queue=data.get("action_queue") if loaded_for_summary else None,
-            issues=data.get("issues") if loaded_for_summary else None,
-            delivery_log=data.get("delivery_log") if loaded_for_summary else None,
-            loaded=loaded_for_summary,
-        )
-    )
-    st.info(f"Use Load {source_view} for detailed Alert Center rows. Entry summaries come from compact marts when available.")
-
-
-def _render_alert_command_lane_board(lanes: list[dict[str, str]]) -> None:
-    pd = _pd()
-    lane_rows = pd.DataFrame(lanes)
-    if lane_rows.empty:
-        return
-    _render_priority_dataframe(
-        lane_rows,
-        title="Alert operating lanes",
-        priority_columns=["label", "value", "state", "detail"],
-        raw_label="All alert operating lanes",
-        height=300,
-        max_rows=10,
+    render_alert_inbox_shell(
+        source_view=source_view,
+        summary=summary,
+        source_summary=source_summary,
+        days=days,
+        limit=limit,
     )
 
 
@@ -829,10 +774,23 @@ def render() -> None:
         _alert_center_loaded_meta(data, source_view) if current_data else {},
         source=f"{source_view} inputs",
         target_minutes=60,
-        delayed_note="Alert Center reads bounded alert/action sources on demand; ACCOUNT_USAGE-backed inputs can lag.",
+        delayed_note="Alert Center reads bounded alert/action sources on demand; source-history inputs can lag.",
     )
+    if active_view != "Alert Settings / Admin":
+        render_alert_candidate_panel()
     if not isinstance(data, dict):
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
+        _render_alert_center_first_paint_shell(
+            source_view=source_view,
+            company=company,
+            environment=environment,
+            days=int(days),
+            limit=int(limit),
+            required_sources=required_sources,
+            cached_summary=cached_summary,
+            state="Ready",
+            note="Alert Inbox opens from packet and cached summary context; row-level evidence loads on request.",
+        )
         if should_render_daily_diagnostics("Alert Center", source_view, "UNINITIALIZED"):
             _render_advanced_alert_diagnostics(company, environment)
         return
@@ -840,6 +798,17 @@ def render() -> None:
     loaded_scope = st.session_state.get("alert_center_scope")
     if loaded_scope != expected_scope:
         defer_source_note(f"Loaded scope: {loaded_scope or 'none'} | Current scope: {expected_scope}")
+        _render_alert_center_first_paint_shell(
+            source_view=source_view,
+            company=company,
+            environment=environment,
+            days=int(days),
+            limit=int(limit),
+            required_sources=required_sources,
+            cached_summary=cached_summary,
+            state="Scope changed",
+            note="Reload the Alert Inbox for the current scope.",
+        )
         if should_render_daily_diagnostics("Alert Center", source_view, "UNINITIALIZED"):
             _render_advanced_alert_diagnostics(company, environment)
         return
@@ -847,6 +816,17 @@ def render() -> None:
     missing_sources = sorted(required_sources - loaded_sources)
     if missing_sources:
         defer_source_note(f"Missing Alert Center input(s): {_alert_center_source_summary(set(missing_sources))}")
+        _render_alert_center_first_paint_shell(
+            source_view=source_view,
+            company=company,
+            environment=environment,
+            days=int(days),
+            limit=int(limit),
+            required_sources=required_sources,
+            cached_summary=cached_summary,
+            state="Source pending",
+            note="One or more Alert Inbox sources are pending; use Load when the source is available.",
+        )
         if should_render_daily_diagnostics("Alert Center", source_view, "UNINITIALIZED"):
             _render_advanced_alert_diagnostics(company, environment)
         return

@@ -877,6 +877,9 @@ def _base_state(section: str, workflow: str | None = None) -> dict[str, Any]:
     state: dict[str, Any] = {
         "active_company": "ALFA",
         "global_environment": "ALL",
+        "nav_section": section,
+        "_overwatch_pending_section": section,
+        "_overwatch_section_transition_started_at": _now(),
         "executive_landing_workflow": "Executive Overview",
         "cost_contract_workflow": "Cost Overview",
         "dba_control_room_active_view": "Morning Cockpit",
@@ -888,6 +891,8 @@ def _base_state(section: str, workflow: str | None = None) -> dict[str, Any]:
         "qs_row_limit": 200,
         "qs_status": "ALL",
         "qs_mode": "Auto",
+        "_overwatch_pending_autoload_section": section,
+        "_overwatch_pending_autoload_started_at": _now(),
     }
     selected = str(workflow or "")
     key = WORKFLOW_STATE_KEY_BY_SECTION.get(section, "")
@@ -1507,7 +1512,13 @@ class RuntimeValidationHarness:
                 target_predicate_plan_id=str(kwargs.get("target_predicate_plan_id") or ""),
                 first_paint_sensitive=boundary == "decision_packet",
             )
-            performance.increment_snowflake_execution_counter(boundary, section=event_section, ttl_key=ttl_key, tier=tier)
+            performance.increment_snowflake_execution_counter(
+                boundary,
+                section=event_section,
+                ttl_key=ttl_key,
+                tier=tier,
+                max_rows=max_rows,
+            )
             return df
 
         return _run
@@ -1555,6 +1566,7 @@ class RuntimeValidationHarness:
                 section=capture.section,
                 ttl_key=f"{_token(capture.section)}_{_token(real_loader_name)}_runtime_evidence",
                 tier="recent",
+                max_rows=200,
             )
         render_decision_evidence_panel(
             "Loaded evidence",
@@ -1669,6 +1681,7 @@ class RuntimeValidationHarness:
                 section=capture.section,
                 ttl_key=ttl_key,
                 tier="recent",
+                max_rows=max_rows,
             )
             capture.state["_runtime_workload_evidence_query_recorded"] = True
         capture.evidence_loader_calls.append({
@@ -2601,6 +2614,7 @@ class RuntimeValidationHarness:
     ) -> tuple[RenderCapture, float, str]:
         import performance
         from sections import section_command_brief
+        from queries import leadership_watchlist as leadership_query_mod
         import utils.query as query_mod
 
         state = state_override if state_override is not None else _base_state(section, workflow)
@@ -2619,6 +2633,7 @@ class RuntimeValidationHarness:
             stack.enter_context(patch.object(section_command_brief, "snowflake_entry_available", return_value=True))
             stack.enter_context(patch.object(section_command_brief, "decision_fixture_enabled", return_value=False))
             stack.enter_context(patch.object(query_mod, "run_query", side_effect=self._fake_run_query(section=section, workflow=workflow)))
+            stack.enter_context(patch.object(leadership_query_mod, "run_query", side_effect=self._fake_run_query(section=section, workflow=workflow)))
             for patcher in self._section_specific_patches(capture, block_evidence=block_evidence):
                 stack.enter_context(patcher)
             start = time.perf_counter()
@@ -2704,6 +2719,7 @@ class RuntimeValidationHarness:
                     section="Workload Operations",
                     ttl_key=str(kwargs.get("ttl_key") or "query_search_runtime"),
                     tier="recent",
+                    max_rows=min(row_limit, 500),
                 )
                 if runtime_error == "permission_denied":
                     raise PermissionError("Permission denied for bounded query search.")

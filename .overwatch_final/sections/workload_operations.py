@@ -23,6 +23,7 @@ from sections.decision_workspace_controls import make_decision_refresh_action
 from sections.decision_workspace_performance import with_section_first_paint_entry
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.section_command_rendering import render_section_command_brief
+from sections.leadership_watchlist_panels import render_workload_query_error_panels
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note
 
@@ -823,13 +824,16 @@ def render() -> None:
             )
 
         if workflow == WORKLOAD_OVERVIEW_WORKFLOW:
-            _render_workload_surface(workflow, company, environment)
-            return
-        _render_workload_command_brief(
-            company,
-            environment,
-            current_workflow=workflow_labels.get(workflow, workflow),
-            compact=True,
-        )
+            _render_workload_overview(company, environment)
+        else:
+            _render_workload_command_brief(
+                company,
+                environment,
+                current_workflow=workflow_labels.get(workflow, workflow),
+                compact=True,
+            )
 
+    if workflow == WORKLOAD_OVERVIEW_WORKFLOW:
+        render_workload_query_error_panels(company, environment)
+        return
     _render_workload_surface(workflow, company, environment)

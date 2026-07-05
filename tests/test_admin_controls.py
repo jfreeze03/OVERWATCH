@@ -616,7 +616,9 @@ class AdminControlTests(unittest.TestCase):
         self.assertNotIn("CREATE OR REPLACE TASK OVERWATCH_COST_SAVINGS_VERIFY", setup_sql)
         self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_EXTERNAL_CONTROL_FEED", setup_sql)
         self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_AUTOMATION_RUN", setup_sql)
-        self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_EXECUTIVE_PACKET", setup_sql)
+        self.assertIsNone(
+            re.search(r"\bCREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+OVERWATCH_EXECUTIVE_PACKET\b(?!_)", setup_sql)
+        )
         self.assertNotIn("CREATE OR REPLACE VIEW OVERWATCH_AUTOMATION_HEALTH_V", setup_sql)
         self.assertNotIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_AUTOMATION", setup_sql)
         self.assertNotIn("CREATE OR REPLACE TASK OVERWATCH_AUTOMATION_REFRESH", setup_sql)
@@ -780,6 +782,7 @@ class AdminControlTests(unittest.TestCase):
                 "OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH",
                 "OVERWATCH_DECISION_BRIEF_FULL_REFRESH",
                 "OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH",
+                "OVERWATCH_EXECUTIVE_COMMAND_CENTER_REFRESH",
                 "OVERWATCH_LOAD_DAILY",
             },
         )
@@ -801,6 +804,7 @@ class AdminControlTests(unittest.TestCase):
                 "OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH": "COMPUTE_WH",
                 "OVERWATCH_DECISION_BRIEF_FULL_REFRESH": "COMPUTE_WH",
                 "OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH": "COMPUTE_WH",
+                "OVERWATCH_EXECUTIVE_COMMAND_CENTER_REFRESH": "COMPUTE_WH",
                 "OVERWATCH_LOAD_DAILY": "COMPUTE_WH",
             },
         )

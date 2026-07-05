@@ -116,7 +116,7 @@ def load_query_daily_summary(
           TOP_WAREHOUSE_NAME,
           TOP_USER_NAME,
           UPDATED_AT
-        FROM OVERWATCH_QUERY_DAILY_SUMMARY
+        FROM V_QUERY_DAILY_SUMMARY
         WHERE COMPANY = {_sql_literal(company)}
           AND ENVIRONMENT = {_sql_literal(environment)}
           AND WINDOW_END_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
@@ -153,7 +153,7 @@ def load_warehouse_daily_credits(
           QUEUED_SECONDS,
           SPILL_BYTES,
           UPDATED_AT
-        FROM OVERWATCH_WAREHOUSE_DAILY_CREDITS
+        FROM V_WAREHOUSE_DAILY_CREDITS
         WHERE COMPANY = {_sql_literal(company)}
           AND ENVIRONMENT = {_sql_literal(environment)}
           AND USAGE_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
@@ -196,7 +196,7 @@ def load_cortex_daily_usage(
           COST_PER_1K_TOKENS_USD,
           AI_CREDITS_PER_1K_TOKENS,
           UPDATED_AT
-        FROM OVERWATCH_CORTEX_DAILY_USAGE
+        FROM V_CORTEX_DAILY_USAGE
         WHERE COMPANY = {_sql_literal(company)}
           AND ENVIRONMENT = {_sql_literal(environment)}
           AND USAGE_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
@@ -223,7 +223,7 @@ def load_user_display_dim(*, limit: int = DEFAULT_SUMMARY_LIMIT) -> pd.DataFrame
           DISPLAY_NAME,
           NAME,
           UPDATED_AT
-        FROM OVERWATCH_USER_DISPLAY_DIM
+        FROM V_USER_DISPLAY_DIM
         ORDER BY USER_CHART_LABEL, USER_NAME
         LIMIT {_limit(limit)}
     """
@@ -256,7 +256,7 @@ def load_login_security_daily(
           MFA_GAP_USER_COUNT,
           SUSPICIOUS_IP_COUNT,
           UPDATED_AT
-        FROM OVERWATCH_LOGIN_SECURITY_DAILY
+        FROM V_LOGIN_SECURITY_DAILY
         WHERE COMPANY = {_sql_literal(company)}
           AND ENVIRONMENT = {_sql_literal(environment)}
           AND EVENT_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
@@ -292,7 +292,7 @@ def load_task_status_daily(
           QUEUED_RUN_COUNT,
           RECOVERY_ACTION_COUNT,
           UPDATED_AT
-        FROM OVERWATCH_TASK_STATUS_DAILY
+        FROM V_TASK_STATUS_DAILY
         WHERE COMPANY = {_sql_literal(company)}
           AND ENVIRONMENT = {_sql_literal(environment)}
           AND EVENT_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
@@ -329,7 +329,7 @@ def load_security_posture_daily(
           EXPIRED_CREDENTIAL_COUNT,
           EXPIRING_30D_CREDENTIAL_COUNT,
           UPDATED_AT
-        FROM OVERWATCH_SECURITY_POSTURE_DAILY
+        FROM V_SECURITY_POSTURE_DAILY
         WHERE COMPANY = {_sql_literal(company)}
           AND ENVIRONMENT = {_sql_literal(environment)}
           AND EVENT_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
@@ -364,7 +364,7 @@ def load_executive_packet_current(
           TOP_FINDINGS_JSON,
           TOP_ACTIONS_JSON,
           UPDATED_AT
-        FROM OVERWATCH_EXECUTIVE_PACKET_CURRENT
+        FROM V_EXECUTIVE_PACKET_CURRENT
         WHERE COMPANY = {_sql_literal(company)}
           AND ENVIRONMENT = {_sql_literal(environment)}
           AND WINDOW_DAYS = {days}

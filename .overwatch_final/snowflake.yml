@@ -78,5 +78,6 @@ entities:
       - workflow_contracts.py
       - environment.yml
       - pyproject.toml
+      - queries/
       - utils/
       - sections/

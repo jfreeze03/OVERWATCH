@@ -1017,6 +1017,37 @@ def _safe_message(error: object) -> str:
     return text[:500]
 
 
+def _section_token(value: object) -> str:
+    text = str(value or "").strip().lower()
+    text = text.replace("cost intelligence", "cost & contract")
+    return re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+
+
+def _session_value(key: str) -> str:
+    try:
+        return str(st.session_state.get(key, "") or "").strip()
+    except Exception:
+        return ""
+
+
+def _section_summary_user_initiated(query_boundary: str, section: str) -> bool:
+    """Return whether a summary autoload is attached to a section navigation."""
+    if normalize_query_boundary(query_boundary) != "section_summary_autoload":
+        return False
+    section_name = str(section or "").strip()
+    section_key = _section_token(section_name)
+    if not section_key:
+        return False
+    pending_section = _session_value("_overwatch_pending_autoload_section")
+    pending_started = _session_value("_overwatch_pending_autoload_started_at")
+    nav_section = _session_value("nav_section")
+    transition_started = _session_value("_overwatch_section_transition_started_at")
+    return bool(
+        (pending_started and _section_token(pending_section) == section_key)
+        or (transition_started and _section_token(nav_section) == section_key)
+    )
+
+
 def record_ui_query_event(
     *,
     section: str = "",
@@ -1049,6 +1080,7 @@ def record_ui_query_event(
         cache_layer = "unknown"
     original_boundary = str(query_boundary or "other")
     query_boundary = normalize_query_boundary(original_boundary)
+    user_initiated_summary = _section_summary_user_initiated(query_boundary, section)
     active_context = _current_first_paint_context()
     event_render_id = str(render_id or active_context.get("render_id") or "")
     if event_render_id:
@@ -1125,6 +1157,7 @@ def record_ui_query_event(
             max_rows=event.get("max_rows") if isinstance(event.get("max_rows"), int) else None,
             error=str(event.get("error") or ""),
             source_module="performance.record_ui_query_event",
+            user_initiated=user_initiated_summary,
             query_count_delta=1,
             account_usage_count_delta=1 if original_boundary.strip().lower() == "account_usage" else 0,
             started_at=str(event.get("started_at") or ""),
@@ -1203,18 +1236,22 @@ def increment_snowflake_execution_counter(
     section: str = "",
     ttl_key: str = "",
     tier: str = "",
+    max_rows: int | None = None,
 ) -> dict[str, Any]:
     """Record that a real Snowflake execution crossed the app boundary."""
     boundary = normalize_query_boundary(query_boundary)
     context = _current_first_paint_context()
+    event_section = str(section or context.get("section") or "")
+    user_initiated_summary = _section_summary_user_initiated(boundary, event_section)
     event = {
         "event_id": uuid4().hex[:16],
         "render_id": str(context.get("render_id") or ""),
-        "section": str(section or context.get("section") or ""),
+        "section": event_section,
         "boundary": boundary,
         "query_boundary": boundary,
         "ttl_key": str(ttl_key or ""),
         "tier": str(tier or ""),
+        "max_rows": None if max_rows is None else int(max_rows),
         "timestamp": datetime.now().isoformat(timespec="milliseconds"),
         "raw_sql_included": False,
     }
@@ -1238,7 +1275,9 @@ def increment_snowflake_execution_counter(
             execution_boundary=boundary,
             query_tier=str(tier or ""),
             ttl_key=str(ttl_key or ""),
+            max_rows=max_rows,
             source_module="performance.increment_snowflake_execution_counter",
+            user_initiated=user_initiated_summary,
             query_count_delta=1,
             account_usage_count_delta=1 if str(query_boundary or "").strip().lower() == "account_usage" else 0,
             started_at=str(event.get("timestamp") or ""),

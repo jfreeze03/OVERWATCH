@@ -214,15 +214,22 @@ class DeploymentContractTests(unittest.TestCase):
             with self.subTest(artifact=artifact["src"]):
                 self.assertTrue((ROOT / artifact["src"].rstrip("/")).exists())
 
-    def test_mart_setup_avoids_dynamic_tables_and_secure_views(self):
+    def test_mart_setup_uses_task_loaded_marts_with_secure_app_views(self):
         setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
         drop_sql = (ROOT / "snowflake" / "OVERWATCH_MART_DROP.sql").read_text(encoding="utf-8").upper()
 
         self.assertNotIn("CREATE DYNAMIC TABLE", setup_sql)
         self.assertNotIn("CREATE OR REPLACE DYNAMIC TABLE", setup_sql)
-        self.assertNotIn("CREATE SECURE VIEW", setup_sql)
-        self.assertNotIn("CREATE OR REPLACE SECURE VIEW", setup_sql)
+        self.assertIn("CREATE OR REPLACE SECURE VIEW V_QUERY_DAILY_SUMMARY", setup_sql)
+        self.assertIn("CREATE OR REPLACE SECURE VIEW V_WAREHOUSE_DAILY_CREDITS", setup_sql)
+        self.assertIn("CREATE OR REPLACE SECURE VIEW V_CORTEX_DAILY_USAGE", setup_sql)
+        self.assertIn("CREATE OR REPLACE SECURE VIEW V_USER_DISPLAY_DIM", setup_sql)
+        self.assertIn("CREATE OR REPLACE SECURE VIEW V_LOGIN_SECURITY_DAILY", setup_sql)
+        self.assertIn("CREATE OR REPLACE SECURE VIEW V_TASK_STATUS_DAILY", setup_sql)
+        self.assertIn("CREATE OR REPLACE SECURE VIEW V_SECURITY_POSTURE_DAILY", setup_sql)
+        self.assertIn("CREATE OR REPLACE SECURE VIEW V_EXECUTIVE_PACKET_CURRENT", setup_sql)
         self.assertNotIn("DROP DYNAMIC TABLE", drop_sql)
+        self.assertIn("DROP VIEW IF EXISTS V_QUERY_DAILY_SUMMARY", drop_sql)
         self.assertIn("TASK/PROCEDURE-LOADED TABLES INSTEAD OF DYNAMIC TABLES", setup_sql)
         self.assertIn("SECURE VIEWS", setup_sql)
 
@@ -257,6 +264,7 @@ class DeploymentContractTests(unittest.TestCase):
             "OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH": "SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY",
             "OVERWATCH_DECISION_BRIEF_FULL_REFRESH": "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL",
             "OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH": "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST",
+            "OVERWATCH_EXECUTIVE_COMMAND_CENTER_REFRESH": "SP_OVERWATCH_REFRESH_EXECUTIVE_COMMAND_CENTER",
             "OVERWATCH_LOAD_DAILY": "SP_OVERWATCH_LOAD_DAILY",
         }
 
@@ -385,8 +393,15 @@ class DeploymentContractTests(unittest.TestCase):
                 with self.subTest(object_type=object_type, name=name):
                     if object_type == "TABLE":
                         self.assertIn(f"DROP TABLE IF EXISTS {name}", drop_sql)
-                        self.assertNotIn(f"CREATE TABLE IF NOT EXISTS {name}", setup_sql)
-                        self.assertNotIn(f"CREATE TRANSIENT TABLE IF NOT EXISTS {name}", setup_sql)
+                        self.assertIsNone(
+                            re.search(rf"\bCREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+{re.escape(name)}\b(?!_)", setup_sql)
+                        )
+                        self.assertIsNone(
+                            re.search(
+                                rf"\bCREATE\s+TRANSIENT\s+TABLE\s+IF\s+NOT\s+EXISTS\s+{re.escape(name)}\b(?!_)",
+                                setup_sql,
+                            )
+                        )
                     elif object_type == "VIEW":
                         self.assertIn(f"DROP VIEW IF EXISTS {name}", drop_sql)
                         self.assertNotIn(f"CREATE OR REPLACE VIEW {name}", setup_sql)
@@ -410,6 +425,7 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("SHOW TASKS IN SCHEMA", validation_sql)
         self.assertIn("TASK GRAPH DEPLOYMENT PROOF", validation_sql)
         self.assertIn("OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH", validation_sql)
+        self.assertIn("OVERWATCH_EXECUTIVE_COMMAND_CENTER_REFRESH", validation_sql)
         self.assertIn("SHOW DYNAMIC TABLES IN SCHEMA", validation_sql)
         self.assertIn("DYNAMIC_TABLE_COLLISIONS", validation_sql)
         self.assertIn("SECURE_VIEW_COLLISIONS", validation_sql)
@@ -438,8 +454,8 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("DROP VIEW IF EXISTS ALERT_NATIVE_DEPLOYMENT_REVIEW_V", drop_sql)
         self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_STAGE_ALERT_REMEDIATION_DRY_RUN", drop_sql)
         self.assertIn("('VIEW', 'ALERT_NATIVE_DEPLOYMENT_REVIEW_V')", validation_sql)
-        self.assertIn("('VIEW', 3)", validation_sql)
-        self.assertIn("('PROCEDURE', 22)", validation_sql)
+        self.assertIn("('VIEW', 18)", validation_sql)
+        self.assertIn("('PROCEDURE', 23)", validation_sql)
 
     def test_alert_operations_review_script_is_read_only_and_covers_key_marts(self):
         review_sql = (ROOT / "snowflake" / "OVERWATCH_ALERT_OPERATIONS_REVIEW.sql").read_text(encoding="utf-8")

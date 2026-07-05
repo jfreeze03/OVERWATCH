@@ -293,12 +293,13 @@ class AlertCenterSplitTests(unittest.TestCase):
         first_paint_source = inspect.getsource(alert_center._render_alert_center_first_paint_shell)
         self.assertIn("Entry summaries come from compact marts", first_paint_source)
         self.assertIn("render_section_first_paint_shell(", first_paint_source)
+        self.assertIn("render_alert_inbox_shell(", first_paint_source)
 
     def test_alert_center_first_paint_shell_executes_without_loading_data(self):
         with patch.object(alert_center, "render_section_first_paint_shell") as render_shell, patch.object(
-            alert_center,
-            "_render_alert_command_lane_board",
-        ) as render_lanes, patch.object(alert_center.st, "info") as info, patch.object(
+            alert_center.st,
+            "html",
+        ) as html, patch.object(
             alert_center,
             "render_alert_center_add_to_case",
             side_effect=AssertionError("Add to Case should wait for loaded alert data"),
@@ -313,8 +314,7 @@ class AlertCenterSplitTests(unittest.TestCase):
             )
 
         render_shell.assert_called_once()
-        render_lanes.assert_called_once()
-        info.assert_called_once()
+        html.assert_called_once()
         spec = render_shell.call_args.args[0]
         self.assertEqual(spec.section, "Alert Center")
         self.assertEqual(spec.state, "Load on demand")
@@ -322,8 +322,11 @@ class AlertCenterSplitTests(unittest.TestCase):
         self.assertIn(("Window", "7 days / 200 rows"), spec.snapshot)
         self.assertEqual(spec.view, "Active Alerts")
         self.assertEqual(spec.load_cta, "Load Active Alerts")
-        self.assertIn("Load Active Alerts", info.call_args.args[0])
-        self.assertIn("Entry summaries come from compact marts", info.call_args.args[0])
+        rendered_html = html.call_args.args[0]
+        self.assertIn("Alert Inbox", rendered_html)
+        self.assertIn("Alert Intelligence", rendered_html)
+        self.assertIn("ow-coco-filter-chip", rendered_html)
+        self.assertNotIn("lane-column", rendered_html)
 
     def test_alert_center_load_and_admin_button_keys_stay_distinct(self):
         sources = {

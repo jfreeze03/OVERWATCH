@@ -26,48 +26,56 @@ PRODUCER = "summary_mart_setup"
 EXPECTED_SUMMARY_MARTS: tuple[dict[str, Any], ...] = (
     {
         "object_name": "OVERWATCH_QUERY_DAILY_SUMMARY",
+        "view_name": "V_QUERY_DAILY_SUMMARY",
         "owner": "Workload Operations",
         "source_family": "query_history",
         "required_columns": ("COMPANY", "ENVIRONMENT", "WINDOW_START_DATE", "WINDOW_END_DATE", "QUERY_COUNT", "FAILED_QUERY_COUNT"),
     },
     {
         "object_name": "OVERWATCH_WAREHOUSE_DAILY_CREDITS",
+        "view_name": "V_WAREHOUSE_DAILY_CREDITS",
         "owner": "Cost & Contract",
         "source_family": "warehouse_metering",
         "required_columns": ("COMPANY", "ENVIRONMENT", "USAGE_DATE", "WAREHOUSE_NAME", "CREDITS_USED", "COST_USD"),
     },
     {
         "object_name": "OVERWATCH_CORTEX_DAILY_USAGE",
+        "view_name": "V_CORTEX_DAILY_USAGE",
         "owner": "Cost & Contract",
         "source_family": "cortex_usage",
         "required_columns": ("COMPANY", "ENVIRONMENT", "USAGE_DATE", "USER_NAME", "USER_CHART_LABEL", "TOTAL_TOKENS"),
     },
     {
         "object_name": "OVERWATCH_USER_DISPLAY_DIM",
+        "view_name": "V_USER_DISPLAY_DIM",
         "owner": "Shared User Display",
         "source_family": "user_display",
         "required_columns": ("USER_NAME", "USER_DISPLAY_NAME", "USER_CHART_LABEL", "USER_ADMIN_LABEL"),
     },
     {
         "object_name": "OVERWATCH_LOGIN_SECURITY_DAILY",
+        "view_name": "V_LOGIN_SECURITY_DAILY",
         "owner": "Security Monitoring",
         "source_family": "login_security",
         "required_columns": ("COMPANY", "ENVIRONMENT", "EVENT_DATE", "FAILED_LOGIN_COUNT", "AFFECTED_USER_COUNT"),
     },
     {
         "object_name": "OVERWATCH_TASK_STATUS_DAILY",
+        "view_name": "V_TASK_STATUS_DAILY",
         "owner": "DBA Control Room",
         "source_family": "task_status",
         "required_columns": ("COMPANY", "ENVIRONMENT", "EVENT_DATE", "FAILED_TASK_COUNT", "SLA_BREACH_COUNT"),
     },
     {
         "object_name": "OVERWATCH_SECURITY_POSTURE_DAILY",
+        "view_name": "V_SECURITY_POSTURE_DAILY",
         "owner": "Security Monitoring",
         "source_family": "security_posture",
         "required_columns": ("COMPANY", "ENVIRONMENT", "EVENT_DATE", "CRITICAL_FINDING_COUNT", "HIGH_FINDING_COUNT"),
     },
     {
         "object_name": "OVERWATCH_EXECUTIVE_PACKET_CURRENT",
+        "view_name": "V_EXECUTIVE_PACKET_CURRENT",
         "owner": "Executive Landing",
         "source_family": "decision_packet",
         "required_columns": ("COMPANY", "ENVIRONMENT", "SECTION", "WINDOW_DAYS", "SUMMARY_JSON", "UPDATED_AT"),
@@ -129,6 +137,15 @@ def _object_block(sql: str, object_name: str) -> str:
     return match.group(1) if match else ""
 
 
+def _view_block(sql: str, view_name: str) -> str:
+    pattern = re.compile(
+        rf"CREATE\s+OR\s+REPLACE\s+SECURE\s+VIEW\s+{re.escape(view_name)}\b(.*?);",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    match = pattern.search(sql)
+    return match.group(1) if match else ""
+
+
 def _source_family_present(sql: str, source_family: str) -> bool:
     return (
         re.search(
@@ -156,7 +173,9 @@ def build_summary_mart_setup_results(root: Path | str = ".") -> dict[str, Any]:
 
     for spec in EXPECTED_SUMMARY_MARTS:
         object_name = str(spec["object_name"])
+        view_name = str(spec["view_name"])
         block = _object_block(sql, object_name)
+        view_block = _view_block(sql, view_name)
         required_columns = tuple(str(col) for col in spec["required_columns"])
         missing_columns = [
             column
@@ -167,6 +186,10 @@ def build_summary_mart_setup_results(root: Path | str = ".") -> dict[str, Any]:
         reasons: list[str] = []
         if not block:
             reasons.append("object DDL missing")
+        if not view_block:
+            reasons.append("app-facing secure view missing")
+        elif object_name.upper() not in view_block.upper():
+            reasons.append("app-facing secure view does not select from compact mart")
         if missing_columns:
             reasons.append("missing columns: " + ", ".join(missing_columns))
         if not _source_family_present(sql, source_family):
@@ -181,6 +204,7 @@ def build_summary_mart_setup_results(root: Path | str = ".") -> dict[str, Any]:
             "generated_at": generated_at,
             "commit_sha": commit_sha,
             "object_name": object_name,
+            "app_facing_view": view_name,
             "object_type": "TABLE",
             "owner": str(spec["owner"]),
             "purpose": "Task-built compact summary surface for section summaries and explicit evidence launch proof.",
@@ -190,6 +214,7 @@ def build_summary_mart_setup_results(root: Path | str = ".") -> dict[str, Any]:
             "refresh_boundary": "refresh_fast|refresh_full",
             "first_paint_source_allowed": False,
             "section_summary_autoload_allowed": True,
+            "app_consumes_secure_view": bool(view_block),
             "required_columns": list(required_columns),
             "missing_columns": missing_columns,
             "sql_file": SUMMARY_MART_SQL_REL,
@@ -204,6 +229,7 @@ def build_summary_mart_setup_results(root: Path | str = ".") -> dict[str, Any]:
                 {
                     "row_id": row["row_id"],
                     "object_name": object_name,
+                    "app_facing_view": view_name,
                     "failure_reason": row["failure_reason"],
                 }
             )
@@ -257,11 +283,13 @@ def evaluate_summary_mart_setup_gate(results: Mapping[str, Any]) -> dict[str, An
         {
             "row_id": str(row.get("row_id") or ""),
             "object_name": str(row.get("object_name") or ""),
+            "app_facing_view": str(row.get("app_facing_view") or ""),
             "object_type": str(row.get("object_type") or "TABLE"),
             "owner": str(row.get("owner") or ""),
             "source_family": str(row.get("source_family") or ""),
             "daily_safe": bool(row.get("daily_safe")),
             "section_summary_autoload_allowed": bool(row.get("section_summary_autoload_allowed")),
+            "app_consumes_secure_view": bool(row.get("app_consumes_secure_view")),
             "sql_file": str(row.get("sql_file") or ""),
             "producer": PRODUCER,
             "producer_signature": "summary_mart_setup::row_v1",

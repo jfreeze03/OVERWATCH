@@ -61,6 +61,12 @@ class CommandCenterTests(unittest.TestCase):
             "OVERWATCH_COMMAND_CENTER_RECOMMENDATION",
             "MART_COMMAND_CENTER_SUMMARY",
             "SP_OVERWATCH_REFRESH_COMMAND_CENTER",
+            "MART_EXECUTIVE_COMMAND_CENTER_KPI",
+            "MART_EXECUTIVE_COMMAND_CENTER_TIMESERIES",
+            "MART_EXECUTIVE_COMMAND_CENTER_WAREHOUSE",
+            "MART_EXECUTIVE_COMMAND_CENTER_ALERTS",
+            "MART_EXECUTIVE_COMMAND_CENTER_CONTEXT",
+            "SP_OVERWATCH_REFRESH_EXECUTIVE_COMMAND_CENTER",
         ]:
             with self.subTest(name=name):
                 self.assertIn(name, setup)
@@ -68,8 +74,9 @@ class CommandCenterTests(unittest.TestCase):
                 self.assertIn(name, validation)
         self.assertIn("2026.06.18-COMMAND-CENTER", setup)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_COMMAND_CENTER()", setup)
-        self.assertIn("('TABLE', 105)", validation)
-        self.assertIn("('PROCEDURE', 22)", validation)
+        self.assertIn("CALL SP_OVERWATCH_REFRESH_EXECUTIVE_COMMAND_CENTER()", validation)
+        self.assertIn("('TABLE', 110)", validation)
+        self.assertIn("('PROCEDURE', 23)", validation)
 
     def test_command_center_labels_are_constrained(self):
         from utils.command_center import (
@@ -224,6 +231,8 @@ class CommandCenterTests(unittest.TestCase):
             "OVERWATCH_COMMAND_CENTER_EVIDENCE",
             "OVERWATCH_COMMAND_CENTER_RECOMMENDATION",
             "SP_OVERWATCH_REFRESH_COMMAND_CENTER",
+            "MART_EXECUTIVE_COMMAND_CENTER_KPI",
+            "SP_OVERWATCH_REFRESH_EXECUTIVE_COMMAND_CENTER",
             "ROOT-CAUSE CANDIDATE",
             "POSSIBLE CORRELATION",
             "EXPLICIT LOAD",

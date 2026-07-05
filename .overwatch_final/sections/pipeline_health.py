@@ -131,7 +131,7 @@ def _queue_pipeline_findings(session, df: pd.DataFrame, finding_type: str) -> No
 
 def _get_session_for_pipeline_action(action_label: str):
     try:
-        return get_session()
+        return get_session(reason="pipeline_action", query_boundary="metadata", section="Workload Operations")
     except Exception as e:
         st.warning(f"{action_label} needs a Snowflake session: {format_snowflake_error(e)}")
         return None

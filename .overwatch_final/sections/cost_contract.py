@@ -185,16 +185,12 @@ from sections.cost_contract_workflow import (
     set_cost_overview_renderer,
 )
 from sections.cost_contract_overview_floor import _render_cost_watch_floor
+from sections.leadership_watchlist_panels import render_cost_leadership_panels_for_current_scope
 from runtime_state import set_state
-
-
 get_active_environment = _lazy_util("get_active_environment")
 def get_active_company() -> str:
     return str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
-
 set_cost_overview_renderer(_render_cost_watch_floor)
-
-
 def render() -> None:
     with with_section_first_paint_entry("Cost & Contract", "Entry"):
         company = get_active_company()
@@ -212,19 +208,16 @@ def render() -> None:
             st.session_state["cost_center_view"] = "Cost Explorer"
             if st.session_state.get("cc_explorer_lens") not in COST_EXPLORER_LENSES:
                 st.session_state["cc_explorer_lens"] = "Warehouse"
-
         breadcrumb = ["Cost & Contract", workflow_label(workflow)]
         if workflow == "Cost Explorer":
             breadcrumb.append(str(st.session_state.get("cc_explorer_lens") or "Warehouse"))
         if workflow != "Cost Overview":
             render_section_breadcrumb(breadcrumb)
         _render_cost_filter_indicator()
-
         st.html('<div class="ow-cost-layout ow-cost-main-content"></div>')
         selected_workflow = render_cost_primary_tabs(workflow)
         if selected_workflow != workflow:
             set_cost_workflow(selected_workflow)
-
         workflow = str(st.session_state.get("cost_contract_workflow") or "Cost Overview")
         if workflow == "Cost Explorer":
             lens = str(st.session_state.get("cc_explorer_lens") or "Warehouse")
@@ -266,13 +259,13 @@ def render() -> None:
             current_workflow=current_workflow_label,
             compact=workflow != "Cost Overview",
         )
-
     st.session_state["_cost_contract_local_hierarchy_rendered"] = True
     decision_state = section_state_from_brief(cost_brief)
     evidence_requested = bool(st.session_state.get("cost_contract_command_brief_load_evidence"))
     if workflow != "Cost Overview" or evidence_requested:
         _render_cost_contract_workflow(workflow, company, environment)
-
+    else:
+        render_cost_leadership_panels_for_current_scope(company, environment, active_cost_days())
     advanced_open = bool(st.session_state.get(_ADVANCED_COST_TOOLS_VISIBLE_KEY))
     if advanced_open or should_render_daily_diagnostics("Cost & Contract", workflow, decision_state.decision_mode):
         with st.expander("Advanced cost tools and evidence", expanded=advanced_open):

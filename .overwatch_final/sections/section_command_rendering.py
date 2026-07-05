@@ -46,6 +46,11 @@ from utils.display_safety import safe_source_label, scrub_daily_text
 _COMMAND_BRIEF_HTML = _kit_command_brief
 
 
+def _section_display_label(value: object) -> str:
+    text = str(value or "").strip()
+    return "Cost Intelligence" if text == "Cost & Contract" else text
+
+
 def _key_token(value: object) -> str:
     text = str(value or "").strip().lower()
     text = re.sub(r"[^a-z0-9]+", "_", text)
@@ -179,9 +184,10 @@ def _breadcrumb_html(parts: tuple[object, ...]) -> str:
     clean = [str(part or "").strip() for part in parts if str(part or "").strip()]
     if not clean:
         return ""
+    display_clean = [_section_display_label(part) for part in clean]
     return '<nav class="ow-page-breadcrumb" aria-label="Breadcrumb">' + "<span>&rsaquo;</span>".join(
-        f"<strong>{_html(part)}</strong>" if index == len(clean) - 1 else f"<em>{_html(part)}</em>"
-        for index, part in enumerate(clean)
+        f"<strong>{_html(part)}</strong>" if index == len(display_clean) - 1 else f"<em>{_html(part)}</em>"
+        for index, part in enumerate(display_clean)
     ) + "</nav>"
 
 

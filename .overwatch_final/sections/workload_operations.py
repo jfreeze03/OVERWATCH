@@ -474,7 +474,6 @@ PIPELINE_STORED_PROC_ALIASES = {
 PIPELINE_LOAD_ALIASES = {
     "Pipeline health",
     "Pipeline / SLA risk",
-    "Pipeline & Task Health",
     "Pipeline loads & SLA",
     "Load Issues & SLA",
 }
@@ -536,6 +535,66 @@ def _normalize_query_investigation_state() -> None:
     view = query_analysis_view_for_workload_lens(st.session_state.get(QUERY_ANALYSIS_ACTIVE_VIEW_KEY))
     set_state(QUERY_INVESTIGATION_LENS_KEY, lens)
     set_state(QUERY_ANALYSIS_ACTIVE_VIEW_KEY, view)
+
+
+def _set_task_management_route(
+    view: str,
+    *,
+    embedded_lens: str = "",
+    status_filter: str = "",
+) -> None:
+    """Keep Pipeline & Tasks pills from inheriting stale embedded task state."""
+    set_state("task_management_view", view)
+    if embedded_lens:
+        set_state("task_management_embedded_lens", embedded_lens)
+    else:
+        st.session_state.pop("task_management_embedded_lens", None)
+    if status_filter:
+        set_state("task_management_status_filter", status_filter)
+    else:
+        st.session_state.pop("task_management_status_filter", None)
+
+
+def _set_route_state_now(key: str, value: object) -> None:
+    """Set non-widget Workload route state immediately."""
+    try:
+        st.session_state[key] = value
+    except Exception:
+        set_state(key, value)
+
+
+def _render_workload_lens_selector(
+    *,
+    label: str,
+    options: Sequence[object],
+    active_value: object,
+    key: str,
+    format_func=None,
+) -> str:
+    """Render a Workload embedded lens with separate widget and route-state keys."""
+    values = tuple(str(option) for option in options or ())
+    if not values:
+        return str(active_value or "")
+    active = str(active_value or values[0])
+    if active not in values:
+        active = values[0]
+    if st.session_state.get(key) != active:
+        _set_route_state_now(key, active)
+
+    widget_key = f"{key}__selector"
+    if st.session_state.get(widget_key) not in values:
+        _set_route_state_now(widget_key, active)
+    selected = render_secondary_lens_pills(
+        label=label,
+        options=values,
+        active_value=active,
+        key=widget_key,
+        format_func=format_func,
+    )
+    if selected != active:
+        _set_route_state_now(key, selected)
+        st.rerun()
+    return selected
 
 
 def _apply_fast_entry_default() -> None:
@@ -615,19 +674,19 @@ def _render_workload_overview(company: str, environment: str) -> None:
 
 
 def _render_query_investigation_surface() -> None:
+    if st.session_state.pop("workload_query_diagnosis_mode", "") == "Detailed diagnosis":
+        set_state(QUERY_INVESTIGATION_LENS_KEY, "Detailed Diagnosis")
+        set_state(QUERY_ANALYSIS_ACTIVE_VIEW_KEY, "Detailed Diagnosis")
     _normalize_query_investigation_state()
-    query_lens = render_secondary_lens_pills(
+    query_lens = _render_workload_lens_selector(
         label="Query Investigation lens",
         options=QUERY_INVESTIGATION_LENS_OPTIONS,
         active_value=st.session_state.get(QUERY_INVESTIGATION_LENS_KEY, "History Search"),
         key=QUERY_INVESTIGATION_LENS_KEY,
         format_func=lambda value: QUERY_INVESTIGATION_LENS_LABELS.get(str(value), str(value)),
     )
-    st.session_state[QUERY_ANALYSIS_ACTIVE_VIEW_KEY] = query_analysis_view_for_workload_lens(query_lens)
-    st.session_state[QUERY_ANALYSIS_EMBEDDED_LENS_KEY] = True
-    if st.session_state.pop("workload_query_diagnosis_mode", "") == "Detailed diagnosis":
-        st.session_state[QUERY_INVESTIGATION_LENS_KEY] = "Detailed Diagnosis"
-        st.session_state[QUERY_ANALYSIS_ACTIVE_VIEW_KEY] = "Detailed Diagnosis"
+    set_state(QUERY_ANALYSIS_ACTIVE_VIEW_KEY, query_analysis_view_for_workload_lens(query_lens))
+    set_state(QUERY_ANALYSIS_EMBEDDED_LENS_KEY, True)
     try:
         render_workflow_module(QUERY_INVESTIGATION_WORKFLOW, WORKFLOW_MODULES)
     finally:
@@ -635,31 +694,32 @@ def _render_query_investigation_surface() -> None:
 
 
 def _render_pipeline_task_health_surface() -> None:
-    focus = render_secondary_lens_pills(
+    focus = _render_workload_lens_selector(
         label="Pipeline & Tasks lens",
         options=(PIPELINE_TASK_FOCUS, PIPELINE_STORED_PROC_FOCUS, PIPELINE_LOAD_FOCUS, "SLA Risk", "Suspended Tasks"),
         active_value=st.session_state.get(PIPELINE_FOCUS_KEY, PIPELINE_TASK_FOCUS),
         key=PIPELINE_FOCUS_KEY,
     )
     if focus == "SLA Risk":
-        st.session_state["task_management_view"] = "SLA & Cost Drift"
-        st.session_state["task_management_embedded_lens"] = "SLA Risk"
+        _set_task_management_route("SLA & Cost Drift", embedded_lens="SLA Risk")
         render_workflow_module(PIPELINE_TASK_FOCUS, {PIPELINE_TASK_FOCUS: "sections.task_management"})
         return
     if focus == "Suspended Tasks":
-        st.session_state["task_management_view"] = "Job Status Brief"
-        st.session_state["task_management_status_filter"] = "Suspended"
-        st.session_state["task_management_embedded_lens"] = "Suspended Tasks"
+        _set_task_management_route(
+            "Job Status Brief",
+            embedded_lens="Suspended Tasks",
+            status_filter="Suspended",
+        )
         render_workflow_module(PIPELINE_TASK_FOCUS, {PIPELINE_TASK_FOCUS: "sections.task_management"})
         return
     if focus == PIPELINE_STORED_PROC_FOCUS:
         render_workflow_module(focus, {focus: "sections.stored_proc_tracker"})
         return
     if focus == PIPELINE_LOAD_FOCUS:
-        st.session_state.setdefault("pipeline_health_active_view", "Load Failures")
+        set_state("pipeline_health_active_view", "Load Failures")
         render_workflow_module(focus, {focus: "sections.pipeline_health"})
         return
-    st.session_state.setdefault("task_management_view", "Job Status Brief")
+    _set_task_management_route("Job Status Brief")
     render_workflow_module(focus, {focus: "sections.task_management"})
 
 

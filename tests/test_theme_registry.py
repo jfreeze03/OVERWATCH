@@ -169,24 +169,23 @@ class ThemeRegistryTests(unittest.TestCase):
             theme._STRUCTURAL_CSS.index('.stApp [data-baseweb="select"] input[role="combobox"]'):
             theme._STRUCTURAL_CSS.index('[data-testid="stSelectboxVirtualDropdown"]')
         ]
-        self.assertNotIn("caret-color: transparent !important", select_input_block)
-        self.assertNotIn("-webkit-text-fill-color: transparent !important", select_input_block)
-        self.assertIn("caret-color: var(--accent) !important", theme._STRUCTURAL_CSS)
+        self.assertIn("color: transparent !important", select_input_block)
+        self.assertIn("-webkit-text-fill-color: transparent !important", select_input_block)
+        self.assertIn("caret-color: transparent !important", select_input_block)
+        self.assertIn("opacity: 0 !important", select_input_block)
+        self.assertIn("width: 0 !important", select_input_block)
+        self.assertIn("min-width: 0 !important", select_input_block)
+        self.assertIn("max-width: 0 !important", select_input_block)
         self.assertIn("input[role=\"combobox\"]::selection", theme._STRUCTURAL_CSS)
-        self.assertIn("background: rgba(var(--accent-rgb), 0.24) !important", theme._STRUCTURAL_CSS)
+        self.assertIn("background: transparent !important", select_input_block)
+        self.assertIn(".stApp [data-baseweb=\"select\"] span", theme._STRUCTURAL_CSS)
+        self.assertIn("-webkit-text-fill-color: var(--text-input) !important", theme._STRUCTURAL_CSS)
         combined_css = theme._combined_theme_css("carbon")
-        self.assertIn(
-            '.ow-global-command-bar + div [data-testid="stSelectbox"] [data-baseweb="select"] input[role="combobox"]',
-            combined_css,
-        )
-        command_bar_select_block = combined_css[
-            combined_css.index('.ow-global-command-bar + div [data-testid="stSelectbox"] [data-baseweb="select"] input[role="combobox"]'):
-            combined_css.index(".ow-command-context")
-        ]
-        self.assertNotIn("caret-color: transparent !important", command_bar_select_block)
-        self.assertNotIn("-webkit-text-fill-color: transparent !important", command_bar_select_block)
-        self.assertIn("caret-color: var(--ow-cyan) !important", command_bar_select_block)
-        self.assertIn("color: var(--ow-text) !important", command_bar_select_block)
+        self.assertIn(".ow-global-command-bar + div [data-baseweb=\"select\"] > div", combined_css)
+        self.assertIn("border: 1px solid rgba(126,220,255,0.24) !important", combined_css)
+        self.assertIn("background: rgba(3,12,20,0.76) !important", combined_css)
+        self.assertIn("caret-color: transparent !important", combined_css)
+        self.assertIn("opacity: 0 !important", combined_css)
         self.assertIn('[role="option"]:hover', theme._STRUCTURAL_CSS)
         self.assertIn("background: rgba(var(--accent-rgb), 0.16) !important", theme._STRUCTURAL_CSS)
 

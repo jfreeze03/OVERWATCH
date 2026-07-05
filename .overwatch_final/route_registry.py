@@ -99,6 +99,7 @@ LEGACY_SECTION_ALIASES = {
     "Schema Compare": "Workload Operations",
     "Data Compare": "Workload Operations",
     "Cost Center": "Cost & Contract",
+    "Cost Intelligence": "Cost & Contract",
     "Credit Contract": "Cost & Contract",
     "Recommendations": "Cost & Contract",
     "Recommendations & Anomalies": "Cost & Contract",

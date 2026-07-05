@@ -327,13 +327,27 @@ SECTION_BY_TITLE = dict(_CANONICAL_SECTION_BY_TITLE)
 SECTION_ICONS = {_section.title: _section.icon for _section in SECTION_DEFINITIONS}
 
 SECTION_ALIASES = dict(_ROUTE_SECTION_ALIASES)
+SECTION_DISPLAY_LABELS = {
+    "Cost & Contract": "Cost Intelligence",
+}
+SECTION_DISPLAY_ALIASES = {
+    "Cost Intelligence": "Cost & Contract",
+}
 # Fail fast at startup if config navigation drifts from the central registry.
 assert tuple(PRIMARY_SECTIONS) == _ROUTE_PRIMARY_SECTION_TITLES
 
 
 def normalize_section_name(section: str) -> str:
     """Return the current canonical section name for a route or alias."""
-    return _normalize_section_route(section)
+    requested = str(section or "").strip()
+    requested = SECTION_DISPLAY_ALIASES.get(requested, requested)
+    return _normalize_section_route(requested)
+
+
+def display_section_label(section: str) -> str:
+    """Return the user-facing label while preserving canonical route keys."""
+    canonical = normalize_section_name(section)
+    return SECTION_DISPLAY_LABELS.get(canonical, canonical)
 
 
 def compatibility_state_for_section(section: str) -> dict[str, object]:

@@ -25,7 +25,7 @@ from sections.task_management_sla_cost_view import *
 from sections.task_management_sla_cost_view import __all__ as _sla_cost_view_all
 from sections.task_management_sql import *
 from sections.task_management_sql import __all__ as _sql_all
-from utils import get_session
+from utils import get_session_for_action
 from utils.workflows import render_workflow_selector
 
 
@@ -41,12 +41,6 @@ TASK_MANAGEMENT_RENDERERS = {
 
 
 def render():
-    session = get_session()
-
-    if st.session_state.get("exceptions_only_mode"):
-        render_task_job_status_brief(session)
-        st.stop()
-
     task_view = render_workflow_selector(
         "Task management workflow",
         "task_management_view",
@@ -54,6 +48,18 @@ def render():
         TASK_CONTROL_DETAILS,
         columns=3,
     )
+    session = get_session_for_action(
+        "load task management evidence",
+        surface="Task Management",
+        offline_note="Task workflow controls remain available; data loads after the connection is available.",
+    )
+    if session is None:
+        return
+
+    if st.session_state.get("exceptions_only_mode"):
+        render_task_job_status_brief(session)
+        st.stop()
+
     TASK_MANAGEMENT_RENDERERS.get(task_view, render_task_job_status_brief)(session)
 
 

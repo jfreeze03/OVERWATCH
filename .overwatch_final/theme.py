@@ -9,7 +9,7 @@ from pathlib import Path
 
 import streamlit as st
 
-THEME_VERSION = "2026-06-16-theme-contrast-v10"
+THEME_VERSION = "2026-07-05-command-center-v2"
 
 _DEFAULT_THEME = "carbon"
 _ACTIVE_THEME_KEY = "_overwatch_active_theme"

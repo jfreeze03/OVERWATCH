@@ -22,6 +22,7 @@ from config import (
     DEFAULT_ENVIRONMENT,
     NAV_GROUPS,
     SECTION_ICONS,
+    display_section_label,
 )
 from filters import render_advanced_scope_controls
 from navigation import current_active_section, current_visible_sections, normalize_nav_section, queue_section_navigation
@@ -333,7 +334,7 @@ def render_sidebar(
             for section_name in group_visible:
                 is_active = section_name == active_section
                 st.button(
-                    section_name,
+                    display_section_label(section_name),
                     key=f"{WIDGET_NAV_BUTTON_PREFIX}_{group_name}_{section_name}",
                     type="primary" if is_active else "secondary",
                     width="stretch",

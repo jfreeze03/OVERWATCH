@@ -117,13 +117,41 @@ def apply_section_workflow_navigation(
         elif target == "Cost & Contract" and workflow_value:
             set_state(COST_CONTRACT_WORKFLOW, workflow_value)
         elif target == "Workload Operations" and workflow_value:
-            set_state(WORKLOAD_OPERATIONS_WORKFLOW, workflow_value)
-            if workflow_value in {"Task graphs", "Task & procedure health", "Task Management"}:
-                set_state("workload_operations_pipeline_focus", "Failed Tasks")
-            elif workflow_value in {"Stored procedures", "Stored procedure lineage", "Stored Proc Tracker"}:
+            workload_workflow = workflow_value
+            pipeline_focus = ""
+            if workflow_value in {
+                "Pipeline & Tasks",
+                "Pipeline & Task Health",
+                "Task graphs",
+                "Task & procedure health",
+                "Task Management",
+                "Failed Tasks",
+            }:
+                workload_workflow = "Pipeline & Task Health"
+                pipeline_focus = "Failed Tasks"
+            elif workflow_value in {
+                "Stored procedures",
+                "Stored procedure lineage",
+                "Stored Proc Tracker",
+                "Failed Procedures",
+            }:
+                set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Pipeline & Task Health")
                 set_state("workload_operations_pipeline_focus", "Failed Procedures")
-            elif workflow_value in {"Pipeline health", "Pipeline / SLA risk"}:
-                set_state("workload_operations_pipeline_focus", "Load Issues & SLA")
+                return target
+            elif workflow_value in {
+                "Pipeline health",
+                "Pipeline / SLA risk",
+                "Load Issues & SLA",
+                "Load Failures",
+            }:
+                workload_workflow = "Pipeline & Task Health"
+                pipeline_focus = "Load Issues & SLA"
+            elif workflow_value in {"SLA Risk", "Suspended Tasks"}:
+                workload_workflow = "Pipeline & Task Health"
+                pipeline_focus = workflow_value
+            set_state(WORKLOAD_OPERATIONS_WORKFLOW, workload_workflow)
+            if pipeline_focus:
+                set_state("workload_operations_pipeline_focus", pipeline_focus)
         elif target == "Security Monitoring" and workflow_value:
             set_state(SECURITY_POSTURE_VIEW, workflow_value)
             set_state(SECURITY_POSTURE_WORKFLOW, workflow_value)

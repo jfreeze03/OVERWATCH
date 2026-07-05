@@ -129,6 +129,14 @@ def _queue_pipeline_findings(session, df: pd.DataFrame, finding_type: str) -> No
         st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
 
 
+def _get_session_for_pipeline_action(action_label: str):
+    try:
+        return get_session()
+    except Exception as e:
+        st.warning(f"{action_label} needs a Snowflake session: {format_snowflake_error(e)}")
+        return None
+
+
 def _pipe_company_filter(company: str) -> str:
     company_upper = str(company or "").upper()
     if company_upper == "TREXIS":
@@ -210,7 +218,6 @@ def _load_dynamic_table_inventory(session, company: str, days: int) -> pd.DataFr
 
 
 def render():
-    session = get_session()
     company = st.session_state.get("active_company", "ALFA")
     active_view = render_workflow_selector(
         "Pipeline health view",
@@ -290,7 +297,9 @@ def render():
                 )
                 download_csv(df_fresh, "pipeline_freshness_watchlist.csv")
                 if st.button("Save freshness findings to Action Queue", key="pipe_fresh_queue"):
-                    _queue_pipeline_findings(session, df_fresh, "Freshness")
+                    session = _get_session_for_pipeline_action("Saving freshness findings")
+                    if session is not None:
+                        _queue_pipeline_findings(session, df_fresh, "Freshness")
 
     elif active_view == "Load Failures":
         st.subheader("Load Failure Monitor")
@@ -354,7 +363,9 @@ def render():
                 )
                 download_csv(df_loads, "pipeline_load_failures.csv")
                 if st.button("Save load failures to Action Queue", key="pipe_load_queue"):
-                    _queue_pipeline_findings(session, df_loads, "Load Failure")
+                    session = _get_session_for_pipeline_action("Saving load failure findings")
+                    if session is not None:
+                        _queue_pipeline_findings(session, df_loads, "Load Failure")
 
     elif active_view == "Volume Watch":
         st.subheader("Table Volume Watch")
@@ -422,7 +433,9 @@ def render():
                 )
                 download_csv(df_volume, "pipeline_volume_watch.csv")
                 if st.button("Save volume watch to Action Queue", key="pipe_volume_queue"):
-                    _queue_pipeline_findings(session, df_volume, "Volume")
+                    session = _get_session_for_pipeline_action("Saving volume watch findings")
+                    if session is not None:
+                        _queue_pipeline_findings(session, df_volume, "Volume")
 
     elif active_view == "Snowpipe Usage":
         st.subheader("Snowpipe Usage")
@@ -474,7 +487,9 @@ def render():
                 )
                 download_csv(df_pipe, "pipeline_snowpipe_usage.csv")
                 if st.button("Save Snowpipe findings to Action Queue", key="pipe_snowpipe_queue"):
-                    _queue_pipeline_findings(session, df_pipe, "Snowpipe")
+                    session = _get_session_for_pipeline_action("Saving Snowpipe findings")
+                    if session is not None:
+                        _queue_pipeline_findings(session, df_pipe, "Snowpipe")
 
     elif active_view == "Dynamic Tables":
         st.subheader("Dynamic Table Refresh Health")
@@ -482,9 +497,13 @@ def render():
         dyn_days = day_window_selectbox("Refresh lookback", key="pipe_dynamic_days", default=7)
         if st.button("Load Dynamic Tables", key="pipe_dynamic_load"):
             try:
-                df_dyn = _load_dynamic_table_inventory(session, company, dyn_days)
+                session = _get_session_for_pipeline_action("Loading dynamic tables")
+                if session is None:
+                    df_dyn = pd.DataFrame()
+                else:
+                    df_dyn = _load_dynamic_table_inventory(session, company, dyn_days)
                 st.session_state["pipe_dynamic_tables"] = _annotate_pipeline_routes(df_dyn, "Dynamic Table")
-                st.session_state["pipe_dynamic_source"] = "SHOW DYNAMIC TABLES + ACCOUNT_USAGE.DYNAMIC_TABLE_REFRESH_HISTORY"
+                st.session_state["pipe_dynamic_source"] = "Dynamic table inventory"
             except Exception as e:
                 st.info(f"Dynamic table data unavailable in this role/context: {format_snowflake_error(e)}")
                 st.session_state["pipe_dynamic_tables"] = pd.DataFrame()
@@ -519,4 +538,6 @@ def render():
                 )
                 download_csv(df_dyn, "pipeline_dynamic_tables.csv")
                 if int(bad_states.sum()) and st.button("Save dynamic table findings to Action Queue", key="pipe_dynamic_queue"):
-                    _queue_pipeline_findings(session, df_dyn[bad_states], "Dynamic Table")
+                    session = _get_session_for_pipeline_action("Saving dynamic table findings")
+                    if session is not None:
+                        _queue_pipeline_findings(session, df_dyn[bad_states], "Dynamic Table")

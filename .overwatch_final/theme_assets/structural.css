@@ -351,19 +351,28 @@ hr {
 }
 .stApp [data-baseweb="select"] input[role="combobox"],
 .stApp [data-baseweb="select"] input[aria-autocomplete="list"] {
-    caret-color: var(--accent) !important;
-    color: var(--text-input) !important;
-    -webkit-text-fill-color: var(--text-input) !important;
+    caret-color: transparent !important;
+    color: transparent !important;
+    -webkit-text-fill-color: transparent !important;
+    text-shadow: none !important;
     background: transparent !important;
     border: 0 !important;
     box-shadow: none !important;
     outline: 0 !important;
+    opacity: 0 !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    height: 1px !important;
+    min-height: 1px !important;
+    padding: 0 !important;
+    margin: 0 !important;
 }
 .stApp [data-baseweb="select"] input[role="combobox"]::selection,
 .stApp [data-baseweb="select"] input[aria-autocomplete="list"]::selection {
-    background: rgba(var(--accent-rgb), 0.24) !important;
-    color: var(--text-input) !important;
-    -webkit-text-fill-color: var(--text-input) !important;
+    background: transparent !important;
+    color: transparent !important;
+    -webkit-text-fill-color: transparent !important;
 }
 [data-testid="stSelectboxVirtualDropdown"],
 [data-baseweb="popover"]:has([data-testid="stSelectboxVirtualDropdown"]),

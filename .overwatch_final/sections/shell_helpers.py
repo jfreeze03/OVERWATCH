@@ -52,6 +52,11 @@ def _display_html(value: object) -> str:
     return _escape_markup(clean_display_text(value))
 
 
+def _daily_section_label(value: object) -> str:
+    text = clean_display_text(value)
+    return "Cost Intelligence" if text == "Cost & Contract" else text
+
+
 def render_escaped_bold_text(value: object, *, margin: str = ".15rem 0") -> None:
     """Render generated text in bold without letting Markdown parse underscores."""
     text = _display_html(value)
@@ -430,7 +435,7 @@ def render_section_first_paint_shell(spec: FirstPaintSummarySpec) -> None:
 
 def render_breadcrumb(parts: Sequence[object]) -> None:
     """Render a compact section hierarchy breadcrumb."""
-    visible = [clean_display_text(part) for part in parts or () if clean_display_text(part)]
+    visible = [_daily_section_label(part) for part in parts or () if clean_display_text(part)]
     if not visible:
         return
     body = '<span class="ow-breadcrumb-separator">&rsaquo;</span>'.join(

@@ -14,6 +14,14 @@ import math
 from utils.display_safety import safe_source_footer_items, scrub_daily_text
 
 
+def _section_label(value: object) -> str:
+    """Map canonical route names to daily display labels without changing routing."""
+    text = str(value or "").strip()
+    if text == "Cost & Contract":
+        return "Cost Intelligence"
+    return text
+
+
 def _value(item: object, *names: str, default: object = "") -> object:
     if isinstance(item, Mapping):
         for name in names:
@@ -57,7 +65,7 @@ def render_section_header(
     return (
         '<header class="ow-kit-section-header">'
         f'<span>{_safe(kicker)}</span>'
-        f'<h1>{_safe(section)}</h1>'
+        f'<h1>{_safe(_section_label(section))}</h1>'
         f'<strong>{_safe(workflow)}</strong>'
         f"{detail_html}"
         "</header>"
@@ -387,7 +395,7 @@ def render_command_brief(model: object) -> str:
     if not fixture_badge and bool(_value(model, "fixture_mode", default=False)):
         fixture_badge = "FIXTURE DATA"
     header = render_section_header(
-        _value(model, "section", default="Decision Workspace"),
+        _section_label(_value(model, "section", default="Decision Workspace")),
         _value(model, "workflow", default="Overview"),
         kicker="Decision Workspace",
         detail="",

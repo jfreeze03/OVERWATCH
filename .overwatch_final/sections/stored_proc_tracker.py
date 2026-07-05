@@ -26,6 +26,7 @@ from utils import (
     get_global_filter_clause,
     get_active_company,
     get_active_environment,
+    get_session_for_action,
     get_db_filter_clause,
     load_task_inventory,
     load_shared_procedure_inventory,
@@ -1344,7 +1345,6 @@ def _render_procedure_advisor_overview() -> None:
 
 
 def render():
-    session = get_session()
     credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()
 
@@ -1373,10 +1373,16 @@ def render():
     )
 
     if st.button("Load Procedure Advisor", key="sp_advisor_load", type="primary"):
-        with render_load_status("Loading procedure advisor", "Procedure advisor ready"):
-            load_errors = _load_full_procedure_advisor(session, company, sp_days, credit_price)
-        for error in load_errors:
-            st.info(error)
+        session = get_session_for_action(
+            "load procedure advisor evidence",
+            surface="Stored Procedure Advisor",
+            offline_note="Procedure controls remain available; advisor data loads after the connection is available.",
+        )
+        if session is not None:
+            with render_load_status("Loading procedure advisor", "Procedure advisor ready"):
+                load_errors = _load_full_procedure_advisor(session, company, sp_days, credit_price)
+            for error in load_errors:
+                st.info(error)
     _render_procedure_advisor_overview()
 
     with st.expander("Procedure Operations Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
@@ -1385,10 +1391,16 @@ def render():
             "and orphan/suspended-task risk."
         )
         if st.button("Load Procedure Operations", key="sp_ops_load"):
-            with render_load_status("Loading procedure operations", "Procedure operations ready"):
-                load_errors = _load_procedure_operations(session, company, sp_days)
-            for error in load_errors:
-                st.info(error)
+            session = get_session_for_action(
+                "load procedure operations evidence",
+                surface="Stored Procedure Advisor",
+                offline_note="Procedure controls remain available; operations data loads after the connection is available.",
+            )
+            if session is not None:
+                with render_load_status("Loading procedure operations", "Procedure operations ready"):
+                    load_errors = _load_procedure_operations(session, company, sp_days)
+                for error in load_errors:
+                    st.info(error)
 
         summary = st.session_state.get("sp_ops_summary")
         if summary:

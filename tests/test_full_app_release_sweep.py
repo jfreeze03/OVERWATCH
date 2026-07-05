@@ -433,6 +433,24 @@ def _passing_payload(root: Path) -> dict:
             "target_pushdown_violation_count": 0,
             "query_search_broad_autorun_count": 0,
         },
+        "artifacts/launch_readiness/summary_autoload_contract_gate_results.json": {
+            **passed_gate,
+            "summary_autoload_row_count": 1,
+            "summary_autoload_violation_count": 0,
+        },
+        "artifacts/launch_readiness/account_usage_query_audit_gate_results.json": {
+            **passed_gate,
+            "summary_path_account_usage_violation_count": 0,
+            "route_path_account_usage_violation_count": 0,
+            "cortex_union_duplicate_count": 0,
+            "repeated_users_join_count": 0,
+        },
+        "artifacts/launch_readiness/summary_mart_setup_gate_results.json": {
+            **passed_gate,
+            "summary_mart_count": 8,
+            "missing_source_family_count": 0,
+            "select_star_count": 0,
+        },
         "artifacts/launch_readiness/targeted_evidence_sql_pushdown_gate_results.json": {
             **passed_gate,
             "target_pushdown_violation_count": 0,
@@ -639,6 +657,18 @@ class FullAppReleaseSweepTests(unittest.TestCase):
 
         self.assertFalse(results["passed"])
         self.assertEqual(results["cost_overview_autoload_violation_count"], 1)
+
+    def test_missing_summary_autoload_contract_gate_blocks_release_sweep(self):
+        from tools.contracts.full_app_release_sweep import build_full_app_release_sweep
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = _passing_payload(root)
+            payload.pop("artifacts/launch_readiness/summary_autoload_contract_gate_results.json")
+            results, _failures = build_full_app_release_sweep(payload, current_commit=TEST_COMMIT, root=root)
+
+        self.assertFalse(results["passed"])
+        self.assertTrue(any(row["area"] == "summary_autoload_contract" for row in results["rows"]))
 
     def test_raw_source_token_in_daily_surface_fails(self):
         from tools.contracts.full_app_release_sweep import build_full_app_release_sweep

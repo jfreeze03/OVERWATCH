@@ -18,7 +18,13 @@ if str(ROOT) not in sys.path:
 class FullAppRuntimeValidationTests(unittest.TestCase):
     def _assert_runtime_proof_source(self, rel: str) -> None:
         payload = json.loads((ROOT / rel).read_text(encoding="utf-8"))
-        allowed = {"runtime_render", "runtime_click", "runtime_export", "runtime_stress"}
+        allowed = {
+            "runtime_render",
+            "runtime_click",
+            "runtime_export",
+            "runtime_stress",
+            "runtime_state",
+        }
         if isinstance(payload, list):
             self.assertTrue(payload, rel)
             for row in payload:
@@ -47,6 +53,23 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         ):
             with self.subTest(module=module_name):
                 self.assertIsNotNone(importlib.import_module(module_name))
+
+    def test_section_summary_autoload_harness_event_is_packet_backed_and_bounded(self):
+        from tools.contracts.full_app_runtime_validation import _harness_section_summary_autoload_event
+
+        row = _harness_section_summary_autoload_event(
+            section="Cost & Contract",
+            workflow="Cost Overview",
+            html="<section class='ow-kit-command-brief'><h1>Cost overview</h1></section>",
+            packet_query_count=1,
+        )
+
+        self.assertEqual(row["event_type"], "section_summary_autoload")
+        self.assertEqual(row["execution_boundary"], "section_summary_autoload")
+        self.assertTrue(row["user_initiated"])
+        self.assertEqual(row["query_count_delta"], 0)
+        self.assertEqual(row["max_rows"], 200)
+        self.assertTrue(row["passed"], row.get("failure_reason"))
 
     def test_full_app_validation_artifacts_cover_current_surface_from_runtime_clicks(self):
         from route_registry import PRIMARY_SECTION_TITLES, SECTION_WORKFLOW_CONTRACT
@@ -83,6 +106,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             "artifacts/full_app_validation/forbidden_export_scan.json",
             "artifacts/full_app_validation/query_budget_results.json",
             "artifacts/full_app_validation/query_budget_violation_results.json",
+            "artifacts/full_app_validation/source_runtime_event_ledger_results.json",
             "artifacts/full_app_validation/cost_overview_no_autoload_results.json",
             "artifacts/full_app_validation/session_direct_sql_results.json",
             "artifacts/full_app_validation/query_search_results.json",
@@ -117,6 +141,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         connection_policy = json.loads((ROOT / "artifacts/full_app_validation/connection_policy_results.json").read_text())
         fallback_render = json.loads((ROOT / "artifacts/full_app_validation/fallback_render_results.json").read_text())
         cost_no_autoload = json.loads((ROOT / "artifacts/full_app_validation/cost_overview_no_autoload_results.json").read_text())
+        source_runtime = json.loads((ROOT / "artifacts/full_app_validation/source_runtime_event_ledger_results.json").read_text())
 
         for rel in required:
             self._assert_runtime_proof_source(rel)
@@ -146,6 +171,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertTrue(fallback_render["passed"], fallback_render)
         self.assertTrue(cost_no_autoload["passed"], cost_no_autoload)
         self.assertEqual(cost_no_autoload["cost_overview_autoload_violation_count"], 0, cost_no_autoload)
+        self.assertGreater(source_runtime.get("section_summary_autoload_source_event_count", 0), 0, source_runtime)
         self.assertGreaterEqual(connection_policy["row_count"], len(PRIMARY_SECTION_TITLES) + 1)
         self.assertGreaterEqual(fallback_render["row_count"], len(PRIMARY_SECTION_TITLES) * 4 + 1)
         unknown_policy = next(row for row in connection_policy["rows"] if row["section"] == "Unknown Experimental Surface")

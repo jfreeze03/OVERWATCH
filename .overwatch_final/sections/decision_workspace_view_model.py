@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Mapping, Sequence
+import math
+from typing import Any, Mapping, Sequence, cast
 
 from sections.metric_semantic_registry import MetricSemantic, get_metric_semantic
 from utils.display_safety import contains_raw_source_token, safe_source_label, scrub_daily_text
@@ -122,8 +123,11 @@ class DecisionWorkspaceViewModel:
 
 
 def _compact_number(value: float, *, decimals: int = 1) -> str:
-    sign = "-" if value < 0 else ""
-    value = abs(float(value))
+    numeric = _finite_float(value)
+    if numeric is None:
+        return "Unavailable"
+    sign = "-" if numeric < 0 else ""
+    value = abs(numeric)
     if value >= 1_000_000_000:
         return f"{sign}{value / 1_000_000_000:.{decimals}f}B"
     if value >= 1_000_000:
@@ -135,13 +139,26 @@ def _compact_number(value: float, *, decimals: int = 1) -> str:
     return f"{sign}{value:.{decimals}f}"
 
 
+def _finite_float(value: object) -> float | None:
+    try:
+        numeric = float(cast(Any, value))
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) else None
+
+
+def _finite_int(value: object, default: int = 0) -> int:
+    numeric = _finite_float(value)
+    return int(round(numeric)) if numeric is not None else int(default)
+
+
 def format_metric_value(
     metric: object,
     *,
     metric_format: str | None = None,
     value_unit: str | None = None,
 ) -> str:
-    numeric = getattr(metric, "numeric_value", None)
+    numeric = _finite_float(getattr(metric, "numeric_value", None))
     fmt = str(metric_format if metric_format is not None else getattr(metric, "metric_format", "") or "").strip().lower()
     unit = str(value_unit if value_unit is not None else getattr(metric, "unit", "") or "").strip()
     if numeric is None:
@@ -151,23 +168,22 @@ def format_metric_value(
             or "Unavailable"
         )
     if fmt in {"currency", "compact_currency"}:
-        return f"${_compact_number(float(numeric))}"
+        return f"${_compact_number(numeric)}"
     if fmt in {"percentage", "percent"}:
-        return f"{float(numeric):.1f}%"
+        return f"{numeric:.1f}%"
     if fmt in {"integer", "count"}:
-        return _compact_number(float(numeric), decimals=0)
+        return _compact_number(numeric, decimals=0)
     if fmt == "duration":
-        numeric = float(numeric)
         if numeric >= 3600:
             return f"{numeric / 3600:.1f}h"
         if numeric >= 60:
             return f"{numeric / 60:.1f}m"
         return f"{numeric:.0f}s"
     if fmt == "credits":
-        return f"{_compact_number(float(numeric))} credits"
+        return f"{_compact_number(numeric)} credits"
     if unit:
-        return f"{_compact_number(float(numeric))} {unit}"
-    return _compact_number(float(numeric))
+        return f"{_compact_number(numeric)} {unit}"
+    return _compact_number(numeric)
 
 
 _SOURCE_LABEL_OVERRIDES: dict[str, str] = {
@@ -235,14 +251,14 @@ def _friendly_gap_reason(gap_reason: str, *, required: bool) -> str:
 
 
 def _delta_label(metric: object) -> str:
-    delta_percent = getattr(metric, "delta_percent", None)
+    delta_percent = _finite_float(getattr(metric, "delta_percent", None))
     if delta_percent is not None:
-        sign = "+" if float(delta_percent) >= 0 else ""
-        return f"{sign}{float(delta_percent):.1f}%"
-    delta_numeric = getattr(metric, "delta_numeric_value", None)
+        sign = "+" if delta_percent >= 0 else ""
+        return f"{sign}{delta_percent:.1f}%"
+    delta_numeric = _finite_float(getattr(metric, "delta_numeric_value", None))
     if delta_numeric is not None:
-        sign = "+" if float(delta_numeric) >= 0 else ""
-        return f"{sign}{_compact_number(float(delta_numeric))}"
+        sign = "+" if delta_numeric >= 0 else ""
+        return f"{sign}{_compact_number(delta_numeric)}"
     return str(getattr(metric, "trend", "") or getattr(metric, "detail", "") or "")
 
 
@@ -258,13 +274,7 @@ def _preferred_metrics(section: str) -> tuple[str, ...]:
 
 
 def _metric_numeric(metric: object) -> float | None:
-    numeric = getattr(metric, "numeric_value", None)
-    if numeric is None:
-        return None
-    try:
-        return float(numeric)
-    except (TypeError, ValueError):
-        return None
+    return _finite_float(getattr(metric, "numeric_value", None))
 
 
 def _metric_availability_state(metric: object, semantic: MetricSemantic | None, outlier_reason: str = "") -> str:
@@ -308,7 +318,7 @@ def _to_metric_cell(section: str, metric: object) -> DecisionMetricCell:
         available=metric_available,
         availability_state=availability_state,
         trend_period=str(getattr(metric, "trend_period", "") or ""),
-        trend_point_count=int(getattr(metric, "trend_point_count", 0) or len(trend_points)),
+        trend_point_count=_finite_int(getattr(metric, "trend_point_count", None), len(trend_points)),
         trend_quality=str(getattr(metric, "trend_quality", "") or ("complete" if len(trend_points) >= 7 else "")),
         zero_fill_policy=str(getattr(metric, "zero_fill_policy", "") or ""),
     )
@@ -339,7 +349,7 @@ def _state_token(brief: object, source_mode: str) -> str:
     if bool(getattr(brief, "fallback_reason", "")) and not tuple(getattr(brief, "metrics", ()) or ()):
         raw = getattr(brief, "raw_payload", {}) or {}
         return "offline" if isinstance(raw, dict) and raw.get("offline") else "uninitialized"
-    if int(getattr(brief, "missing_source_count", 0) or 0):
+    if _finite_int(getattr(brief, "missing_source_count", 0), 0):
         return "data-gap"
     if bool(getattr(brief, "stale", False)):
         return "stale"
@@ -356,7 +366,7 @@ def _state_token(brief: object, source_mode: str) -> str:
 def _state_label(brief: object, source_mode: str) -> str:
     if source_mode == "fixture":
         return "FIXTURE DATA"
-    if int(getattr(brief, "missing_source_count", 0) or 0):
+    if _finite_int(getattr(brief, "missing_source_count", 0), 0):
         return "DATA GAP"
     if bool(getattr(brief, "stale", False)):
         return "STALE"
@@ -392,11 +402,12 @@ def _trend_quality_label(metrics: Sequence[object]) -> str:
 
 def _trust_view(brief: object, source_mode: str) -> DecisionTrustView:
     freshness_minutes = getattr(brief, "freshness_minutes", None)
-    if freshness_minutes is None:
+    freshness_numeric = _finite_float(freshness_minutes)
+    if freshness_numeric is None:
         age = "Freshness unavailable"
     else:
-        age = f"Updated {int(round(float(freshness_minutes)))}m ago"
-    target = getattr(brief, "target_freshness_minutes", 0) or 0
+        age = f"Updated {_finite_int(freshness_numeric)}m ago"
+    target = _finite_float(getattr(brief, "target_freshness_minutes", 0))
     coverage = "Sources tracked"
     if getattr(brief, "required_source_count", 0):
         coverage = f"{getattr(brief, 'available_source_count', 0)}/{getattr(brief, 'required_source_count', 0)} required sources"
@@ -413,7 +424,7 @@ def _trust_view(brief: object, source_mode: str) -> DecisionTrustView:
         summary=summary,
         mode_label=mode_label,
         freshness_label=age,
-        target_label=f"Target freshness: {int(target)}m" if target else "Target freshness set",
+        target_label=f"Target freshness: {_finite_int(target)}m" if target else "Target freshness set",
         coverage_label=coverage,
         quality_label=quality,
         fixture_badge=source_mode == "fixture",
@@ -434,6 +445,8 @@ def _source_rows(brief: object) -> tuple[DecisionSourceRow, ...]:
             status = "Unavailable"
         age = getattr(source, "age_minutes", None)
         target = getattr(source, "target_freshness_minutes", None)
+        age_numeric = _finite_float(age)
+        target_numeric = _finite_float(target)
         source_key = str(getattr(source, "source_key", "") or "source")
         rows.append(
             DecisionSourceRow(
@@ -441,8 +454,8 @@ def _source_rows(brief: object) -> tuple[DecisionSourceRow, ...]:
                 source_object=_friendly_source_label(source_key),
                 status=status,
                 required=bool(getattr(source, "required", False)),
-                age_label="unknown age" if age is None else f"{int(round(float(age)))}m old",
-                target_label="" if target is None else f"target {int(float(target))}m",
+                age_label="unknown age" if age_numeric is None else f"{_finite_int(age_numeric)}m old",
+                target_label="" if target_numeric is None else f"target {_finite_int(target_numeric)}m",
                 confidence=str(getattr(source, "confidence", "") or getattr(brief, "confidence", "") or ""),
                 supports_environment=bool(getattr(source, "supports_environment", False)),
                 environment_scope_label=_environment_scope_label(
@@ -547,8 +560,9 @@ def _format_compact_ts_label(prefix: str, value: object) -> str:
 
 def _first_seen_label(signal: object) -> str:
     age = getattr(signal, "age_minutes", None)
-    if age is not None:
-        minutes = max(int(round(float(age))), 0)
+    age_numeric = _finite_float(age)
+    if age_numeric is not None:
+        minutes = max(_finite_int(age_numeric), 0)
         if minutes >= 1440:
             return f"Seen {minutes // 1440}d ago"
         if minutes >= 60:

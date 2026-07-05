@@ -65,6 +65,14 @@ from tools.contracts.query_search_autorun import (
     QUERY_SEARCH_AUTORUN_RESULTS_REL,
     write_query_search_autorun_artifacts,
 )
+from tools.contracts.account_usage_query_audit import (
+    ACCOUNT_USAGE_QUERY_AUDIT_RESULTS_REL,
+    write_account_usage_query_audit_artifacts,
+)
+from tools.contracts.summary_mart_setup import (
+    SUMMARY_MART_SETUP_FULL_APP_REL,
+    write_summary_mart_setup_artifacts,
+)
 from tools.contracts.render_provenance_reconciliation import (
     RENDER_PROVENANCE_RECONCILIATION_GATE_REL,
     RENDER_PROVENANCE_RECONCILIATION_REL,
@@ -125,6 +133,8 @@ REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
     ACCESS_CONTROL_RUNTIME_RESULTS_REL,
     TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL,
     QUERY_SEARCH_AUTORUN_RESULTS_REL,
+    ACCOUNT_USAGE_QUERY_AUDIT_RESULTS_REL,
+    SUMMARY_MART_SETUP_FULL_APP_REL,
     "artifacts/full_app_validation/connection_policy_results.json",
     "artifacts/full_app_validation/fallback_render_results.json",
     "artifacts/full_app_validation/summary_board_results.json",
@@ -1315,6 +1325,16 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
         for rel, payload in write_query_search_autorun_artifacts(root_path).items()
         if rel.startswith("artifacts/full_app_validation/")
     }
+    account_usage_query_audit_artifacts = {
+        rel: payload
+        for rel, payload in write_account_usage_query_audit_artifacts(root_path).items()
+        if rel.startswith("artifacts/full_app_validation/")
+    }
+    summary_mart_setup_artifacts = {
+        rel: payload
+        for rel, payload in write_summary_mart_setup_artifacts(root_path).items()
+        if rel.startswith("artifacts/full_app_validation/")
+    }
     runtime_provenance_artifacts = write_runtime_artifact_provenance_artifacts(root_path)
     render_provenance_artifacts = write_render_provenance_reconciliation_artifacts(root_path)
     ui_kit_alignment_artifacts = {
@@ -1347,6 +1367,8 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
         **access_control_runtime_artifacts,
         **targeted_evidence_sql_pushdown_artifacts,
         **query_search_autorun_artifacts,
+        **account_usage_query_audit_artifacts,
+        **summary_mart_setup_artifacts,
         **runtime_provenance_artifacts,
         **render_provenance_artifacts,
         **ui_kit_alignment_artifacts,
@@ -1391,6 +1413,8 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             *ARCHITECTURE_FULL_APP_VALIDATION_ARTIFACTS,
             TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL,
             QUERY_SEARCH_AUTORUN_RESULTS_REL,
+            ACCOUNT_USAGE_QUERY_AUDIT_RESULTS_REL,
+            SUMMARY_MART_SETUP_FULL_APP_REL,
             RUNTIME_ARTIFACT_PROVENANCE_REL,
             RUNTIME_ARTIFACT_PROVENANCE_GATE_REL,
             RENDER_PROVENANCE_RECONCILIATION_REL,
@@ -1452,6 +1476,8 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             *ARCHITECTURE_FULL_APP_VALIDATION_ARTIFACTS,
             TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL,
             QUERY_SEARCH_AUTORUN_RESULTS_REL,
+            ACCOUNT_USAGE_QUERY_AUDIT_RESULTS_REL,
+            SUMMARY_MART_SETUP_FULL_APP_REL,
             RUNTIME_ARTIFACT_PROVENANCE_REL,
             RUNTIME_ARTIFACT_PROVENANCE_GATE_REL,
             RENDER_PROVENANCE_RECONCILIATION_REL,

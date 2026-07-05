@@ -371,6 +371,30 @@ PIPELINE_TASK_FOCUS = "Failed Tasks"
 PIPELINE_STORED_PROC_FOCUS = "Failed Procedures"
 PIPELINE_LOAD_FOCUS = "Load Issues & SLA"
 _LEGACY_TRIAGE_FOCUS_KEY = "workload_operations_triage_focus"
+QUERY_INVESTIGATION_LENS_KEY = "workload_query_lens"
+QUERY_ANALYSIS_ACTIVE_VIEW_KEY = "query_analysis_active_view"
+QUERY_ANALYSIS_EMBEDDED_LENS_KEY = "query_analysis_embedded_single_lens"
+QUERY_INVESTIGATION_LENS_OPTIONS = (
+    "History Search",
+    "Detailed Diagnosis",
+    "Bottlenecks",
+    "Pattern Degradation",
+    "Root-Cause Brief",
+    "Plan Steps",
+    "AI Diagnosis",
+)
+QUERY_INVESTIGATION_LENS_LABELS = {
+    "Bottlenecks": "Top SQL",
+}
+QUERY_INVESTIGATION_LENS_ALIASES = {
+    "Query Search": "History Search",
+    "Query Search & History": "History Search",
+    "History search": "History Search",
+    "Top SQL": "Bottlenecks",
+    "Patterns": "Pattern Degradation",
+    "User / Role": "History Search",
+    "Warehouse": "History Search",
+}
 
 WORKFLOWS = (
     WORKLOAD_OVERVIEW_WORKFLOW,
@@ -498,6 +522,22 @@ LEGACY_WORKFLOW_MAP = {
 }
 
 
+def query_analysis_view_for_workload_lens(value: object) -> str:
+    """Return the concrete Query Analysis pane for a Workload Query Investigation lens."""
+    text = str(value or "").strip()
+    canonical = QUERY_INVESTIGATION_LENS_ALIASES.get(text, text)
+    if canonical in QUERY_INVESTIGATION_LENS_OPTIONS:
+        return canonical
+    return "History Search"
+
+
+def _normalize_query_investigation_state() -> None:
+    lens = query_analysis_view_for_workload_lens(st.session_state.get(QUERY_INVESTIGATION_LENS_KEY))
+    view = query_analysis_view_for_workload_lens(st.session_state.get(QUERY_ANALYSIS_ACTIVE_VIEW_KEY))
+    set_state(QUERY_INVESTIGATION_LENS_KEY, lens)
+    set_state(QUERY_ANALYSIS_ACTIVE_VIEW_KEY, view)
+
+
 def _apply_fast_entry_default() -> None:
     """Keep first navigation fast after older sessions auto-opened live triage."""
     st.session_state.pop(WORKLOAD_OPERATIONS_EXPLICIT_WORKFLOW_KEY, None)
@@ -575,23 +615,23 @@ def _render_workload_overview(company: str, environment: str) -> None:
 
 
 def _render_query_investigation_surface() -> None:
+    _normalize_query_investigation_state()
     query_lens = render_secondary_lens_pills(
         label="Query Investigation lens",
-        options=("History Search", "Detailed Diagnosis", "Top SQL", "User / Role", "Warehouse"),
-        active_value=st.session_state.get("workload_query_lens", "History Search"),
-        key="workload_query_lens",
+        options=QUERY_INVESTIGATION_LENS_OPTIONS,
+        active_value=st.session_state.get(QUERY_INVESTIGATION_LENS_KEY, "History Search"),
+        key=QUERY_INVESTIGATION_LENS_KEY,
+        format_func=lambda value: QUERY_INVESTIGATION_LENS_LABELS.get(str(value), str(value)),
     )
-    query_view_map = {
-        "History Search": "Query Search",
-        "Detailed Diagnosis": "Detailed Diagnosis",
-        "Top SQL": "Patterns",
-        "User / Role": "User / Role",
-        "Warehouse": "Warehouse",
-    }
-    st.session_state["query_analysis_active_view"] = query_view_map.get(str(query_lens), "AI Diagnosis")
+    st.session_state[QUERY_ANALYSIS_ACTIVE_VIEW_KEY] = query_analysis_view_for_workload_lens(query_lens)
+    st.session_state[QUERY_ANALYSIS_EMBEDDED_LENS_KEY] = True
     if st.session_state.pop("workload_query_diagnosis_mode", "") == "Detailed diagnosis":
-        st.session_state["query_analysis_active_view"] = "Detailed Diagnosis"
-    render_workflow_module(QUERY_INVESTIGATION_WORKFLOW, WORKFLOW_MODULES)
+        st.session_state[QUERY_INVESTIGATION_LENS_KEY] = "Detailed Diagnosis"
+        st.session_state[QUERY_ANALYSIS_ACTIVE_VIEW_KEY] = "Detailed Diagnosis"
+    try:
+        render_workflow_module(QUERY_INVESTIGATION_WORKFLOW, WORKFLOW_MODULES)
+    finally:
+        st.session_state.pop(QUERY_ANALYSIS_EMBEDDED_LENS_KEY, None)
 
 
 def _render_pipeline_task_health_surface() -> None:

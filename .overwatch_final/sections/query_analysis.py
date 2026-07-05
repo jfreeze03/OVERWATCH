@@ -7,7 +7,7 @@ from sections.shell_helpers import render_shell_snapshot
 from utils import (
     defer_source_note,
     day_window_selectbox,
-    get_session, run_query, sql_literal,
+    get_session_for_action, run_query, sql_literal,
     format_credits, download_csv,
     render_query_drilldown, build_metered_credit_cte, get_active_company, get_global_filter_clause,
     render_priority_dataframe,
@@ -31,6 +31,24 @@ QUERY_ANALYSIS_PANES = (
     "History Search",
     "AI Diagnosis",
 )
+QUERY_ANALYSIS_EMBEDDED_LENS_KEY = "query_analysis_embedded_single_lens"
+QUERY_ANALYSIS_PANE_ALIASES = {
+    "Query Search": "History Search",
+    "Query Search & History": "History Search",
+    "History search": "History Search",
+    "Top SQL": "Bottlenecks",
+    "Patterns": "Pattern Degradation",
+    "User / Role": "History Search",
+    "Warehouse": "History Search",
+}
+
+
+def _coerce_query_analysis_view(value: object) -> str:
+    text = str(value or "").strip()
+    canonical = QUERY_ANALYSIS_PANE_ALIASES.get(text, text)
+    if canonical in QUERY_ANALYSIS_PANES:
+        return canonical
+    return QUERY_ANALYSIS_PANES[0]
 
 
 def _annotate_bottleneck_routes(df):
@@ -668,17 +686,39 @@ def _render_ai_evidence_snapshot(evidence: dict) -> None:
 
 
 def render():
-    session = get_session()
+    session = None
     company = get_active_company()
     qh_exprs = None
+
+    def _action_session(action: str = "load query investigation telemetry"):
+        nonlocal session
+        if session is None:
+            session = get_session_for_action(
+                action,
+                surface="Workload Operations / Query Investigation",
+                offline_note="Query Investigation controls remain available; load telemetry after the connection is ready.",
+            )
+        return session
 
     def _query_history_exprs() -> dict[str, str]:
         nonlocal qh_exprs
         if qh_exprs is not None:
             return qh_exprs
+        action_session = _action_session("inspect query history columns")
+        if action_session is None:
+            qh_exprs = {
+                "wh_size_expr": "NULL::VARCHAR AS warehouse_size",
+                "queued_expr": "0::FLOAT AS queued_sec",
+                "blocked_expr": "0::FLOAT AS blocked_sec",
+                "gb_expr": "0::FLOAT AS gb_scanned",
+                "spill_expr": "0::FLOAT AS remote_spill_gb",
+                "partition_expr": "0::FLOAT AS partition_pct",
+                "rows_expr": "0::NUMBER AS rows_produced",
+            }
+            return qh_exprs
         try:
             qh_cols = set(filter_existing_columns(
-                session,
+                action_session,
                 "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
                 [
                     "WAREHOUSE_SIZE",
@@ -714,13 +754,17 @@ def render():
         }
         return qh_exprs
 
-    active_view = render_workflow_selector(
-        "Query analysis view",
-        "query_analysis_active_view",
-        QUERY_ANALYSIS_PANES,
-        columns=3,
-        show_label=True,
-    )
+    if st.session_state.get(QUERY_ANALYSIS_EMBEDDED_LENS_KEY):
+        active_view = _coerce_query_analysis_view(st.session_state.get("query_analysis_active_view"))
+        st.session_state["query_analysis_active_view"] = active_view
+    else:
+        active_view = render_workflow_selector(
+            "Query analysis view",
+            "query_analysis_active_view",
+            QUERY_ANALYSIS_PANES,
+            columns=3,
+            show_label=True,
+        )
 
     # Bottlenecks
     if active_view == "Bottlenecks":
@@ -952,6 +996,8 @@ def render():
         if load_query_evidence:
             with render_load_status("Loading AI query telemetry", "AI query telemetry ready"):
                 try:
+                    if _action_session("load AI query telemetry") is None:
+                        return
                     query_key = _safe_query_key(qid_input)
                     df_evidence = run_query(
                         _build_ai_query_history_sql(qid_input, _query_history_exprs()),
@@ -1060,6 +1106,9 @@ def render():
         if diagnose_with_cortex:
             with render_load_status("Running Cortex query analysis", "Cortex query analysis ready"):
                 try:
+                    action_session = _action_session("run Cortex query analysis")
+                    if action_session is None:
+                        return
                     prompt = _build_ai_query_diagnosis_prompt(
                         query_text,
                         evidence,
@@ -1067,7 +1116,7 @@ def render():
                         _summarize_operator_stats(operator_stats),
                     )
                     answer = run_cortex_completion(
-                        session,
+                        action_session,
                         prompt,
                         alias="ANSWER",
                         prompt_limit=8000,

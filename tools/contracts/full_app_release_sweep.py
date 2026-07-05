@@ -1186,6 +1186,9 @@ def build_full_app_release_sweep(
         ("access_control_runtime", "access_control_runtime_gate_results"),
         ("import_laziness_gate", "import_laziness_gate_results"),
         ("performance_budget_gate", "performance_budget_gate_results"),
+        ("summary_autoload_contract", "summary_autoload_contract_gate_results"),
+        ("account_usage_query_audit", "account_usage_query_audit_gate_results"),
+        ("summary_mart_setup", "summary_mart_setup_gate_results"),
         ("cost_overview_no_autoload", "cost_overview_no_autoload_gate_results"),
         ("targeted_evidence_sql_pushdown", "targeted_evidence_sql_pushdown_gate_results"),
         ("query_search_autorun", "query_search_autorun_gate_results"),
@@ -1297,6 +1300,8 @@ def build_full_app_release_sweep(
     import_laziness_gate = _gate(payloads, "import_laziness_gate_results")
     cortex_live_gate = _gate(payloads, "cortex_token_efficiency_live_gate_results")
     performance_budget_gate = _gate(payloads, "performance_budget_gate_results")
+    account_usage_query_audit_gate = _gate(payloads, "account_usage_query_audit_gate_results")
+    summary_mart_setup_gate = _gate(payloads, "summary_mart_setup_gate_results")
     access_control_runtime_gate = _gate(payloads, "access_control_runtime_gate_results")
     targeted_evidence_sql_pushdown_gate = _gate(payloads, "targeted_evidence_sql_pushdown_gate_results")
     query_search_autorun_gate = _gate(payloads, "query_search_autorun_gate_results")
@@ -1456,6 +1461,19 @@ def build_full_app_release_sweep(
         "setup_migration_live_passed": bool(
             snowflake_cli_gate.get("setup_migration_live_passed") or setup_migration_gate.get("passed")
         ),
+        "account_usage_query_audit_passed": bool(account_usage_query_audit_gate.get("passed")),
+        "account_usage_query_audit_failure_count": _as_int(account_usage_query_audit_gate.get("failure_count")),
+        "summary_path_account_usage_violation_count": _as_int(
+            account_usage_query_audit_gate.get("summary_path_account_usage_violation_count")
+        ),
+        "route_path_account_usage_violation_count": _as_int(
+            account_usage_query_audit_gate.get("route_path_account_usage_violation_count")
+        ),
+        "cortex_union_duplicate_count": _as_int(account_usage_query_audit_gate.get("cortex_union_duplicate_count")),
+        "repeated_users_join_count": _as_int(account_usage_query_audit_gate.get("repeated_users_join_count")),
+        "summary_mart_setup_passed": bool(summary_mart_setup_gate.get("passed")),
+        "summary_mart_setup_failure_count": _as_int(summary_mart_setup_gate.get("failure_count")),
+        "summary_mart_count": _as_int(summary_mart_setup_gate.get("summary_mart_count")),
         "snowflake_object_drift_passed": bool(object_drift_gate.get("passed")),
         "post_deploy_smoke_passed": bool(post_deploy_smoke_gate.get("passed")),
         "temp_sql_file_leftover_count": _as_int(

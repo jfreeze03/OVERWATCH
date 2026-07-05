@@ -219,6 +219,7 @@ def _source_runtime_event_ledger_artifact(**overrides):
         "event_count": 6,
         "first_paint_source_event_count": 6,
         "decision_packet_source_event_count": 6,
+        "section_summary_autoload_source_event_count": 1,
         "session_open_count": 0,
         "active_session_probe_count": 0,
         "direct_sql_count": 0,
@@ -229,6 +230,24 @@ def _source_runtime_event_ledger_artifact(**overrides):
                 "commit_sha": commit_sha,
                 "producer": "runtime_state",
                 "producer_signature": "runtime_state::row",
+                "passed": True,
+                "raw_sql_included": False,
+            },
+            {
+                "id": "source_runtime_event::section_summary_autoload",
+                "commit_sha": commit_sha,
+                "producer": "runtime_state",
+                "producer_signature": "runtime_state::row",
+                "event_type": "section_summary_autoload",
+                "execution_boundary": "section_summary_autoload",
+                "section": "Cost & Contract",
+                "workflow": "Cost Overview",
+                "query_tier": "section_summary",
+                "ttl_key": "section_summary_cost_current_summary",
+                "query_count_delta": 1,
+                "max_rows": 200,
+                "row_count": 12,
+                "user_initiated": True,
                 "passed": True,
                 "raw_sql_included": False,
             }
@@ -310,6 +329,106 @@ class PerformanceBudgetGateTests(unittest.TestCase):
         reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
         self.assertIn("route action", reasons)
         self.assertIn("no-click", reasons)
+
+    def test_section_summary_autoload_budget_passes_when_user_initiated_and_bounded(self):
+        from tools.contracts.performance_budget_gate import PRIMARY_SECTIONS, evaluate_performance_budget_gate
+
+        gate = evaluate_performance_budget_gate(
+            {"rows": [_first_paint_row(section) for section in PRIMARY_SECTIONS]},
+            {
+                "rows": [
+                    {
+                        "section": "Cost & Contract",
+                        "workflow": "Cost Overview",
+                        "boundary": "section_summary_autoload",
+                        "query_count": 1,
+                        "max_rows": 200,
+                        "user_initiated": True,
+                        "before_first_paint": False,
+                        "account_usage_count": 0,
+                        "direct_sql_count": 0,
+                    }
+                ]
+            },
+            **_support_kwargs(),
+        )
+
+        self.assertTrue(gate["passed"], gate.get("failures"))
+
+    def test_section_summary_autoload_requires_user_navigation_context(self):
+        from tools.contracts.performance_budget_gate import evaluate_performance_budget_gate
+
+        gate = evaluate_performance_budget_gate(
+            {"rows": []},
+            {
+                "rows": [
+                    {
+                        "section": "Cost & Contract",
+                        "workflow": "Cost Overview",
+                        "boundary": "section_summary_autoload",
+                        "query_count": 1,
+                        "max_rows": 200,
+                        "user_initiated": False,
+                    }
+                ]
+            },
+            **_support_kwargs(),
+        )
+
+        self.assertFalse(gate["passed"])
+        reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
+        self.assertIn("user-initiated navigation", reasons)
+
+    def test_section_summary_autoload_blocks_account_usage_and_oversized_rows(self):
+        from tools.contracts.performance_budget_gate import evaluate_performance_budget_gate
+
+        gate = evaluate_performance_budget_gate(
+            {"rows": []},
+            {
+                "rows": [
+                    {
+                        "section": "Security Monitoring",
+                        "workflow": "Security Overview",
+                        "boundary": "section_summary_autoload",
+                        "query_count": 1,
+                        "max_rows": 201,
+                        "user_initiated": True,
+                        "account_usage_count": 1,
+                    }
+                ]
+            },
+            **_support_kwargs(),
+        )
+
+        self.assertFalse(gate["passed"])
+        reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
+        self.assertIn("row cap", reasons)
+        self.assertIn("Account Usage", reasons)
+
+    def test_section_summary_autoload_cannot_run_during_first_paint(self):
+        from tools.contracts.performance_budget_gate import evaluate_performance_budget_gate
+
+        gate = evaluate_performance_budget_gate(
+            {"rows": []},
+            {
+                "rows": [
+                    {
+                        "section": "DBA Control Room",
+                        "workflow": "Overview",
+                        "boundary": "section_summary_autoload",
+                        "query_count": 1,
+                        "max_rows": 200,
+                        "user_initiated": True,
+                        "before_first_paint": True,
+                    }
+                ]
+            },
+            **_support_kwargs(),
+        )
+
+        self.assertFalse(gate["passed"])
+        reasons = " ".join(str(row.get("failure_reason")) for row in gate["failures"])
+        self.assertIn("first paint", reasons)
 
     def test_missing_first_paint_rows_fail(self):
         from tools.contracts.performance_budget_gate import evaluate_performance_budget_gate

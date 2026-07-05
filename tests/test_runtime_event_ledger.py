@@ -16,6 +16,7 @@ from tools.contracts.runtime_event_ledger import (
     RUNTIME_EVENT_LEDGER_GATE_REL,
     SOURCE_RUNTIME_EVENT_LEDGER_REL,
     build_runtime_event_ledger_results,
+    build_source_runtime_event_ledger_payload,
     write_runtime_event_ledger_artifacts,
 )
 
@@ -155,6 +156,34 @@ class RuntimeEventLedgerTests(unittest.TestCase):
             }
             for section in PRIMARY_SECTIONS
         ]
+        source_rows.append(
+            {
+                "event_id": "source-summary-cost",
+                "event_type": "section_summary_autoload",
+                "section": "Cost & Contract",
+                "workflow": "Cost Overview",
+                "execution_boundary": "section_summary_autoload",
+                "query_tier": "section_summary",
+                "ttl_key": "section_summary_cost_current_summary",
+                "query_count_delta": 1,
+                "session_open_count_delta": 0,
+                "direct_sql_count_delta": 0,
+                "account_usage_count_delta": 0,
+                "metadata_probe_count_delta": 0,
+                "max_rows": 200,
+                "row_count": 12,
+                "before_first_paint": False,
+                "after_first_paint": True,
+                "user_initiated": True,
+                "account_usage_marker_present": False,
+                "evidence_loader_marker_present": False,
+                "source_object_marker_present": False,
+                "producer": "runtime_state",
+                "producer_signature": "sig",
+                "commit_sha": self.commit,
+                "raw_sql_included": False,
+            }
+        )
         self._write_json(
             root,
             SOURCE_RUNTIME_EVENT_LEDGER_REL,
@@ -167,6 +196,7 @@ class RuntimeEventLedgerTests(unittest.TestCase):
                 "event_count": len(source_rows),
                 "first_paint_source_event_count": len(source_rows),
                 "decision_packet_source_event_count": len(source_rows),
+                "section_summary_autoload_source_event_count": 1,
                 "raw_sql_included": False,
             },
         )
@@ -266,6 +296,44 @@ class RuntimeEventLedgerTests(unittest.TestCase):
         self.assertEqual(len(source_rows), 1)
         self.assertTrue(source_rows[0]["setup_live_validation_marker_present"])
         self.assertEqual(source_rows[0]["session_open_count_delta"], 1)
+
+    def test_source_runtime_route_action_ids_are_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._seed_passing(root)
+            payload = json.loads((root / SOURCE_RUNTIME_EVENT_LEDGER_REL).read_text(encoding="utf-8"))
+            payload["rows"].append(
+                {
+                    "event_id": "route-action-ids",
+                    "event_type": "route_action",
+                    "section": "Alert Center",
+                    "workflow": "Overview",
+                    "execution_boundary": "metadata_bounded",
+                    "action_id": "view_all_priorities",
+                    "stable_key": "view_all_priorities",
+                    "rendered_action_id": "alert_center::overview::view_all_priorities",
+                    "clicked_action_id": "alert_center::overview::view_all_priorities",
+                    "producer": "runtime_state",
+                    "producer_signature": "sig",
+                    "commit_sha": self.commit,
+                    "raw_sql_included": False,
+                }
+            )
+            self._write_json(root, SOURCE_RUNTIME_EVENT_LEDGER_REL, payload)
+            source_payload = build_source_runtime_event_ledger_payload(
+                payload["rows"],
+                commit_sha=self.commit,
+                root=root,
+            )
+
+        source_rows = [
+            row for row in source_payload["rows"]
+            if row["row_id"].startswith("source_runtime_event::route-action-ids")
+        ]
+        self.assertEqual(len(source_rows), 1)
+        self.assertEqual(source_rows[0]["stable_key"], "view_all_priorities")
+        self.assertEqual(source_rows[0]["rendered_action_id"], "alert_center::overview::view_all_priorities")
+        self.assertEqual(source_rows[0]["clicked_action_id"], "alert_center::overview::view_all_priorities")
 
     def test_source_runtime_raw_sql_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -402,6 +470,66 @@ class RuntimeEventLedgerTests(unittest.TestCase):
 
         self.assertFalse(results["passed"])
         self.assertIn("Cost evidence before explicit click", json.dumps(results["failures"]))
+
+    def test_missing_summary_autoload_event_fails_source_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._seed_passing(root)
+            payload = json.loads((root / SOURCE_RUNTIME_EVENT_LEDGER_REL).read_text(encoding="utf-8"))
+            payload["rows"] = [
+                row
+                for row in payload["rows"]
+                if row.get("event_type") != "section_summary_autoload"
+            ]
+            payload["section_summary_autoload_source_event_count"] = 0
+            self._write_json(root, SOURCE_RUNTIME_EVENT_LEDGER_REL, payload)
+            with patch("tools.contracts.runtime_event_ledger._git_commit", return_value=self.commit):
+                results = build_runtime_event_ledger_results(root)
+
+        self.assertFalse(results["passed"])
+        self.assertIn("section_summary_autoload", json.dumps(results["failures"]))
+
+    def test_summary_autoload_without_user_navigation_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._seed_passing(root)
+            payload = json.loads((root / SOURCE_RUNTIME_EVENT_LEDGER_REL).read_text(encoding="utf-8"))
+            summary = next(row for row in payload["rows"] if row.get("event_type") == "section_summary_autoload")
+            summary["user_initiated"] = False
+            self._write_json(root, SOURCE_RUNTIME_EVENT_LEDGER_REL, payload)
+            with patch("tools.contracts.runtime_event_ledger._git_commit", return_value=self.commit):
+                results = build_runtime_event_ledger_results(root)
+
+        self.assertFalse(results["passed"])
+        self.assertIn("user-initiated navigation", json.dumps(results["failures"]))
+
+    def test_summary_autoload_account_usage_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._seed_passing(root)
+            payload = json.loads((root / SOURCE_RUNTIME_EVENT_LEDGER_REL).read_text(encoding="utf-8"))
+            summary = next(row for row in payload["rows"] if row.get("event_type") == "section_summary_autoload")
+            summary["account_usage_marker_present"] = True
+            self._write_json(root, SOURCE_RUNTIME_EVENT_LEDGER_REL, payload)
+            with patch("tools.contracts.runtime_event_ledger._git_commit", return_value=self.commit):
+                results = build_runtime_event_ledger_results(root)
+
+        self.assertFalse(results["passed"])
+        self.assertIn("summary autoload crossed Account Usage", json.dumps(results["failures"]))
+
+    def test_summary_autoload_row_cap_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._seed_passing(root)
+            payload = json.loads((root / SOURCE_RUNTIME_EVENT_LEDGER_REL).read_text(encoding="utf-8"))
+            summary = next(row for row in payload["rows"] if row.get("event_type") == "section_summary_autoload")
+            summary["max_rows"] = 201
+            self._write_json(root, SOURCE_RUNTIME_EVENT_LEDGER_REL, payload)
+            with patch("tools.contracts.runtime_event_ledger._git_commit", return_value=self.commit):
+                results = build_runtime_event_ledger_results(root)
+
+        self.assertFalse(results["passed"])
+        self.assertIn("max_rows=201", json.dumps(results["failures"]))
 
 
 if __name__ == "__main__":

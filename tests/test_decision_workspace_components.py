@@ -1,4 +1,5 @@
 from pathlib import Path
+import math
 import sys
 import unittest
 from types import SimpleNamespace
@@ -126,6 +127,77 @@ class DecisionWorkspaceComponentsTests(unittest.TestCase):
 
         self.assertIn("Trend unavailable", html)
         self.assertIn("No governed trend metadata", html)
+
+    def test_command_view_model_treats_nan_packet_values_as_unavailable(self):
+        from sections.decision_workspace_view_model import build_decision_workspace_view_model
+
+        brief = SimpleNamespace(
+            section="Alert Center",
+            state="Ready",
+            stale=False,
+            fallback_reason="",
+            headline="Alert Center ready",
+            summary="Review alert activity.",
+            freshness_minutes=math.nan,
+            target_freshness_minutes=math.nan,
+            missing_source_count=math.nan,
+            required_source_count=1,
+            available_source_count=1,
+            confidence="",
+            data_availability_state="",
+            raw_payload={},
+            metrics=(
+                SimpleNamespace(
+                    key="active_alerts",
+                    label="Active alerts",
+                    numeric_value=math.nan,
+                    text_value="",
+                    value="",
+                    metric_format="count",
+                    delta_percent=math.nan,
+                    trend_point_count=math.nan,
+                    trend_points=(),
+                ),
+            ),
+            exceptions=(SimpleNamespace(signal="Alert review", age_minutes=math.nan),),
+            next_actions=(),
+            sources=(
+                SimpleNamespace(
+                    source_key="alert_events",
+                    available=True,
+                    stale=False,
+                    age_minutes=math.nan,
+                    target_freshness_minutes=math.nan,
+                    required=True,
+                    confidence="",
+                    supports_environment=True,
+                    environment_scope_mode="exact",
+                    gap_reason="",
+                ),
+            ),
+        )
+
+        model = build_decision_workspace_view_model(brief, current_workflow="Open")
+
+        self.assertEqual(model.trust.freshness_label, "Freshness unavailable")
+        self.assertEqual(model.metric_cells[0].value, "Unavailable")
+        self.assertEqual(model.source_rows[0].age_label, "unknown age")
+        self.assertEqual(model.findings[0].first_seen_label, "")
+
+    def test_time_series_chart_omits_null_title(self):
+        import pandas as pd
+        from utils.display import build_time_series_chart, time_series_chart_frame
+
+        frame = time_series_chart_frame(
+            pd.DataFrame({"DAY": ["2026-07-01"], "VALUE": [1.5]}),
+            "DAY",
+            "VALUE",
+        )
+
+        chart = build_time_series_chart(frame, "DAY", "VALUE", title="")
+        spec = chart.to_dict(validate=True)
+
+        self.assertNotIn("title", spec)
 
 
 if __name__ == "__main__":

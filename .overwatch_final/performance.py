@@ -20,6 +20,7 @@ from runtime_boundaries import APPROVED_RELEASE_EXECUTION_BOUNDARIES, normalize_
 DECISION_FIRST_PAINT_QUERY_BUDGET = 1
 DECISION_WARM_QUERY_BUDGET = 0
 SECTION_ROUTE_QUERY_BUDGET = 0
+SUMMARY_AUTOLOAD_QUERY_BUDGET = 1
 EVIDENCE_CLICK_QUERY_BUDGET = 1
 ADMIN_CLICK_QUERY_BUDGET = 3
 DECISION_BOOTSTRAP_QUERY_BUDGET = 20
@@ -46,6 +47,9 @@ _VALID_QUERY_BOUNDARIES = set(APPROVED_RELEASE_EXECUTION_BOUNDARIES)
 _QUERY_BOUNDARY_ALIASES = {
     "first_paint_packet": "decision_packet",
     "warm_first_paint": "decision_packet",
+    "summary_autoload": "section_summary_autoload",
+    "section_summary": "section_summary_autoload",
+    "section_summary_autoload": "section_summary_autoload",
     "route_action": "metadata_bounded",
     "evidence_action": "evidence_targeted",
     "compact_evidence": "evidence_targeted",
@@ -69,6 +73,7 @@ _QUERY_BUDGET_LIMITS = {
     "first_paint": DECISION_FIRST_PAINT_QUERY_BUDGET,
     "warm_first_paint": DECISION_WARM_QUERY_BUDGET,
     "route_action": SECTION_ROUTE_QUERY_BUDGET,
+    "section_summary_autoload": SUMMARY_AUTOLOAD_QUERY_BUDGET,
     "evidence_click": EVIDENCE_CLICK_QUERY_BUDGET,
     "refresh_packet": 1,
     "query_search_exact": 1,

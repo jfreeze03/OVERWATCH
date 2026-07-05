@@ -41,6 +41,7 @@ SELECTED_TOOL_PATH_SUFFIXES = (
 
 _FALLBACK_ALLOWED_QUERY_BOUNDARIES = {
     "decision_packet",
+    "section_summary_autoload",
     "evidence_targeted",
     "query_search_exact",
     "query_search_broad_explicit",

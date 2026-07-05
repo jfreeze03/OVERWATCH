@@ -122,7 +122,13 @@ def _row_count(row: Mapping[str, Any], *keys: str) -> int:
 
 
 def _boundary(row: Mapping[str, Any]) -> str:
-    return str(row.get("boundary") or row.get("query_boundary") or row.get("workflow") or "").strip()
+    return str(
+        row.get("boundary")
+        or row.get("query_boundary")
+        or row.get("execution_boundary")
+        or row.get("workflow")
+        or ""
+    ).strip()
 
 
 def _section(row: Mapping[str, Any]) -> str:
@@ -286,10 +292,21 @@ def _evaluate_budget_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[dict[
         row = dict(source_row)
         section = _section(row)
         boundary = _boundary(row)
-        query_count = _row_count(row, "query_count", "actual_snowflake_executions", "actual_query_count")
-        session_open = _row_count(row, "session_open_count")
-        direct_sql = _row_count(row, "direct_sql_count", "direct_sql_events")
-        account_usage = _row_count(row, "account_usage_count", "account_usage_events")
+        query_count = _row_count(
+            row,
+            "query_count",
+            "query_count_delta",
+            "actual_snowflake_executions",
+            "actual_query_count",
+        )
+        session_open = _row_count(row, "session_open_count", "session_open_count_delta")
+        direct_sql = _row_count(row, "direct_sql_count", "direct_sql_count_delta", "direct_sql_events")
+        account_usage = _row_count(
+            row,
+            "account_usage_count",
+            "account_usage_count_delta",
+            "account_usage_events",
+        )
         metadata_probe_count = _row_count(row, "metadata_probe_count", "metadata_probe_events")
         active_session_probe = _row_count(row, "active_session_probe_count")
         admin_connection_test = _row_count(row, "admin_connection_test_count")
@@ -309,6 +326,17 @@ def _evaluate_budget_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[dict[
             reasons.append("route action crossed query/session/direct-SQL boundary")
         if boundary == "query_search_no_click" and query_count:
             reasons.append("Query Search no-click executed a query")
+        if boundary == "section_summary_autoload":
+            if not bool(row.get("user_initiated")):
+                reasons.append("section summary autoload missing user-initiated navigation context")
+            if _row_count(row, "max_rows") > 200:
+                reasons.append("section summary autoload exceeded 200 row cap")
+            if account_usage:
+                reasons.append("section summary autoload crossed Account Usage")
+            if direct_sql:
+                reasons.append("section summary autoload emitted direct SQL outside query runner")
+            if bool(row.get("before_first_paint")) or bool(row.get("first_paint_sensitive")):
+                reasons.append("section summary autoload ran during first paint")
         if boundary in {"first_paint_packet", "warm_first_paint"} and account_usage:
             reasons.append("first paint crossed Account Usage/deep-history boundary")
         if boundary == "warm_first_paint" and query_count:
@@ -351,6 +379,9 @@ def _evaluate_budget_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[dict[
                 "session_open_count": session_open,
                 "direct_sql_count": direct_sql,
                 "account_usage_count": account_usage,
+                "max_rows": _row_count(row, "max_rows"),
+                "user_initiated": bool(row.get("user_initiated")),
+                "before_first_paint": bool(row.get("before_first_paint")),
                 "metadata_probe_count": metadata_probe_count,
                 "active_session_probe_count": active_session_probe,
                 "admin_connection_test_count": admin_connection_test,
@@ -444,6 +475,18 @@ def evaluate_performance_budget_gate(
                 "failure_reason": "missing source runtime event rows",
             }
         )
+    source_payload = source_runtime_event_ledger_payload if isinstance(source_runtime_event_ledger_payload, Mapping) else {}
+    section_summary_source_event_count = _as_int(
+        source_payload.get("section_summary_autoload_source_event_count")
+    )
+    if section_summary_source_event_count <= 0:
+        source_runtime_failures.append(
+            {
+                "section": "Source runtime event ledger",
+                "workflow": "Supporting artifact",
+                "failure_reason": "missing source runtime section_summary_autoload event rows",
+            }
+        )
     cost_payload = cost_overview_payload if isinstance(cost_overview_payload, Mapping) else {}
     cost_rows = _rows(cost_payload)
     cost_failures, cost_summary = verify_supporting_artifact(
@@ -514,6 +557,7 @@ def evaluate_performance_budget_gate(
         "runtime_event_ledger_row_count": _as_int(runtime_ledger_summary.get("row_count")),
         "source_runtime_event_ledger_passed": bool(source_runtime_summary.get("passed")) and not source_runtime_failures,
         "source_runtime_event_ledger_row_count": _as_int(source_runtime_summary.get("row_count")),
+        "section_summary_autoload_source_event_count": section_summary_source_event_count,
         "cost_overview_autoload_violation_count": cost_violation_count,
         "target_pushdown_violation_count": target_pushdown_violation_count,
         "query_search_broad_autorun_count": query_search_broad_autorun_count,

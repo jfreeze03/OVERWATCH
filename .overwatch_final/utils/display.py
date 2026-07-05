@@ -309,7 +309,10 @@ def build_time_series_chart(
         tooltips.insert(1, alt.Tooltip(f"{series_column}:N", title=series_column.replace("_", " ").title()))
     else:
         encoding["color"] = alt.value(OVERWATCH_TIME_SERIES_PALETTE[0])
-    return mark.encode(**encoding).properties(title=title or None, height=260)
+    chart = mark.encode(**encoding).properties(height=260)
+    if str(title or "").strip():
+        chart = chart.properties(title=str(title))
+    return chart
 
 
 def render_time_series_chart(
@@ -580,7 +583,8 @@ def render_query_drilldown(
             on_select="rerun",
             key=f"{key}_grid",
         )
-        selected_rows = event.selection.rows
+        selection = getattr(event, "selection", None)
+        selected_rows = list(getattr(selection, "rows", []) or [])
     except Exception:
         st.dataframe(grid_df, width="stretch", height=380)
         selected_qid = st.selectbox(
@@ -786,7 +790,7 @@ def render_drillable_bar_chart(
     measure: str,
     key: str,
     title: str = "",
-    drilldown_column: str = None,
+    drilldown_column: str | None = None,
     lookback_hours: int = 24,
     top_n: int = 20,
 ):

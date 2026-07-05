@@ -1023,6 +1023,69 @@ def _harness_query_search_no_click_event(case: str) -> dict[str, Any]:
     }
 
 
+def _harness_section_summary_autoload_event(
+    *,
+    section: str,
+    workflow: str,
+    html: str,
+    packet_query_count: int,
+) -> dict[str, Any]:
+    lowered = str(html or "").lower()
+    command_brief_present = "ow-kit-command-brief" in lowered
+    pending_summary = "summary pending" in lowered
+    unavailable_wall = lowered.count("summary unavailable") > 1
+    passed = command_brief_present and not pending_summary and not unavailable_wall
+    failure_reasons: list[str] = []
+    if not command_brief_present:
+        failure_reasons.append("CommandBrief summary surface missing")
+    if pending_summary:
+        failure_reasons.append("section summary still pending")
+    if unavailable_wall:
+        failure_reasons.append("section summary rendered unavailable wall")
+    return {
+        "event_type": "section_summary_autoload",
+        "route": section,
+        "section": section,
+        "workflow": workflow,
+        "boundary": "section_summary_autoload",
+        "product_boundary": "section_summary_autoload",
+        "execution_boundary": "section_summary_autoload",
+        "query_tier": "command_summary",
+        "ttl_key": f"section_summary_packet_{_token(section)}_{_token(workflow)}",
+        "elapsed_ms": 0,
+        "row_count": 1 if command_brief_present else 0,
+        "max_rows": 200,
+        "error": "",
+        "source_module": "full_app_runtime_validation.section_render",
+        "action_id": "",
+        "before_first_paint": False,
+        "after_first_paint": True,
+        "user_initiated": True,
+        "query_count_delta": max(0, int(packet_query_count or 0) - 1),
+        "session_open_count_delta": 0,
+        "active_session_probe_count_delta": 0,
+        "direct_sql_count_delta": 0,
+        "account_usage_count_delta": 0,
+        "metadata_probe_count_delta": 0,
+        "account_usage_marker_present": False,
+        "evidence_loader_marker_present": False,
+        "cost_evidence_marker_present": False,
+        "query_search_broad_marker_present": False,
+        "setup_live_validation_marker_present": False,
+        "route_action_marker_present": False,
+        "source_object_marker_present": False,
+        "runtime_capture_phase": "section_summary_render",
+        "source_render_section": section,
+        "source_render_workflow": workflow,
+        "producer": "full_app_runtime_validation",
+        "producer_signature": "full_app_runtime_validation::section_summary_autoload_v1",
+        "provenance_origin": "producer",
+        "passed": passed,
+        "failure_reason": "; ".join(failure_reasons),
+        "raw_sql_included": False,
+    }
+
+
 def _has_route_action_event(rows: Iterable[Mapping[str, Any]]) -> bool:
     return any(
         bool(row.get("route_action_marker_present")) or str(row.get("event_type") or "") == "route_action"
@@ -3449,6 +3512,14 @@ class RuntimeValidationHarness:
                 all_context_events.extend(_state_events(capture.state, QUERY_BUDGET_CONTEXT_EVENTS_KEY))
                 html = "\n".join(capture.fragments)
                 packet_execs = [event for event in execs if event.get("query_boundary") == "decision_packet"]
+                source_runtime_event_ledger.append(
+                    _harness_section_summary_autoload_event(
+                        section=section,
+                        workflow=workflow,
+                        html=html,
+                        packet_query_count=len(packet_execs),
+                    )
+                )
                 non_packet_first_paint = [
                     event for event in events
                     if event.get("first_paint_sensitive") and event.get("query_boundary") != "decision_packet"

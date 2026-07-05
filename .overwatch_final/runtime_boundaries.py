@@ -6,6 +6,7 @@ from __future__ import annotations
 APPROVED_RELEASE_EXECUTION_BOUNDARIES: frozenset[str] = frozenset(
     {
         "decision_packet",
+        "section_summary_autoload",
         "evidence_targeted",
         "query_search_exact",
         "query_search_broad_explicit",
@@ -24,6 +25,9 @@ _RELEASE_BOUNDARY_ALIASES: dict[str, str] = {
     "first_paint_packet": "decision_packet",
     "warm_first_paint": "decision_packet",
     "decision_packet": "decision_packet",
+    "section_summary_autoload": "section_summary_autoload",
+    "summary_autoload": "section_summary_autoload",
+    "summary_mart": "section_summary_autoload",
     "evidence": "evidence_targeted",
     "evidence_action": "evidence_targeted",
     "compact_evidence": "evidence_targeted",

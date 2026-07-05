@@ -253,6 +253,18 @@ from tools.contracts.performance_budget_gate import (
     evaluate_performance_budget_gate,
     write_performance_budget_gate_artifacts,
 )
+from tools.contracts.summary_autoload_contract import (
+    SUMMARY_AUTOLOAD_CONTRACT_GATE_REL,
+    write_summary_autoload_contract_artifacts,
+)
+from tools.contracts.account_usage_query_audit import (
+    ACCOUNT_USAGE_QUERY_AUDIT_GATE_REL,
+    write_account_usage_query_audit_artifacts,
+)
+from tools.contracts.summary_mart_setup import (
+    SUMMARY_MART_SETUP_GATE_REL,
+    write_summary_mart_setup_artifacts,
+)
 from tools.contracts.query_boundary_lint import (
     QUERY_BOUNDARY_LINT_GATE_REL,
     QUERY_BOUNDARY_LINT_RESULTS_REL,
@@ -5176,6 +5188,9 @@ def _release_gate_matrix(
     full_app_release_sweep_gate = _as_mapping(launch_artifacts.get("full_app_release_sweep_gate_results"))
     settings_live_feature_gate = _as_mapping(launch_artifacts.get("settings_live_feature_gate_results"))
     performance_budget_gate = _as_mapping(launch_artifacts.get("performance_budget_gate_results"))
+    summary_autoload_gate = _as_mapping(launch_artifacts.get("summary_autoload_contract_gate_results"))
+    account_usage_query_audit_gate = _as_mapping(launch_artifacts.get("account_usage_query_audit_gate_results"))
+    summary_mart_setup_gate = _as_mapping(launch_artifacts.get("summary_mart_setup_gate_results"))
     first_paint_slo_gate = _as_mapping(launch_artifacts.get("first_paint_slo_gate_results"))
     query_boundary_lint_gate = _as_mapping(launch_artifacts.get("query_boundary_lint_gate_results"))
     access_control_runtime_gate = _as_mapping(launch_artifacts.get("access_control_runtime_gate_results"))
@@ -5204,6 +5219,9 @@ def _release_gate_matrix(
     sql_cleanup_gate = _as_mapping(launch_artifacts.get("sql_cleanup_gate_results"))
     delete_first_cleanup_gate = _as_mapping(launch_artifacts.get("delete_first_cleanup_gate_results"))
     performance_budget_gate = _as_mapping(launch_artifacts.get("performance_budget_gate_results"))
+    summary_autoload_gate = _as_mapping(launch_artifacts.get("summary_autoload_contract_gate_results"))
+    account_usage_query_audit_gate = _as_mapping(launch_artifacts.get("account_usage_query_audit_gate_results"))
+    summary_mart_setup_gate = _as_mapping(launch_artifacts.get("summary_mart_setup_gate_results"))
     metric_source_governance_gate = _as_mapping(launch_artifacts.get("metric_source_governance_gate_results"))
     ui_kit_alignment_gate = _as_mapping(launch_artifacts.get("ui_kit_alignment_gate_results"))
     section_layout_gate = _as_mapping(launch_artifacts.get("section_layout_contract_gate_results"))
@@ -5467,6 +5485,30 @@ def _release_gate_matrix(
             "artifact": PERFORMANCE_BUDGET_GATE_REL,
             "passed": bool(performance_budget_gate.get("passed")),
             "failure_reason": "" if performance_budget_gate.get("passed") else "Performance budget rows show first-paint, route-action, Query Search, or workbench query violations.",
+        },
+        {
+            "gate": "summary_autoload_contract",
+            "artifact": SUMMARY_AUTOLOAD_CONTRACT_GATE_REL,
+            "passed": bool(summary_autoload_gate.get("passed")),
+            "failure_reason": ""
+            if summary_autoload_gate.get("passed")
+            else "Section summary autoload lacks producer-backed, user-initiated, bounded runtime proof.",
+        },
+        {
+            "gate": "account_usage_query_audit",
+            "artifact": ACCOUNT_USAGE_QUERY_AUDIT_GATE_REL,
+            "passed": bool(account_usage_query_audit_gate.get("passed")),
+            "failure_reason": ""
+            if account_usage_query_audit_gate.get("passed")
+            else "Account Usage appears in a default summary/route path or duplicated app-side source query.",
+        },
+        {
+            "gate": "summary_mart_setup",
+            "artifact": SUMMARY_MART_SETUP_GATE_REL,
+            "passed": bool(summary_mart_setup_gate.get("passed")),
+            "failure_reason": ""
+            if summary_mart_setup_gate.get("passed")
+            else "COCO summary mart setup SQL is missing required compact marts, columns, or source-family proof.",
         },
         {
             "gate": "first_paint_slo_gate",
@@ -6441,6 +6483,9 @@ def evaluate_launch_readiness(
     source_runtime_event_ledger_gate = _as_mapping(
         launch_artifacts.get("source_runtime_event_ledger_gate_results")
     )
+    summary_autoload_gate = _as_mapping(launch_artifacts.get("summary_autoload_contract_gate_results"))
+    account_usage_query_audit_gate = _as_mapping(launch_artifacts.get("account_usage_query_audit_gate_results"))
+    summary_mart_setup_gate = _as_mapping(launch_artifacts.get("summary_mart_setup_gate_results"))
     route_action_replay_gate = _as_mapping(launch_artifacts.get("route_action_replay_gate_results"))
     export_case_parity_gate = _as_mapping(launch_artifacts.get("export_case_parity_gate_results"))
     launch_summary = {
@@ -6531,6 +6576,9 @@ def evaluate_launch_readiness(
         and bool(release_evidence_registry_gate.get("passed"))
         and bool(runtime_event_ledger_gate.get("passed"))
         and bool(source_runtime_event_ledger_gate.get("passed"))
+        and bool(summary_autoload_gate.get("passed"))
+        and bool(account_usage_query_audit_gate.get("passed"))
+        and bool(summary_mart_setup_gate.get("passed"))
         and bool(route_action_replay_gate.get("passed"))
         and bool(export_case_parity_gate.get("passed")),
         "a_grade_ready": bool(a_grade_execution_matrix_gate.get("a_grade_ready")),
@@ -6555,6 +6603,27 @@ def evaluate_launch_readiness(
         "source_runtime_event_ledger_event_count": _as_int(
             source_runtime_event_ledger_gate.get("event_count")
         ),
+        "summary_autoload_contract_passed": bool(summary_autoload_gate.get("passed")),
+        "summary_autoload_contract_failure_count": _as_int(summary_autoload_gate.get("failure_count")),
+        "section_summary_autoload_event_count": _as_int(
+            summary_autoload_gate.get("summary_autoload_row_count")
+        ),
+        "summary_autoload_violation_count": _as_int(
+            summary_autoload_gate.get("summary_autoload_violation_count")
+        ),
+        "account_usage_query_audit_passed": bool(account_usage_query_audit_gate.get("passed")),
+        "account_usage_query_audit_failure_count": _as_int(account_usage_query_audit_gate.get("failure_count")),
+        "summary_path_account_usage_violation_count": _as_int(
+            account_usage_query_audit_gate.get("summary_path_account_usage_violation_count")
+        ),
+        "route_path_account_usage_violation_count": _as_int(
+            account_usage_query_audit_gate.get("route_path_account_usage_violation_count")
+        ),
+        "cortex_union_duplicate_count": _as_int(account_usage_query_audit_gate.get("cortex_union_duplicate_count")),
+        "repeated_users_join_count": _as_int(account_usage_query_audit_gate.get("repeated_users_join_count")),
+        "summary_mart_setup_passed": bool(summary_mart_setup_gate.get("passed")),
+        "summary_mart_setup_failure_count": _as_int(summary_mart_setup_gate.get("failure_count")),
+        "summary_mart_count": _as_int(summary_mart_setup_gate.get("summary_mart_count")),
         "route_action_replay_passed": bool(route_action_replay_gate.get("passed")),
         "route_action_replay_failure_count": _as_int(route_action_replay_gate.get("failure_count")),
         "route_action_replay_scenario_count": _as_int(route_action_replay_gate.get("scenario_count")),
@@ -7019,6 +7088,12 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     payloads.update(query_boundary_lint_artifacts)
     runtime_event_ledger_artifacts = write_runtime_event_ledger_artifacts(root_path)
     payloads.update(runtime_event_ledger_artifacts)
+    summary_autoload_contract_artifacts = write_summary_autoload_contract_artifacts(root_path)
+    payloads.update(summary_autoload_contract_artifacts)
+    account_usage_query_audit_artifacts = write_account_usage_query_audit_artifacts(root_path)
+    payloads.update(account_usage_query_audit_artifacts)
+    summary_mart_setup_artifacts = write_summary_mart_setup_artifacts(root_path)
+    payloads.update(summary_mart_setup_artifacts)
     route_action_replay_artifacts = write_route_action_replay_artifacts(root_path)
     payloads.update(route_action_replay_artifacts)
     performance_budget_artifacts = write_performance_budget_gate_artifacts(root_path)
@@ -7108,6 +7183,13 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["source_runtime_event_ledger_gate_results"] = runtime_event_ledger_artifacts[
         SOURCE_RUNTIME_EVENT_LEDGER_GATE_REL
     ]
+    launch_artifacts["summary_autoload_contract_gate_results"] = summary_autoload_contract_artifacts[
+        SUMMARY_AUTOLOAD_CONTRACT_GATE_REL
+    ]
+    launch_artifacts["account_usage_query_audit_gate_results"] = account_usage_query_audit_artifacts[
+        ACCOUNT_USAGE_QUERY_AUDIT_GATE_REL
+    ]
+    launch_artifacts["summary_mart_setup_gate_results"] = summary_mart_setup_artifacts[SUMMARY_MART_SETUP_GATE_REL]
     launch_artifacts["route_action_replay_gate_results"] = route_action_replay_artifacts[
         ROUTE_ACTION_REPLAY_GATE_REL
     ]
@@ -7226,10 +7308,14 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     snowflake_artifacts = write_snowflake_validation_artifacts(root_path)
     payloads.update(snowflake_artifacts)
     existing_cli_gate = _existing_passing_gate(root_path, CLI_LAUNCH_GATE_REL, payloads)
-    if existing_cli_gate:
+    existing_cli_tree = _load_artifact_tree(root_path)
+    missing_required_cli_artifacts = sorted(
+        rel for rel in REQUIRED_CLI_ARTIFACTS if rel not in existing_cli_tree
+    )
+    if existing_cli_gate and not missing_required_cli_artifacts:
         snowflake_cli_artifacts = {
             rel: payload
-            for rel, payload in _load_artifact_tree(root_path).items()
+            for rel, payload in existing_cli_tree.items()
             if rel in REQUIRED_CLI_ARTIFACTS or rel.startswith("artifacts/snowflake_validation/")
         }
         snowflake_cli_gate = dict(existing_cli_gate)

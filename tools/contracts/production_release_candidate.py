@@ -31,6 +31,9 @@ from tools.contracts.export_case_parity import EXPORT_CASE_PARITY_GATE_REL
 from tools.contracts.release_evidence_registry import RELEASE_EVIDENCE_REGISTRY_GATE_REL
 from tools.contracts.route_action_replay import ROUTE_ACTION_REPLAY_GATE_REL
 from tools.contracts.runtime_event_ledger import RUNTIME_EVENT_LEDGER_GATE_REL, SOURCE_RUNTIME_EVENT_LEDGER_GATE_REL
+from tools.contracts.summary_autoload_contract import SUMMARY_AUTOLOAD_CONTRACT_GATE_REL
+from tools.contracts.account_usage_query_audit import ACCOUNT_USAGE_QUERY_AUDIT_GATE_REL
+from tools.contracts.summary_mart_setup import SUMMARY_MART_SETUP_GATE_REL
 from tools.contracts.ci_artifact_reality import (
     CI_ARTIFACT_REALITY_GATE_REL,
     CI_ARTIFACT_REALITY_RESULTS_REL,
@@ -817,6 +820,24 @@ def run_production_release_candidate(
             SOURCE_RUNTIME_EVENT_LEDGER_GATE_REL,
             lambda _r: payloads,
             gate_rel=SOURCE_RUNTIME_EVENT_LEDGER_GATE_REL,
+        )
+        add(
+            "summary_autoload_contract",
+            SUMMARY_AUTOLOAD_CONTRACT_GATE_REL,
+            lambda _r: payloads,
+            gate_rel=SUMMARY_AUTOLOAD_CONTRACT_GATE_REL,
+        )
+        add(
+            "account_usage_query_audit",
+            ACCOUNT_USAGE_QUERY_AUDIT_GATE_REL,
+            lambda _r: payloads,
+            gate_rel=ACCOUNT_USAGE_QUERY_AUDIT_GATE_REL,
+        )
+        add(
+            "summary_mart_setup",
+            SUMMARY_MART_SETUP_GATE_REL,
+            lambda _r: payloads,
+            gate_rel=SUMMARY_MART_SETUP_GATE_REL,
         )
         add(
             "route_action_replay",

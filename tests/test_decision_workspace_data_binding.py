@@ -1072,6 +1072,65 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertIn(SETUP_HEALTH_KEY, state)
         self.assertIn("MART_SECTION_DECISION_CURRENT", state[SETUP_HEALTH_KEY]["admin_detail"])
 
+    def test_bootstrap_current_section_datagap_still_forces_renderable_packet_refresh(self):
+        from sections import decision_workspace_bootstrap as bootstrap
+
+        class DataGapCurrentSectionSession:
+            def __init__(self) -> None:
+                self.sql_calls: list[str] = []
+
+            def sql(self, text: str) -> "DataGapCurrentSectionSession":
+                self.sql_calls.append(text)
+                return self
+
+            def collect(self) -> list[object]:
+                current = self.sql_calls[-1]
+                if current == "SHOW PROCEDURES LIKE 'SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS'":
+                    return [object()]
+                if current == "CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS();":
+                    return []
+                if "FROM MART_SECTION_DECISION_CURRENT" in current:
+                    rows = DecisionWorkspaceDataBindingTests._valid_bootstrap_rows()
+                    rows[2] = {
+                        **rows[2],
+                        "DATA_AVAILABILITY_STATE": "DATA GAP",
+                        "REQUIRED_MISSING_SOURCE_COUNT": 1,
+                        "FLATTENED_REQUIRED_MISSING_SOURCE_COUNT": 1,
+                        "AVAILABLE_REQUIRED_SOURCE_COUNT": 2,
+                        "FLATTENED_AVAILABLE_REQUIRED_SOURCE_COUNT": 2,
+                        "SOURCE_COVERAGE_PCT": 66.7,
+                    }
+                    return rows
+                return []
+
+        session = DataGapCurrentSectionSession()
+        state = {
+            bootstrap.BOOTSTRAP_REQUEST_KEY: True,
+            "alert_center_command_brief_force_refresh": False,
+            "section_command_brief::Alert Center::ALFA::ALL::7": object(),
+            "section_command_brief::Alert Center::ALFA::ALL::7::negative_until": "later",
+        }
+        with patch.object(bootstrap.st, "session_state", state), patch.object(
+            bootstrap,
+            "lazy_util",
+            return_value=lambda *args, **kwargs: session,
+        ), patch.object(bootstrap.st, "warning") as warning, patch.object(
+            bootstrap.st,
+            "rerun",
+            side_effect=AssertionError("renderable degraded packet should render in the current pass"),
+        ) as rerun:
+            bootstrap.maybe_run_decision_workspace_bootstrap("Alert Center")
+
+        self.assertIn("CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS();", session.sql_calls)
+        self.assertNotIn("section_command_brief::Alert Center::ALFA::ALL::7", state)
+        self.assertNotIn("section_command_brief::Alert Center::ALFA::ALL::7::negative_until", state)
+        self.assertTrue(state["alert_center_command_brief_force_refresh"])
+        self.assertIn("warnings", state[bootstrap.BOOTSTRAP_SUCCESS_KEY].lower())
+        self.assertNotIn(bootstrap.BOOTSTRAP_FAILURE_KEY, state)
+        self.assertEqual(state["_overwatch_decision_setup_health"]["status"], "DEGRADED")
+        warning.assert_not_called()
+        rerun.assert_not_called()
+
     def test_bootstrap_uses_installed_full_refresh_fallback(self):
         from sections import decision_workspace_bootstrap as bootstrap
 

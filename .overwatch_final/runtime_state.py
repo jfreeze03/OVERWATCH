@@ -386,6 +386,12 @@ def summarize_runtime_event_ledger() -> dict[str, Any]:
         "query_search_broad_marker_count": sum(1 for row in rows if bool(row.get("query_search_broad_marker_present"))),
         "setup_live_validation_marker_count": sum(1 for row in rows if bool(row.get("setup_live_validation_marker_present"))),
         "route_action_marker_count": sum(1 for row in rows if bool(row.get("route_action_marker_present"))),
+        "section_summary_autoload_count": sum(
+            1
+            for row in rows
+            if str(row.get("event_type") or "") == "section_summary_autoload"
+            or str(row.get("execution_boundary") or row.get("boundary") or "") == "section_summary_autoload"
+        ),
         "raw_sql_included": any(bool(row.get("raw_sql_included")) for row in rows),
     }
 

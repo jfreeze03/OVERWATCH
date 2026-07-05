@@ -51,6 +51,8 @@ _BOUNDARY_ALIASES = {
     "evidence": "evidence_targeted",
     "compact_evidence": "evidence_targeted",
     "evidence_action": "evidence_targeted",
+    "summary_autoload": "section_summary_autoload",
+    "section_summary": "section_summary_autoload",
     "query_search": "query_search_exact",
     "query_search_explicit": "query_search_exact",
     "query_search_related": "query_search_exact",
@@ -201,6 +203,20 @@ register_query_contract(
         max_rows=1,
         first_paint_allowed=True,
         expected_table_family="MART_SECTION_DECISION_CURRENT_FLAT",
+    )
+)
+register_query_contract(
+    QueryContract(
+        boundary="section_summary_autoload",
+        contract_id="section_summary_autoload_bounded",
+        tier="",
+        max_rows=200,
+        expected_table_family=(
+            "MART_SECTION_DECISION|MART_SECTION_COMMAND_BRIEF|"
+            "OVERWATCH_EXECUTIVE_PACKET_CURRENT|OVERWATCH_COST_CURRENT_SUMMARY|"
+            "OVERWATCH_ALERT_ACTIVE|OVERWATCH_QUERY_PERFORMANCE_DAILY|"
+            "OVERWATCH_SECURITY_POSTURE_DAILY"
+        ),
     )
 )
 register_query_contract(

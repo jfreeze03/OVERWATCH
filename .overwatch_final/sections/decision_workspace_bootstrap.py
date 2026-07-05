@@ -178,6 +178,15 @@ def _force_current_section_refresh(current_section: str | None) -> None:
         st.session_state[key] = True
 
 
+def _validation_has_renderable_current_packet(validation: DecisionBootstrapValidation) -> bool:
+    """Return whether the clicked section has a real packet that can replace fallback UI."""
+    return (
+        bool(validation.current_section_ok)
+        and bool(validation.current_section_packet_id)
+        and not bool(validation.current_section_missing_metrics)
+    )
+
+
 def _active_validation_scope() -> tuple[str, str, int]:
     company = _norm_scope(st.session_state.get(ACTIVE_COMPANY, "ALL"))
     environment = _norm_scope(st.session_state.get(GLOBAL_ENVIRONMENT, "ALL"))
@@ -917,6 +926,22 @@ def maybe_run_decision_workspace_bootstrap(current_section: str | None = None) -
                 window_days=window_days,
             )
             if not validation.ok:
+                if _validation_has_renderable_current_packet(validation):
+                    _clear_command_brief_caches(clear_last_good=False)
+                    _force_current_section_refresh(current_section)
+                    st.session_state[BOOTSTRAP_SUCCESS_KEY] = BOOTSTRAP_DEGRADED_MESSAGE
+                    record_decision_bootstrap_health(
+                        status="degraded",
+                        user_message=st.session_state[BOOTSTRAP_SUCCESS_KEY],
+                        selected_procedure=procedure_result.procedure_name,
+                        fallback_used=procedure_result.fallback_used,
+                        validation=validation,
+                        admin_detail="; ".join(
+                            part for part in (procedure_result.admin_detail, validation.admin_detail) if part
+                        ),
+                        session=session,
+                    )
+                    return
                 _clear_command_brief_caches(clear_last_good=False)
                 st.session_state[BOOTSTRAP_FAILURE_KEY] = validation.message or BOOTSTRAP_SETUP_MESSAGE
                 record_decision_bootstrap_health(

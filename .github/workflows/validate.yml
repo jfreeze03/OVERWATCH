@@ -117,6 +117,8 @@ jobs:
             tests.test_export_case_parity \
             tests.test_first_paint_slo \
             tests.test_query_boundary_lint \
+            tests.test_account_usage_query_audit \
+            tests.test_summary_mart_setup \
             tests.test_ui_system_grade \
             tests.test_compatibility
 
@@ -200,6 +202,12 @@ jobs:
 
       - name: Run query-boundary lint gate
         run: python -m tools.contracts.query_boundary_lint
+
+      - name: Run Account Usage query audit gate
+        run: python -m tools.contracts.account_usage_query_audit
+
+      - name: Run summary mart setup gate
+        run: python -m tools.contracts.summary_mart_setup
 
       - name: Run first-paint SLO gate
         run: python -m tools.contracts.first_paint_slo

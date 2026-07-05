@@ -29,6 +29,9 @@ from runtime_state import (
     GLOBAL_USER,
     GLOBAL_WAREHOUSE,
     NAV_SECTION,
+    PENDING_AUTOLOAD_SECTION,
+    PENDING_AUTOLOAD_STARTED_AT,
+    SECTION_TRANSITION_STARTED_AT,
     STORAGE_COST_PER_TB,
     PERF_RUN_ID,
     QUERY_BUDGET_HITS,
@@ -131,17 +134,28 @@ def _record_query_source_event(
     finished_at: str,
     error: str = "",
     actual_query_executed: object = None,
+    account_usage_marker_present: bool = False,
+    source_object_marker_present: bool = False,
 ) -> None:
     """Record the query module's source event without storing SQL text."""
     raw_boundary_text = str(boundary or "")
     boundary_text = normalize_query_boundary(raw_boundary_text)
     marker_text = " ".join([boundary_text, str(ttl_key or ""), str(section or "")]).lower()
     before_first_paint = bool(is_first_paint_active() or current_first_paint_render_id())
+    current_section = _infer_telemetry_section(section, ttl_key)
+    is_summary_autoload = boundary_text == "section_summary_autoload"
+    pending_section = str(get_state(PENDING_AUTOLOAD_SECTION, "") or "").strip()
+    user_initiated_summary = bool(
+        is_summary_autoload
+        and pending_section
+        and pending_section == current_section
+        and get_state(PENDING_AUTOLOAD_STARTED_AT, "")
+    )
     try:
         record_runtime_event(
-            event_type=event_type,
+            event_type="section_summary_autoload" if is_summary_autoload else event_type,
             route=section,
-            section=_infer_telemetry_section(section, ttl_key),
+            section=current_section,
             workflow=workflow,
             boundary=boundary_text,
             product_boundary=raw_boundary_text,
@@ -156,8 +170,11 @@ def _record_query_source_event(
             source_module="utils.query",
             before_first_paint=before_first_paint,
             after_first_paint=not before_first_paint,
-            user_initiated=False,
-            account_usage_marker_present=raw_boundary_text == "account_usage" or "account_usage" in marker_text,
+            user_initiated=user_initiated_summary,
+            query_count_delta=0 if actual_query_executed is False else 1,
+            account_usage_marker_present=bool(account_usage_marker_present)
+            or raw_boundary_text == "account_usage"
+            or "account_usage" in marker_text,
             evidence_loader_marker_present="evidence" in marker_text,
             cost_evidence_marker_present="cost" in marker_text,
             query_search_broad_marker_present="query_search_broad" in marker_text or "deep_history" in marker_text,
@@ -168,6 +185,8 @@ def _record_query_source_event(
             extra={
                 "actual_query_executed": actual_query_executed,
                 "source_query_runner": event_type,
+                "source_object_marker_present": bool(source_object_marker_present),
+                "section_transition_started_at": str(get_state(SECTION_TRANSITION_STARTED_AT, "") or ""),
             },
         )
     except Exception:
@@ -372,6 +391,13 @@ def _infer_query_boundary(query_text: str = "", ttl_key: str = "", tier: str = "
         return "query_search_exact"
     if key.startswith("query_text_preview_"):
         return "metadata_bounded"
+    if (
+        key.startswith("section_summary_")
+        or "summary_autoload" in key
+        or key.endswith("_current_summary")
+        or tier_text == "section_summary"
+    ):
+        return "section_summary_autoload"
     if key.startswith("section_command_packet_") or "MART_SECTION_DECISION_CURRENT" in sql:
         return "decision_packet"
     if "OVERWATCH_DECISION_SETUP_HEALTH" in sql or "setup_health" in key:
@@ -481,6 +507,7 @@ def _enforce_explicit_critical_boundary(
 def _first_paint_sensitive_boundary(boundary: str) -> bool:
     return str(boundary or "") in {
         "decision_packet",
+        "section_summary_autoload",
         "evidence_targeted",
         "query_search_exact",
         "metadata_bounded",
@@ -517,6 +544,7 @@ def _enforce_query_contract(
     findings = list(lint_query_text(query_text, contract))
     if contract.max_rows is not None and boundary in {
         "decision_packet",
+        "section_summary_autoload",
         "evidence_targeted",
         "query_search_exact",
         "metadata_bounded",
@@ -1546,6 +1574,8 @@ def run_query(
         finished_at=finished_at,
         error=str(query_meta.get("error") or ""),
         actual_query_executed=query_meta.get("actual_query_executed"),
+        account_usage_marker_present="ACCOUNT_USAGE" in str(query_text or "").upper(),
+        source_object_marker_present=False,
     )
     return result
 
@@ -1655,6 +1685,8 @@ def run_query_or_raise(
             started_at=started_at,
             finished_at=finished_at,
             actual_query_executed=False,
+            account_usage_marker_present="ACCOUNT_USAGE" in str(query_text or "").upper(),
+            source_object_marker_present=False,
         )
         return empty_paused_result(ttl_key=ttl_key, section=section)
     if not _check_query_budget(tier, ttl_key, query_text):
@@ -1704,6 +1736,8 @@ def run_query_or_raise(
             started_at=started_at,
             finished_at=finished_at,
             actual_query_executed=False,
+            account_usage_marker_present="ACCOUNT_USAGE" in str(query_text or "").upper(),
+            source_object_marker_present=False,
         )
         return result
     error_message = ""
@@ -1787,6 +1821,8 @@ def run_query_or_raise(
             finished_at=finished_at,
             error=error_message,
             actual_query_executed=None if use_cache else True,
+            account_usage_marker_present="ACCOUNT_USAGE" in str(query_text or "").upper(),
+            source_object_marker_present=False,
         )
 
 

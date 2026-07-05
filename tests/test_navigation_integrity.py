@@ -1180,6 +1180,15 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("Pipeline / SLA risk", workload_operations.WORKFLOWS)
         self.assertNotIn("Schema & data compare", workload_operations.WORKFLOWS)
         self.assertIn("History Search", query_analysis.QUERY_ANALYSIS_PANES)
+        for lens in workload_operations.QUERY_INVESTIGATION_LENS_OPTIONS:
+            self.assertIn(
+                workload_operations.query_analysis_view_for_workload_lens(lens),
+                query_analysis.QUERY_ANALYSIS_PANES,
+            )
+        self.assertEqual(workload_operations.query_analysis_view_for_workload_lens("Query Search"), "History Search")
+        self.assertEqual(workload_operations.query_analysis_view_for_workload_lens("Top SQL"), "Bottlenecks")
+        self.assertEqual(workload_operations.query_analysis_view_for_workload_lens("User / Role"), "History Search")
+        self.assertEqual(workload_operations.query_analysis_view_for_workload_lens("Warehouse"), "History Search")
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Query Investigation"], "sections.query_analysis")
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Performance & Contention"], "sections.contention_center")
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Advanced DBA Tools"], "sections.dba_tools")

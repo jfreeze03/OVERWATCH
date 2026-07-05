@@ -44,6 +44,7 @@ PRIMARY_SECTIONS = (
 
 _FALLBACK_APPROVED_BOUNDARIES = {
     "decision_packet",
+    "section_summary_autoload",
     "evidence_targeted",
     "query_search_exact",
     "query_search_broad_explicit",
@@ -496,6 +497,7 @@ def _source_runtime_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
             )
         ]
     events: list[dict[str, Any]] = []
+    summary_autoload_count = 0
     for index, row in enumerate(rows):
         reasons: list[str] = []
         if bool(row.get("raw_sql_included")):
@@ -513,6 +515,7 @@ def _source_runtime_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
         direct_sql_count_delta = _as_int(row.get("direct_sql_count_delta"))
         account_usage_count_delta = _as_int(row.get("account_usage_count_delta"))
         metadata_probe_count_delta = _as_int(row.get("metadata_probe_count_delta"))
+        max_rows_value = row.get("max_rows")
         before_first_paint = bool(row.get("before_first_paint") or row.get("first_paint_sensitive"))
         user_initiated = bool(row.get("user_initiated")) or event_type in {"action", "route_action", "evidence_action"}
         account_usage_marker_present = bool(row.get("account_usage_marker_present")) or account_usage_count_delta > 0
@@ -535,6 +538,10 @@ def _source_runtime_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
             or event_type in {"session_open", "role_capture", "explicit_admin_connection_test"}
         )
         route_action_marker_present = bool(row.get("route_action_marker_present")) or event_type == "route_action"
+        source_object_marker_present = bool(row.get("source_object_marker_present"))
+        summary_autoload_marker_present = event_type == "section_summary_autoload" or boundary == "section_summary_autoload"
+        if summary_autoload_marker_present:
+            summary_autoload_count += 1
         if before_first_paint and evidence_loader_marker_present:
             reasons.append("source runtime event loaded evidence before first paint completed")
         if before_first_paint and account_usage_marker_present:
@@ -545,6 +552,33 @@ def _source_runtime_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
             reasons.append("source runtime route action crossed query/session/direct-SQL boundary")
         if query_search_broad_marker_present and not user_initiated:
             reasons.append("source runtime Query Search broad path ran without explicit click")
+        if summary_autoload_marker_present:
+            max_rows = _as_int(max_rows_value)
+            ttl_key = str(row.get("ttl_key") or "").lower()
+            tier = str(row.get("query_tier") or "").lower()
+            if before_first_paint:
+                reasons.append("source runtime summary autoload ran before first paint completed")
+            if not user_initiated:
+                reasons.append("source runtime summary autoload missing user-initiated navigation context")
+            if account_usage_marker_present or account_usage_count_delta:
+                reasons.append("source runtime summary autoload crossed Account Usage")
+            if evidence_loader_marker_present or cost_evidence_marker_present:
+                reasons.append("source runtime summary autoload loaded deep evidence")
+            if setup_live_validation_marker_present:
+                reasons.append("source runtime summary autoload crossed setup/live validation")
+            if source_object_marker_present:
+                reasons.append("source runtime summary autoload leaked a source-object marker")
+            if query_count_delta and max_rows_value is None:
+                reasons.append("source runtime summary autoload missing max_rows")
+            elif max_rows > 200:
+                reasons.append(f"source runtime summary autoload max_rows={max_rows}")
+            if not (
+                "packet" in ttl_key
+                or "summary" in ttl_key
+                or "brief" in ttl_key
+                or tier in {"command_summary", "section_summary", "standard"}
+            ):
+                reasons.append("source runtime summary autoload is not packet-backed or summary-mart-backed")
         events.append(
             _event_row(
                 row_id=f"source_runtime_event::{_identity(row, index)}",
@@ -577,6 +611,17 @@ def _source_runtime_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
                 broad_load_before_filter=bool(row.get("broad_load_before_filter")),
                 passed=not reasons,
                 failure_reason="; ".join(reasons),
+            )
+        )
+    if summary_autoload_count <= 0:
+        events.append(
+            _event_row(
+                row_id="source_runtime_event_ledger::missing_section_summary_autoload",
+                commit_sha=commit_sha,
+                event_type="section_summary_autoload",
+                query_boundary="section_summary_autoload",
+                passed=False,
+                failure_reason="missing app-source section_summary_autoload runtime event row",
             )
         )
     return events
@@ -626,6 +671,10 @@ def normalize_source_runtime_event_rows(
                 "app_source_section": str(row.get("section") or ""),
                 "app_source_workflow": str(row.get("workflow") or ""),
                 "action_id": str(row.get("action_id") or ""),
+                "stable_key": str(row.get("stable_key") or row.get("action_id") or ""),
+                "rendered_action_id": str(row.get("rendered_action_id") or ""),
+                "clicked_action_id": str(row.get("clicked_action_id") or row.get("rendered_action_id") or ""),
+                "source_runtime_action_id_original": str(row.get("source_runtime_action_id_original") or ""),
                 "boundary": boundary,
                 "product_boundary": boundary,
                 "execution_boundary": boundary,
@@ -660,6 +709,7 @@ def normalize_source_runtime_event_rows(
                 or boundary in {"admin_setup_health", "setup_admin", "live_validation", "explicit_connection_test"},
                 "route_action_marker_present": bool(row.get("route_action_marker_present"))
                 or event_type == "route_action",
+                "source_object_marker_present": bool(row.get("source_object_marker_present")),
                 "target_pushdown_violation": bool(row.get("target_pushdown_violation")),
                 "broad_load_before_filter": bool(row.get("broad_load_before_filter")),
                 "producer": str(row.get("producer") or "runtime_state"),
@@ -686,12 +736,20 @@ def build_source_runtime_event_ledger_payload(
     ]
     first_paint_source_count = sum(1 for row in normalized_rows if bool(row.get("before_first_paint")))
     decision_packet_source_count = sum(1 for row in normalized_rows if row.get("execution_boundary") == "decision_packet")
+    section_summary_autoload_source_count = sum(
+        1
+        for row in normalized_rows
+        if row.get("execution_boundary") == "section_summary_autoload"
+        or row.get("event_type") == "section_summary_autoload"
+    )
     if not normalized_rows:
         failures.append({"failure_reason": "missing app-source runtime event ledger rows"})
     if not first_paint_source_count:
         failures.append({"failure_reason": "missing app-source first-paint runtime event row"})
     if not decision_packet_source_count:
         failures.append({"failure_reason": "missing app-source decision_packet runtime event row"})
+    if not section_summary_autoload_source_count:
+        failures.append({"failure_reason": "missing app-source section_summary_autoload runtime event row"})
     return {
         "source": "source_runtime_event_ledger_results",
         "proof_source": "runtime_state",
@@ -705,6 +763,7 @@ def build_source_runtime_event_ledger_payload(
         "event_count": len(normalized_rows),
         "first_paint_source_event_count": first_paint_source_count,
         "decision_packet_source_event_count": decision_packet_source_count,
+        "section_summary_autoload_source_event_count": section_summary_autoload_source_count,
         "route_action_source_event_count": sum(1 for row in normalized_rows if bool(row.get("route_action_marker_present"))),
         "query_count": sum(_as_int(row.get("query_count_delta")) for row in normalized_rows),
         "session_open_count": sum(_as_int(row.get("session_open_count_delta")) for row in normalized_rows),
@@ -738,6 +797,8 @@ def build_source_runtime_event_ledger_gate(payload: Mapping[str, Any]) -> dict[s
         failures.append({"failure_reason": "missing app-source first-paint runtime event row"})
     if _as_int(payload.get("decision_packet_source_event_count")) <= 0:
         failures.append({"failure_reason": "missing app-source decision_packet runtime event row"})
+    if _as_int(payload.get("section_summary_autoload_source_event_count")) <= 0:
+        failures.append({"failure_reason": "missing app-source section_summary_autoload runtime event row"})
     return {
         "source": "source_runtime_event_ledger_gate_results",
         "gate": "source_runtime_event_ledger",
@@ -751,6 +812,7 @@ def build_source_runtime_event_ledger_gate(payload: Mapping[str, Any]) -> dict[s
         "event_count": _as_int(payload.get("event_count")),
         "first_paint_source_event_count": _as_int(payload.get("first_paint_source_event_count")),
         "decision_packet_source_event_count": _as_int(payload.get("decision_packet_source_event_count")),
+        "section_summary_autoload_source_event_count": _as_int(payload.get("section_summary_autoload_source_event_count")),
         "route_action_source_event_count": _as_int(payload.get("route_action_source_event_count")),
         "query_count": _as_int(payload.get("query_count")),
         "session_open_count": _as_int(payload.get("session_open_count")),
@@ -813,6 +875,13 @@ def build_runtime_event_ledger_results(root: Path | str = ".") -> dict[str, Any]
             if row.get("before_first_paint")
         ),
         "decision_packet_query_count": len([row for row in events if row.get("query_boundary") == "decision_packet"]),
+        "section_summary_autoload_query_count": len([row for row in events if row.get("query_boundary") == "section_summary_autoload"]),
+        "summary_autoload_violation_count": sum(
+            1
+            for row in events
+            if row.get("query_boundary") == "section_summary_autoload"
+            and not bool(row.get("passed"))
+        ),
         "evidence_query_count_before_first_paint": sum(1 for row in events if row.get("evidence_loader_marker_present") and row.get("before_first_paint")),
         "account_usage_query_count_before_first_paint": sum(1 for row in events if row.get("account_usage_marker_present") and row.get("before_first_paint")),
         "cost_overview_autoload_violation_count": sum(1 for row in events if row.get("cost_evidence_marker_present") and row.get("event_type") == "cost_overview"),
@@ -853,6 +922,8 @@ def build_runtime_event_ledger_gate(results: Mapping[str, Any]) -> dict[str, Any
         "cost_overview_autoload_violation_count": _as_int(results.get("cost_overview_autoload_violation_count")),
         "pre_first_paint_session_open_count": _as_int(results.get("pre_first_paint_session_open_count")),
         "source_runtime_event_count": _as_int(results.get("source_runtime_event_count")),
+        "section_summary_autoload_query_count": _as_int(results.get("section_summary_autoload_query_count")),
+        "summary_autoload_violation_count": _as_int(results.get("summary_autoload_violation_count")),
         "admin_connection_test_count": _as_int(results.get("admin_connection_test_count")),
         "explicit_connection_test_count": _as_int(results.get("explicit_connection_test_count")),
         "rows": rows,

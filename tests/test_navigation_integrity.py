@@ -1093,7 +1093,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         root_manifest = (ROOT / "snowflake.yml").read_text(encoding="utf-8")
         self.assertIn("definition_version: 2", manifest)
         self.assertIn("query_warehouse: COMPUTE_WH", manifest)
-        self.assertIn("execute_as: CALLER", manifest)
+        self.assertNotIn("execute_as:", manifest)
         self.assertIn("main_file: app.py", manifest)
         self.assertIn("- app.py", manifest)
         self.assertIn("- environment.yml", manifest)

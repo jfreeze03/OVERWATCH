@@ -8,18 +8,18 @@
 # Deployment:
 #   snow streamlit deploy --replace
 #
-# execute_as: CALLER keeps OVERWATCH as an operator-read app. Do not switch this
-# manifest to OWNER unless the release process explicitly accepts owner-rights
-# action execution.
+# Streamlit in Snowflake uses owner rights by default. Snowflake's Streamlit
+# project definition does not support execution-mode override keys; keep
+# owner-rights safety enforced in app code and release gates.
 # -----------------------------------------------------------------------------
-# CALLER MODE MEANS:
-#   Every SQL statement executes with the privileges of whoever opened the app.
-#   SNOW_ACCOUNTADMINS and SNOW_SYSADMINS have full access - all OVERWATCH
-#   features work without any additional grants.
+# OWNER-RIGHTS SAFETY MEANS:
+#   SQL statements execute through the reviewed OVERWATCH app owner context, so
+#   the app must keep first paint packet-only, gate live/admin actions, and avoid
+#   exposing raw source details in daily UI.
 #
-# IMPLICATION FOR FUTURE USERS:
+# IMPLICATION FOR APP OWNER ROLE:
 #   If you later create a dedicated OVERWATCH admin role, grant it the same
-#   privileges before its sessions can query:
+#   privileges before deploying the app:
 #
 #     -- Required for ALL ACCOUNT_USAGE queries (every section)
 #     GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE <role>;
@@ -53,7 +53,6 @@ entities:
     # Warehouse used by SiS for Python execution. SQL queries run here unless
     # the session executes USE WAREHOUSE first.
     query_warehouse: COMPUTE_WH
-    execute_as: CALLER
     main_file: app.py
     artifacts:
       - app.py

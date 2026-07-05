@@ -2329,7 +2329,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(sis["MANIFEST"], ".overwatch_final/snowflake.yml")
         self.assertEqual(sis["ENTRYPOINT"], ".overwatch_final/app.py")
         self.assertEqual(sis["WAREHOUSE"], "COMPUTE_WH")
-        self.assertEqual(sis["EXECUTE_AS"], "CALLER")
+        self.assertEqual(sis["EXECUTE_AS"], "owner_default_no_manifest_key")
         self.assertIn("streamlit_app.py", sis["DO_NOT_USE"])
         self.assertNotIn("COMPUTE_WH", sis["DO_NOT_USE"])
 

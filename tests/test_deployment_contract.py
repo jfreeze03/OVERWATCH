@@ -85,7 +85,7 @@ class DeploymentContractTests(unittest.TestCase):
             "Snowflake manifest file",
             "Snowflake entrypoint",
             "Snowflake runtime warehouse",
-            "Snowflake caller boundary",
+            "Snowflake owner-rights boundary",
             "Snowflake package artifacts",
             "Theme asset package",
             "Community Cloud wrapper",
@@ -106,7 +106,7 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertEqual(snowflake["ENTRYPOINT"], ".overwatch_final/app.py")
         self.assertEqual(snowflake["MANIFEST"], ".overwatch_final/snowflake.yml")
         self.assertEqual(snowflake["WAREHOUSE"], "COMPUTE_WH")
-        self.assertEqual(snowflake["EXECUTE_AS"], "CALLER")
+        self.assertEqual(snowflake["EXECUTE_AS"], "owner_default_no_manifest_key")
         self.assertIn("streamlit_app.py", snowflake["DO_NOT_USE"])
         self.assertNotIn("COMPUTE_WH", snowflake["DO_NOT_USE"])
 
@@ -122,7 +122,7 @@ class DeploymentContractTests(unittest.TestCase):
                 self.assertIn(f"- {artifact}", manifest)
                 self.assertTrue((APP_ROOT / artifact.rstrip("/")).exists())
 
-        self.assertNotIn("execute_as: OWNER", manifest)
+        self.assertNotIn("execute_as:", manifest)
 
     def test_theme_assets_are_packaged_and_non_empty(self):
         theme_asset_dir = APP_ROOT / "theme_assets"
@@ -159,7 +159,7 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertEqual(streamlit_app["identifier"]["schema"], "OVERWATCH")
         self.assertEqual(streamlit_app["identifier"]["name"], "OVERWATCH")
         self.assertEqual(streamlit_app["query_warehouse"], "COMPUTE_WH")
-        self.assertEqual(streamlit_app["execute_as"], "CALLER")
+        self.assertNotIn("execute_as", streamlit_app)
         self.assertEqual(streamlit_app["main_file"], "app.py")
         self.assertIsInstance(streamlit_app["artifacts"], list)
         self.assertEqual(streamlit_app["artifacts"], list(STREAMLIT_SNOWFLAKE_ARTIFACTS))
@@ -178,7 +178,7 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertEqual(streamlit_app["query_warehouse"], "COMPUTE_WH")
         self.assertEqual(streamlit_app["compute_pool"], "SYSTEM_COMPUTE_POOL_CPU")
         self.assertEqual(streamlit_app["runtime_name"], "SYSTEM$ST_CONTAINER_RUNTIME_PY3_11")
-        self.assertEqual(streamlit_app["execute_as"], "CALLER")
+        self.assertNotIn("execute_as", streamlit_app)
         self.assertEqual(streamlit_app["main_file"], "app.py")
         self.assertEqual(streamlit_app["artifacts"], list(STREAMLIT_ROOT_MANIFEST_ARTIFACTS))
 

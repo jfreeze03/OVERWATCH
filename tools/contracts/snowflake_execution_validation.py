@@ -1277,13 +1277,11 @@ def _streamlit_manifest_validation(root: Path) -> dict[str, Any]:
         "dest: app.py": "ROOT_APP_DEST_MISSING",
         "compute_pool: SYSTEM_COMPUTE_POOL_CPU": "ROOT_COMPUTE_POOL_MISSING",
         "query_warehouse: COMPUTE_WH": "ROOT_QUERY_WAREHOUSE_MISSING",
-        "execute_as: CALLER": "ROOT_CALLER_MODE_MISSING",
     }
     required_package_tokens = {
         "definition_version: 2": "PACKAGE_DEFINITION_VERSION_MISSING",
         "main_file: app.py": "PACKAGE_MAIN_FILE_MISSING",
         "query_warehouse: COMPUTE_WH": "PACKAGE_QUERY_WAREHOUSE_MISSING",
-        "execute_as: CALLER": "PACKAGE_CALLER_MODE_MISSING",
     }
     if not root_manifest.exists():
         failures.append({"code": "ROOT_SNOWFLAKE_MANIFEST_MISSING"})
@@ -1295,6 +1293,9 @@ def _streamlit_manifest_validation(root: Path) -> dict[str, Any]:
     for token, code in required_package_tokens.items():
         if token not in package_text:
             failures.append({"code": code})
+    for manifest_name, text in (("root", root_text), ("package", package_text)):
+        if "execute_as:" in text:
+            failures.append({"code": "UNSUPPORTED_STREAMLIT_EXECUTE_AS", "manifest": manifest_name})
     for artifact in (
         "access_control.py", "app_entry_timing.py", "config.py", "filters.py", "layout.py",
         "navigation.py", "perf_trace.py", "refresh.py", "route_registry.py", "runtime_state.py",

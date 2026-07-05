@@ -21,7 +21,6 @@ entities:
     query_warehouse: COMPUTE_WH
     compute_pool: SYSTEM_COMPUTE_POOL_CPU
     runtime_name: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11
-    execute_as: CALLER
     main_file: app.py
     artifacts:
       - src: .overwatch_final/app.py

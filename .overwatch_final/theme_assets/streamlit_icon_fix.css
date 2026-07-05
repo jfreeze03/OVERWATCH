@@ -590,6 +590,9 @@ div[class*="st-key-"][class*="_decision_workspace_shell"] .ow-decision-workspace
     grid-template-columns: minmax(0, 2fr) minmax(280px, .95fr);
     gap: .95rem;
 }
+.ow-decision-main-grid-single {
+    grid-template-columns: minmax(0, 1fr);
+}
 .ow-decision-attention-panel,
 .ow-decision-actions-panel {
     border: 1px solid rgba(170, 188, 200, .13);
@@ -597,6 +600,26 @@ div[class*="st-key-"][class*="_decision_workspace_shell"] .ow-decision-workspace
     border-radius: 9px;
     padding: 1rem 1rem .9rem;
     min-height: 272px;
+}
+div[class*="st-key-"][class*="_recommended_actions_panel"] {
+    border: 1px solid rgba(170, 188, 200, .13);
+    background:
+        linear-gradient(180deg, rgba(10, 29, 42, .82), rgba(5, 16, 24, .88)),
+        rgba(6, 19, 28, .34);
+    border-radius: 9px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035);
+    padding: 1rem 1rem .9rem;
+    min-height: 240px;
+}
+div[class*="_decision_workspace_shell"] div.stVerticalBlock:has(> div.stElementContainer .ow-decision-actions-panel-label) {
+    border: 1px solid rgba(170, 188, 200, .13);
+    background:
+        linear-gradient(180deg, rgba(10, 29, 42, .82), rgba(5, 16, 24, .88)),
+        rgba(6, 19, 28, .34);
+    border-radius: 9px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035);
+    padding: 1rem 1rem .9rem;
+    min-height: 240px;
 }
 .ow-decision-attention-panel h4,
 .ow-decision-actions-panel-label,
@@ -677,8 +700,44 @@ div[class*="st-key-"][class*="_decision_workspace_shell"] .ow-decision-workspace
 .ow-decision-actions-panel-label {
     margin: .1rem 0 .75rem;
 }
+div[class*="st-key-"][class*="_recommended_actions_panel"] [data-testid="stHorizontalBlock"] {
+    align-items: center;
+    gap: .75rem;
+    margin: 0 0 .7rem;
+    padding: .62rem .7rem;
+    border: 1px solid rgba(170, 188, 200, .12);
+    border-radius: 8px;
+    background: rgba(2, 13, 21, .42);
+}
+div[class*="_decision_workspace_shell"] div.stVerticalBlock:has(> div.stElementContainer .ow-decision-actions-panel-label) > div[data-testid="stHorizontalBlock"] {
+    align-items: center;
+    gap: .75rem;
+    margin: 0 0 .7rem;
+    padding: .62rem .7rem;
+    border: 1px solid rgba(170, 188, 200, .12);
+    border-radius: 8px;
+    background: rgba(2, 13, 21, .42);
+}
+.ow-decision-action-row-copy {
+    display: flex;
+    flex-direction: column;
+    gap: .2rem;
+    min-width: 0;
+}
+.ow-decision-action-row-copy strong {
+    color: var(--ow-text) !important;
+    font-size: .94rem;
+    line-height: 1.2;
+}
+.ow-decision-action-row-copy small {
+    color: var(--ow-text-secondary) !important;
+    font-size: .76rem;
+    line-height: 1.25;
+}
 .ow-decision-actions-panel + div [data-testid="stButton"] button,
-.ow-decision-actions-panel-label ~ div [data-testid="stButton"] button {
+.ow-decision-actions-panel-label ~ div [data-testid="stButton"] button,
+div[class*="st-key-"][class*="_recommended_actions_panel"] [data-testid="stButton"] button,
+div[class*="_decision_workspace_shell"] div.stVerticalBlock:has(> div.stElementContainer .ow-decision-actions-panel-label) [data-testid="stButton"] button {
     min-height: 44px !important;
     border-radius: 7px !important;
 }

@@ -212,8 +212,12 @@ def _section_layout_rows(root: Path) -> list[dict[str, Any]]:
         metric_row_present = "ow-kit-metric-row" in html and 3 <= metric_count <= 5
         attention_present = "What needs attention" in html and "ow-kit-signal-panel" in html
         changed_present = "What changed" in html and "ow-kit-change-panel" in html
-        action_present = "Recommended action" in html and "ow-kit-action-panel" in html
-        evidence_cta_present = "Load " in html and "Evidence" in html
+        action_present = (
+            "_render_workspace_actions" in renderer_source
+            and "_recommended_actions_panel" in renderer_source
+            and "ow-decision-actions-panel-label" in renderer_source
+        )
+        evidence_cta_present = "controls.evidence_action" in renderer_source and "_render_detail_action" in renderer_source
         data_trust_present = "Data Trust" in html and "ow-kit-data-trust" in html
         passed = all(
             (

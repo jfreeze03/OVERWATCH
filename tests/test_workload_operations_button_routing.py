@@ -84,6 +84,73 @@ class WorkloadOperationsButtonRoutingTests(unittest.TestCase):
 
         self.assertNotIn(workload.PIPELINE_TASK_HEALTH_WORKFLOW, workload.PIPELINE_FOCUS_ALIASES)
 
+    def test_pipeline_task_focus_default_does_not_clobber_inner_workflow(self) -> None:
+        import sections.workload_operations as workload
+
+        fake_state = {
+            "_workload_pipeline_task_focus_default_applied": "Suspended Tasks",
+            "task_management_view": "Control Center",
+        }
+        updates: list[tuple[str, object]] = []
+
+        def fake_set_state(key: str, value: object) -> None:
+            fake_state[key] = value
+            updates.append((key, value))
+
+        with (
+            patch.object(workload.st, "session_state", fake_state),
+            patch.object(workload, "set_state", side_effect=fake_set_state),
+        ):
+            workload._apply_task_management_route_default(
+                "Suspended Tasks",
+                "Job Status Brief",
+                embedded_lens="Suspended Tasks",
+                status_filter="Suspended",
+            )
+
+        self.assertEqual(fake_state["task_management_view"], "Control Center")
+        self.assertNotIn(("task_management_view", "Job Status Brief"), updates)
+        self.assertIn(("task_management_embedded_lens", "Suspended Tasks"), updates)
+        self.assertIn(("task_management_status_filter", "Suspended"), updates)
+
+    def test_pipeline_task_focus_default_keeps_existing_inner_view_without_marker(self) -> None:
+        import sections.workload_operations as workload
+
+        fake_state = {"task_management_view": "Control Center"}
+        updates: list[tuple[str, object]] = []
+
+        def fake_set_state(key: str, value: object) -> None:
+            fake_state[key] = value
+            updates.append((key, value))
+
+        with (
+            patch.object(workload.st, "session_state", fake_state),
+            patch.object(workload, "set_state", side_effect=fake_set_state),
+        ):
+            workload._apply_task_management_route_default("Failed Tasks", "Job Status Brief")
+
+        self.assertEqual(fake_state["task_management_view"], "Control Center")
+        self.assertIn(("_workload_pipeline_task_focus_default_applied", "Failed Tasks"), updates)
+        self.assertNotIn(("task_management_view", "Job Status Brief"), updates)
+
+    def test_pipeline_task_focus_default_sets_initial_inner_workflow(self) -> None:
+        import sections.workload_operations as workload
+
+        fake_state: dict[str, object] = {}
+
+        def fake_set_state(key: str, value: object) -> None:
+            fake_state[key] = value
+
+        with (
+            patch.object(workload.st, "session_state", fake_state),
+            patch.object(workload, "set_state", side_effect=fake_set_state),
+        ):
+            workload._apply_task_management_route_default("SLA Risk", "SLA & Cost Drift", embedded_lens="SLA Risk")
+
+        self.assertEqual(fake_state["task_management_view"], "SLA & Cost Drift")
+        self.assertEqual(fake_state["task_management_embedded_lens"], "SLA Risk")
+        self.assertEqual(fake_state["_workload_pipeline_task_focus_default_applied"], "SLA Risk")
+
 
 if __name__ == "__main__":
     unittest.main()

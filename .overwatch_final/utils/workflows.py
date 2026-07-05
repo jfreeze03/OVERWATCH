@@ -11,6 +11,8 @@ from collections.abc import Mapping, Sequence
 
 import streamlit as st
 
+from runtime_state import set_state
+
 from .cost import freshness_note, get_credit_price, metric_confidence_label
 from .section_guidance import defer_section_note, defer_source_note
 
@@ -393,7 +395,7 @@ def coerce_workflow_state(key: str, workflows: Sequence[str]) -> str:
     selected = st.session_state.get(key, workflows[0])
     if selected not in workflows:
         selected = workflows[0]
-        st.session_state[key] = selected
+        set_state(key, selected)
     return str(selected)
 
 
@@ -439,8 +441,25 @@ def _render_workflow_button_rows(
                     type="primary" if is_selected else "secondary",
                     width="stretch",
                 ):
-                    st.session_state[key] = workflow
+                    set_state(key, workflow)
                     st.rerun()
+
+
+def _render_workflow_selector_marker(
+    *,
+    label: str,
+    selected: str,
+    labels: Mapping[str, str],
+) -> None:
+    """Expose active nested workflow state for runtime proof and styling."""
+    selected_label = str(labels.get(selected, selected))
+    st.html(
+        '<div class="ow-workflow-selector" '
+        f'data-active="{html.escape(str(selected), quote=True)}" '
+        f'data-active-label="{html.escape(selected_label, quote=True)}">'
+        f'<span class="ow-sr-only">{html.escape(str(label or "Workflow selector"))}</span>'
+        '</div>'
+    )
 
 
 def _render_selector_context(
@@ -490,6 +509,7 @@ def render_workflow_selector(
     items = list(workflows)
     columns = max(1, min(int(columns or 4), 5))
     visible_items, hidden_items = workflow_selector_groups(selected, items, collapse_after=collapse_after)
+    _render_workflow_selector_marker(label=label, selected=selected, labels=labels)
     if compact_details:
         _render_selector_context(label=label, selected=selected, details=details, labels=labels)
     _render_workflow_button_rows(

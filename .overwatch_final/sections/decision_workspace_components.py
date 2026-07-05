@@ -412,7 +412,6 @@ def render_command_brief(model: object) -> str:
     )
     metrics = render_metric_row(tuple(_value(model, "metric_cells", default=()) or ()))
     signals = render_signal_panel(tuple(_value(model, "findings", default=()) or ()))
-    actions = render_action_row(tuple(_value(model, "actions", default=()) or ()))
     changes = render_change_panel(model)
     trust = _value(model, "trust", default={})
     footer = render_data_trust_footer(
@@ -430,9 +429,8 @@ def render_command_brief(model: object) -> str:
         'aria-label="CommandBrief">'
         + hero
         + metrics
-        + '<div class="ow-decision-main-grid">'
+        + '<div class="ow-decision-main-grid ow-decision-main-grid-single">'
         + signals
-        + actions
         + "</div>"
         + changes
         + footer

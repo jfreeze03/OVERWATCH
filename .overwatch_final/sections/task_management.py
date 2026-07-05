@@ -1,4 +1,6 @@
 # sections/task_management.py - Task Management compatibility facade/route
+import html
+
 import streamlit as st
 
 from sections.task_management_action_queue import *
@@ -40,6 +42,17 @@ TASK_MANAGEMENT_RENDERERS = {
 }
 
 
+def _render_task_management_active_marker(task_view: str) -> None:
+    """Expose active task-management subsection for browser/runtime checks."""
+    safe_view = html.escape(str(task_view or "Job Status Brief"), quote=True)
+    st.html(
+        '<div class="ow-workflow-selector ow-task-management-selector" '
+        f'data-active="{safe_view}" data-active-label="{safe_view}">'
+        '<span class="ow-sr-only">Task management workflow</span>'
+        '</div>'
+    )
+
+
 def render():
     task_view = render_workflow_selector(
         "Task management workflow",
@@ -48,6 +61,7 @@ def render():
         TASK_CONTROL_DETAILS,
         columns=3,
     )
+    _render_task_management_active_marker(task_view)
     session = get_session_for_action(
         "load task management evidence",
         surface="Task Management",
@@ -76,5 +90,5 @@ __all__ = sorted(set(
     + list(_etl_audit_view_all)
     + list(_control_view_all)
     + list(_execute_view_all)
-    + ["TASK_MANAGEMENT_RENDERERS", "render"]
+    + ["TASK_MANAGEMENT_RENDERERS", "_render_task_management_active_marker", "render"]
 ))

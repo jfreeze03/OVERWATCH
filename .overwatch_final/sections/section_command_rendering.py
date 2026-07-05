@@ -261,6 +261,16 @@ def _render_detail_action(
         st.rerun()
 
 
+def _render_action_copy(label: object, detail: object = "") -> None:
+    """Render the descriptive half of a real Streamlit action row."""
+    st.html(
+        '<div class="ow-decision-action-row-copy">'
+        f'<strong>{_html(_public_text(label))}</strong>'
+        f'<small>{_html(_public_text(detail or "Action runs after explicit click."))}</small>'
+        "</div>"
+    )
+
+
 def _render_fallback(
     model: DecisionWorkspaceViewModel,
     *,
@@ -342,51 +352,67 @@ def _render_fallback(
             actions.append("evidence")
         if not actions:
             return
-        cols = st.columns(len(actions))
-        for idx, action in enumerate(actions):
-            with cols[idx]:
-                if action == "refresh" and st.button(
-                    "Refresh",
-                    key=f"{key_prefix}_fallback_refresh_packet",
-                    type="secondary",
-                    width="stretch",
-                    help="Refresh the Decision packet for this scope",
-                ):
-                    _close_first_paint_for_user_action()
-                    refresh_action()
-                    st.rerun()
-                elif action == "initialize" and st.button(
-                    fallback.recovery_label,
-                    key=f"{key_prefix}_initialize_summaries",
-                    width="stretch",
-                ):
-                    _close_first_paint_for_user_action()
-                    with query_budget_context(
-                        "admin_setup",
-                        section=model.section,
-                        workflow=model.workflow or "Decision Summary Initialization",
-                        budget=ADMIN_CLICK_QUERY_BUDGET,
-                    ):
-                        st.session_state[BOOTSTRAP_REQUEST_KEY] = True
-                    st.rerun()
-                elif action == "setup_health" and st.button(
-                    "Open Setup Health",
-                    key=f"{key_prefix}_open_setup_health",
-                    type="secondary",
-                    width="stretch",
-                    help="Open Settings to review Decision summary setup health.",
-                ):
-                    _close_first_paint_for_user_action()
-                    with query_budget_context(
-                        "route_action",
-                        section=model.section,
-                        workflow=model.workflow,
-                        budget=SECTION_ROUTE_QUERY_BUDGET,
-                    ):
-                        open_decision_setup_health()
-                    st.rerun()
+        with st.container(key=f"{key_prefix}_recommended_actions_panel", border=False):
+            st.html('<div class="ow-decision-actions-panel-label">Recommended actions</div>')
+            for action in actions:
+                label_col, button_col = st.columns([3.2, 1.35])
+                if action == "refresh":
+                    with label_col:
+                        _render_action_copy("Refresh", "Refresh the Decision packet for this scope.")
+                    with button_col:
+                        if st.button(
+                            "Refresh",
+                            key=f"{key_prefix}_fallback_refresh_packet",
+                            type="secondary",
+                            width="stretch",
+                            help="Refresh the Decision packet for this scope",
+                        ):
+                            _close_first_paint_for_user_action()
+                            refresh_action()
+                            st.rerun()
+                elif action == "initialize":
+                    with label_col:
+                        _render_action_copy(fallback.recovery_label, "Initialize current summary packets for this scope.")
+                    with button_col:
+                        if st.button(
+                            fallback.recovery_label,
+                            key=f"{key_prefix}_fallback_initialize_summaries",
+                            width="stretch",
+                        ):
+                            _close_first_paint_for_user_action()
+                            with query_budget_context(
+                                "admin_setup",
+                                section=model.section,
+                                workflow=model.workflow or "Decision Summary Initialization",
+                                budget=ADMIN_CLICK_QUERY_BUDGET,
+                            ):
+                                st.session_state[BOOTSTRAP_REQUEST_KEY] = True
+                            st.rerun()
+                elif action == "setup_health":
+                    with label_col:
+                        _render_action_copy("Open Setup Health", "Review setup health in Settings.")
+                    with button_col:
+                        if st.button(
+                            "Open Setup Health",
+                            key=f"{key_prefix}_fallback_open_setup_health",
+                            type="secondary",
+                            width="stretch",
+                            help="Open Settings to review Decision summary setup health.",
+                        ):
+                            _close_first_paint_for_user_action()
+                            with query_budget_context(
+                                "route_action",
+                                section=model.section,
+                                workflow=model.workflow,
+                                budget=SECTION_ROUTE_QUERY_BUDGET,
+                            ):
+                                open_decision_setup_health()
+                            st.rerun()
                 elif action == "evidence":
-                    _render_detail_action(key_prefix=key_prefix, detail_action=detail_action)
+                    with label_col:
+                        _render_action_copy(detail_action.label, detail_action.help_text or "Load scoped evidence for this section.")
+                    with button_col:
+                        _render_detail_action(key_prefix=key_prefix, detail_action=detail_action)
 
 
 def _action_route_key(action: object) -> str:
@@ -530,57 +556,98 @@ def _render_workspace_actions(
     *,
     key_prefix: str,
 ) -> None:
-    st.markdown('<div class="ow-decision-actions-panel-label">Recommended actions</div>', unsafe_allow_html=True)
     actions = dedupe_command_actions(controls.route_actions or model.actions, model.section, model.workflow)
-    if actions:
-        primary = actions[0]
-        label = str(getattr(primary, "cta", "") or getattr(primary, "label", "") or "Open")
-        key_source = str(getattr(primary, "action_key", "") or getattr(primary, "label", "") or "primary")
-        if st.button(
-            f"{label} ->",
-            key=f"{key_prefix}_primary_{_key_token(key_source)}",
-            type="primary",
-            width="stretch",
-        ):
-            _close_first_paint_for_user_action()
-            if _apply_route_action(
-                primary,
-                finding=_finding_for_action(model, primary),
-                section=model.section,
-                workflow=model.workflow,
-            ):
-                st.rerun()
-        for index, action in enumerate(actions[1:3], start=1):
+    with st.container(key=f"{key_prefix}_recommended_actions_panel", border=False):
+        st.html('<div class="ow-decision-actions-panel-label">Recommended actions</div>')
+        rendered_any = False
+        if controls.can_refresh and controls.refresh_packet is not None:
+            rendered_any = True
+            label_col, button_col = st.columns([3.2, 1.35])
+            with label_col:
+                _render_action_copy("Refresh", "Refresh the Decision packet for this scope.")
+            with button_col:
+                if st.button(
+                    "Refresh",
+                    key=f"{key_prefix}_refresh_packet",
+                    type="secondary",
+                    width="stretch",
+                    help="Refresh the Decision packet for this scope",
+                ):
+                    _close_first_paint_for_user_action()
+                    controls.refresh_packet()
+                    st.rerun()
+        priority_action = _priority_route_action(model)
+        if priority_action is not None:
+            rendered_any = True
+            label_col, button_col = st.columns([3.2, 1.35])
+            with label_col:
+                _render_action_copy("View all priorities", "Open the section priority list without loading evidence rows.")
+            with button_col:
+                if st.button(
+                    "View all priorities",
+                    key=f"{key_prefix}_view_all_priorities",
+                    type="secondary",
+                    width="stretch",
+                    help="Open the current section priority list without loading row evidence.",
+                ):
+                    _close_first_paint_for_user_action()
+                    if _apply_route_action(
+                        priority_action,
+                        finding=_finding_for_action(model, priority_action),
+                        section=model.section,
+                        workflow=model.workflow,
+                    ):
+                        st.rerun()
+        for index, action in enumerate(actions[:3], start=1):
+            rendered_any = True
             label = str(getattr(action, "cta", "") or getattr(action, "label", "") or "Open")
-            key_source = str(getattr(action, "action_key", "") or getattr(action, "label", "") or f"secondary_{index}")
-            if st.button(
-                f"{label} ->",
-                key=f"{key_prefix}_secondary_{index}_{_key_token(key_source)}",
-                type="secondary",
-                width="stretch",
-            ):
-                _close_first_paint_for_user_action()
-                if _apply_route_action(
-                    action,
-                    finding=_finding_for_action(model, action),
+            detail = str(getattr(action, "detail", "") or "Route to the selected workflow without loading evidence.")
+            key_source = str(getattr(action, "action_key", "") or getattr(action, "label", "") or f"route_{index}")
+            label_col, button_col = st.columns([3.2, 1.35])
+            with label_col:
+                _render_action_copy(label, detail)
+            with button_col:
+                if st.button(
+                    label,
+                    key=f"{key_prefix}_route_{index}_{_key_token(key_source)}",
+                    type="primary" if index == 1 and controls.evidence_action is None else "secondary",
+                    width="stretch",
+                ):
+                    _close_first_paint_for_user_action()
+                    if _apply_route_action(
+                        action,
+                        finding=_finding_for_action(model, action),
+                        section=model.section,
+                        workflow=model.workflow,
+                    ):
+                        st.rerun()
+        if controls.evidence_action is not None:
+            rendered_any = True
+            top_finding = model.findings[0] if model.findings else None
+            label_col, button_col = st.columns([3.2, 1.35])
+            with label_col:
+                _render_action_copy(
+                    controls.evidence_action.label,
+                    controls.evidence_action.help_text or "Load scoped evidence for this section.",
+                )
+            with button_col:
+                _render_detail_action(
+                    key_prefix=key_prefix,
+                    detail_action=controls.evidence_action,
+                    evidence_target=top_finding,
                     section=model.section,
                     workflow=model.workflow,
-                ):
-                    st.rerun()
-    if controls.evidence_action is not None:
-        st.markdown('<div class="ow-decision-evidence-action-shell">', unsafe_allow_html=True)
-        top_finding = model.findings[0] if model.findings else None
-        _render_detail_action(
-            key_prefix=key_prefix,
-            detail_action=controls.evidence_action,
-            evidence_target=top_finding,
-            section=model.section,
-            workflow=model.workflow,
-        )
-        settings_renderer = controls.evidence_action.settings_renderer or controls.evidence_settings
-        if settings_renderer is not None:
-            render_evidence_settings(controls.evidence_action.settings_label, settings_renderer)
-        st.markdown("</div>", unsafe_allow_html=True)
+                )
+            settings_renderer = controls.evidence_action.settings_renderer or controls.evidence_settings
+            if settings_renderer is not None:
+                render_evidence_settings(controls.evidence_action.settings_label, settings_renderer)
+        if not rendered_any:
+            st.html(
+                '<div class="ow-decision-action-row-copy">'
+                "<strong>Continue monitoring</strong>"
+                "<small>No explicit action is required for this packet.</small>"
+                "</div>"
+            )
 
 
 def _command_brief_render_model(
@@ -680,36 +747,7 @@ def render_decision_workspace(
         )
         st.html(_breadcrumb_html(parts))
         st.html(_kit_command_brief(_command_brief_render_model(model, controls)))
-        action_left, action_right = st.columns([0.42, 0.58])
-        with action_left:
-            if controls.can_refresh and controls.refresh_packet is not None and st.button(
-                "Refresh",
-                key=f"{key_prefix}_refresh_packet",
-                type="secondary",
-                width="stretch",
-                help="Refresh the Decision packet for this scope",
-            ):
-                _close_first_paint_for_user_action()
-                controls.refresh_packet()
-                st.rerun()
-            priority_action = _priority_route_action(model)
-            if priority_action is not None and st.button(
-                "View all priorities",
-                key=f"{key_prefix}_view_all_priorities",
-                type="secondary",
-                width="stretch",
-                help="Open the current section priority list without loading row evidence.",
-            ):
-                _close_first_paint_for_user_action()
-                if _apply_route_action(
-                    priority_action,
-                    finding=_finding_for_action(model, priority_action),
-                    section=model.section,
-                    workflow=model.workflow,
-                ):
-                    st.rerun()
-        with action_right:
-            _render_workspace_actions(model, controls, key_prefix=key_prefix)
+        _render_workspace_actions(model, controls, key_prefix=key_prefix)
         if model.has_sources:
             with st.expander("Data Trust details", expanded=False):
                 st.html(f'<div class="ow-decision-source-drawer">{_trust_detail_html(model)}</div>')

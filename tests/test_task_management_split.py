@@ -77,6 +77,16 @@ class TaskManagementSplitTests(unittest.TestCase):
         self.assertIs(task_management.TASK_MANAGEMENT_RENDERERS["Control Center"], control_view.render_task_control_center)
         self.assertIs(task_management.TASK_MANAGEMENT_RENDERERS["Execute Task"], execute_view.render_task_execute_task)
 
+    def test_task_management_active_marker_is_rendered_before_session_load(self):
+        source = Path(task_management.__file__).read_text(encoding="utf-8")
+
+        self.assertIn("def _render_task_management_active_marker", source)
+        self.assertIn("ow-task-management-selector", source)
+        self.assertLess(
+            source.index("_render_task_management_active_marker(task_view)"),
+            source.index("get_session_for_action("),
+        )
+
     def test_task_management_view_key_strings_are_preserved(self):
         sources = {
             "history": Path(history_view.__file__).read_text(encoding="utf-8"),

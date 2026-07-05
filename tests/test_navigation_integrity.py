@@ -2343,6 +2343,15 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Morning Cockpit", dba_visible)
         self.assertIn("Control Room Admin / Advanced", dba_hidden)
 
+    def test_nested_workflow_selector_exposes_active_marker_and_uses_safe_state(self):
+        source = (APP_ROOT / "utils" / "workflows.py").read_text(encoding="utf-8")
+
+        self.assertIn("from runtime_state import set_state", source)
+        self.assertIn("def _render_workflow_selector_marker", source)
+        self.assertIn("ow-workflow-selector", source)
+        self.assertIn("_render_workflow_selector_marker(", source)
+        self.assertNotIn("st.session_state[key] = workflow", source)
+
     def test_first_paint_summary_shell_skips_empty_metric_groups(self):
         from sections import shell_helpers
 

@@ -556,6 +556,33 @@ def _set_task_management_route(
         st.session_state.pop("task_management_status_filter", None)
 
 
+def _apply_task_management_route_default(
+    focus: str,
+    view: str,
+    *,
+    embedded_lens: str = "",
+    status_filter: str = "",
+) -> None:
+    """Set the embedded task default once per Pipeline & Tasks focus."""
+    marker_key = "_workload_pipeline_task_focus_default_applied"
+    current_view = str(st.session_state.get("task_management_view") or "")
+    previous_focus = str(st.session_state.get(marker_key) or "")
+    if not current_view or (previous_focus and previous_focus != focus):
+        _set_task_management_route(view, embedded_lens=embedded_lens, status_filter=status_filter)
+        set_state(marker_key, focus)
+        return
+    if not previous_focus:
+        set_state(marker_key, focus)
+    if embedded_lens:
+        set_state("task_management_embedded_lens", embedded_lens)
+    else:
+        st.session_state.pop("task_management_embedded_lens", None)
+    if status_filter:
+        set_state("task_management_status_filter", status_filter)
+    else:
+        st.session_state.pop("task_management_status_filter", None)
+
+
 def _set_route_state_now(key: str, value: object) -> None:
     """Set non-widget Workload route state immediately."""
     try:
@@ -702,11 +729,16 @@ def _render_pipeline_task_health_surface() -> None:
         key=PIPELINE_FOCUS_KEY,
     )
     if focus == "SLA Risk":
-        _set_task_management_route("SLA & Cost Drift", embedded_lens="SLA Risk")
+        _apply_task_management_route_default(
+            focus,
+            "SLA & Cost Drift",
+            embedded_lens="SLA Risk",
+        )
         render_workflow_module(PIPELINE_TASK_FOCUS, {PIPELINE_TASK_FOCUS: "sections.task_management"})
         return
     if focus == "Suspended Tasks":
-        _set_task_management_route(
+        _apply_task_management_route_default(
+            focus,
             "Job Status Brief",
             embedded_lens="Suspended Tasks",
             status_filter="Suspended",
@@ -720,7 +752,7 @@ def _render_pipeline_task_health_surface() -> None:
         set_state("pipeline_health_active_view", "Load Failures")
         render_workflow_module(focus, {focus: "sections.pipeline_health"})
         return
-    _set_task_management_route("Job Status Brief")
+    _apply_task_management_route_default(focus, "Job Status Brief")
     render_workflow_module(focus, {focus: "sections.task_management"})
 
 

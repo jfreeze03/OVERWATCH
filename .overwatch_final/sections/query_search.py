@@ -14,7 +14,7 @@ from utils import (
     sql_literal,
 )
 from utils.mart_names import mart_object_name
-from performance import ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED, query_budget_context
+from utils.performance import ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED, query_budget_context
 from runtime_state import record_runtime_event
 from sections.decision_workspace_target_filters import build_target_predicate_plan, evidence_target_label
 

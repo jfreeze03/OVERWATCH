@@ -8,7 +8,7 @@ from config import (
     SECTION_BY_TITLE,
     normalize_section_name,
 )
-from performance import SECTION_ROUTE_QUERY_BUDGET, query_budget_context
+from utils.performance import SECTION_ROUTE_QUERY_BUDGET, query_budget_context
 from runtime_state import set_state
 from utils.primitives import (
     safe_float,

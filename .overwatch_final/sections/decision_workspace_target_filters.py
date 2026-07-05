@@ -8,7 +8,7 @@ from typing import Any
 
 import streamlit as st
 
-from performance import (
+from utils.performance import (
     TARGETED_EVIDENCE_DEFAULT_LIMIT,
     TARGETED_EVIDENCE_MAX_LIMIT,
     record_ui_query_event,

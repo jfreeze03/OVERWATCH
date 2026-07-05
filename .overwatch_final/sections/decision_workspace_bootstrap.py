@@ -12,7 +12,7 @@ from sections.base import lazy_util
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.decision_workspace_setup_health import record_decision_bootstrap_health
 from sections.section_command_contracts import CANONICAL_COMMAND_BRIEF_SECTIONS
-from performance import DECISION_BOOTSTRAP_QUERY_BUDGET, query_budget_context
+from utils.performance import DECISION_BOOTSTRAP_QUERY_BUDGET, query_budget_context
 from runtime_state import ACTIVE_COMPANY, GLOBAL_ENVIRONMENT
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
+from utils.performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.security_posture_access_review import _security_exception_environment, _security_owner_context
 from sections.security_posture_action_queue import _queue_privileged_grant_actions

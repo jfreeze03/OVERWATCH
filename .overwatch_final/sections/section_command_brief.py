@@ -11,7 +11,7 @@ import time
 import pandas as pd
 import streamlit as st
 
-from performance import record_ui_query_event
+from utils.performance import record_ui_query_event
 from sections.decision_workspace_fixtures import build_fixture_brief
 from sections.decision_workspace_state import decision_fixture_enabled, snowflake_entry_available
 from sections.section_command_contracts import SectionCommandContract, get_section_command_contract

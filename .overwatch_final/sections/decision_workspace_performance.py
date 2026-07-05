@@ -5,7 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Callable, Iterator, TypeVar
 
-from performance import begin_first_paint, end_first_paint
+from utils.performance import begin_first_paint, end_first_paint
 
 
 T = TypeVar("T")

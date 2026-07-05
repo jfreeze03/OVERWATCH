@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 import streamlit as st
 
-from performance import ADMIN_CLICK_QUERY_BUDGET, EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
+from utils.performance import ADMIN_CLICK_QUERY_BUDGET, EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
 from sections.shell_helpers import (
     consume_section_autoload_request,
     render_decision_evidence_panel,

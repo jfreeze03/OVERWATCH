@@ -19,7 +19,7 @@ from .helpers import safe_float
 from .workflows import add_cost_companion_columns, prioritize_context_columns
 from .workflows import apply_operator_status_labels
 from .workflows import render_mode_selector, render_priority_dataframe
-from performance import query_budget_context
+from utils.performance import query_budget_context
 
 
 DISPLAY_VERSION = "2026-06-05-chart-drillback-cost-v1"

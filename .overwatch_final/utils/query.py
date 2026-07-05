@@ -53,7 +53,7 @@ from .session import apply_overwatch_query_tag, build_overwatch_query_tag, get_s
 from .data import normalize_df
 from .idle import empty_paused_result, queries_paused
 from .sql_safe import sql_literal
-from performance import (
+from utils.performance import (
     assert_first_paint_query_allowed,
     begin_direct_sql_allowance,
     current_first_paint_render_id,

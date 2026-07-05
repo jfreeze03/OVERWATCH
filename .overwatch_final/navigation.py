@@ -17,7 +17,7 @@ from config import (
     compatibility_state_for_section,
     normalize_section_name,
 )
-from performance import SECTION_ROUTE_QUERY_BUDGET, query_budget_context
+from utils.performance import SECTION_ROUTE_QUERY_BUDGET, query_budget_context
 from runtime_state import (
     ACTIVE_SECTION,
     LAST_RENDERED_SECTION,

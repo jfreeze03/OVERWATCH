@@ -16,7 +16,7 @@ from sections.decision_workspace_target_filters import (
 from utils.mart_names import mart_object_name
 from utils.primitives import safe_float, safe_int
 from utils.sql_safe import sql_literal
-from performance import TARGETED_EVIDENCE_DEFAULT_LIMIT, TARGETED_EVIDENCE_MAX_LIMIT
+from utils.performance import TARGETED_EVIDENCE_DEFAULT_LIMIT, TARGETED_EVIDENCE_MAX_LIMIT
 
 
 pd = lazy_pandas()

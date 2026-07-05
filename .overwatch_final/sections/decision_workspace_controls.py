@@ -8,7 +8,7 @@ from typing import Any
 
 import streamlit as st
 
-from performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
+from utils.performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
 from runtime_state import record_runtime_event, set_state
 from sections.decision_workspace_target_filters import (
     SECTION_TARGET_COLUMNS,

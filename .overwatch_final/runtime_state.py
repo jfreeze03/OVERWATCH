@@ -13,7 +13,7 @@ from uuid import uuid4
 import streamlit as st
 
 from config import DEFAULT_COMPANY
-from runtime_boundaries import normalize_release_boundary
+from utils.runtime_boundaries import normalize_release_boundary
 from utils.evidence_mode import (
     TRIAGE_MODE_TRIAGE,
     evidence_mode_from_exceptions,

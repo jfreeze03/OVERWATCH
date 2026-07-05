@@ -13,7 +13,7 @@ from uuid import uuid4
 import streamlit as st
 
 from config import ADMIN_ACCESS_ROLES
-from performance import ADMIN_CLICK_QUERY_BUDGET, query_budget_context
+from utils.performance import ADMIN_CLICK_QUERY_BUDGET, query_budget_context
 from runtime_state import CURRENT_ROLE, SIDEBAR_PANEL
 
 

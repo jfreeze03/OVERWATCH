@@ -6,7 +6,7 @@ from importlib import import_module
 
 import streamlit as st
 
-from performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
+from utils.performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
 from runtime_state import set_state
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.navigation import apply_section_workflow_navigation

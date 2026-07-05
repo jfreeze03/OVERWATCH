@@ -10,7 +10,7 @@ import re
 
 import streamlit as st
 
-from performance import (
+from utils.performance import (
     ADMIN_CLICK_QUERY_BUDGET,
     SECTION_ROUTE_QUERY_BUDGET,
     current_first_paint_render_id,

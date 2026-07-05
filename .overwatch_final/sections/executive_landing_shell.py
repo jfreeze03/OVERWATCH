@@ -10,7 +10,7 @@ import importlib
 import streamlit as st
 
 from config import DEFAULT_DAY_WINDOW
-from performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
+from utils.performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
 from runtime_state import EXECUTIVE_LANDING_WORKFLOW, GLOBAL_END_DATE, GLOBAL_START_DATE, get_state
 from sections.base import lazy_util as _lazy_util
 from sections.triage_queue import render_mission_control_queue

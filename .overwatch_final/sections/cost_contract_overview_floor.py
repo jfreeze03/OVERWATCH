@@ -4,7 +4,7 @@ from __future__ import annotations
 import streamlit as st
 
 from config import DAY_WINDOW_OPTIONS, DEFAULTS, DEFAULT_DAY_WINDOW
-from performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
+from utils.performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
 from runtime_state import set_state
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.cost_contract_advisor_panels import (

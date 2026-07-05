@@ -30,7 +30,7 @@ from runtime_state import (
     pop_state,
     set_state,
 )
-from performance import (
+from utils.performance import (
     assert_direct_sql_allowed,
     assert_first_paint_session_open_allowed,
     current_first_paint_section,

@@ -30,6 +30,7 @@ from runtime_state import (
     SECTION_TRANSITION_STARTED_AT,
     get_state,
     pop_state,
+    record_runtime_event,
     set_state,
 )
 
@@ -123,6 +124,19 @@ def queue_section_navigation(section: str) -> None:
         request_section_workspace(target)
         apply_section_compatibility_state(raw_section)
         set_state(NAV_SECTION, target)
+        record_runtime_event(
+            event_type="route_action",
+            route=target,
+            section=target,
+            workflow="",
+            boundary="metadata_bounded",
+            product_boundary="metadata_bounded",
+            execution_boundary="metadata_bounded",
+            action_id=f"nav::{target.lower().replace(' ', '_')}",
+            user_initiated=True,
+            route_action_marker_present=True,
+            source_module="navigation.queue_section_navigation",
+        )
 
 
 def mark_section_rendered(section: str, signature: tuple) -> None:

@@ -30,7 +30,7 @@ from tools.contracts.artifact_verifier import (
 from tools.contracts.export_case_parity import EXPORT_CASE_PARITY_GATE_REL
 from tools.contracts.release_evidence_registry import RELEASE_EVIDENCE_REGISTRY_GATE_REL
 from tools.contracts.route_action_replay import ROUTE_ACTION_REPLAY_GATE_REL
-from tools.contracts.runtime_event_ledger import RUNTIME_EVENT_LEDGER_GATE_REL
+from tools.contracts.runtime_event_ledger import RUNTIME_EVENT_LEDGER_GATE_REL, SOURCE_RUNTIME_EVENT_LEDGER_GATE_REL
 from tools.contracts.ci_artifact_reality import (
     CI_ARTIFACT_REALITY_GATE_REL,
     CI_ARTIFACT_REALITY_RESULTS_REL,
@@ -522,6 +522,7 @@ def _final_release_candidate_summary(root: Path, results: Mapping[str, Any]) -> 
     artifact_integrity_gate = _load_json(root, ARTIFACT_INTEGRITY_GATE_REL)
     release_registry_gate = _load_json(root, RELEASE_EVIDENCE_REGISTRY_GATE_REL)
     runtime_event_gate = _load_json(root, RUNTIME_EVENT_LEDGER_GATE_REL)
+    source_runtime_event_gate = _load_json(root, SOURCE_RUNTIME_EVENT_LEDGER_GATE_REL)
     route_replay_gate = _load_json(root, ROUTE_ACTION_REPLAY_GATE_REL)
     export_case_parity_gate = _load_json(root, EXPORT_CASE_PARITY_GATE_REL)
     first_paint_slo_gate = _load_json(root, "artifacts/launch_readiness/first_paint_slo_gate_results.json")
@@ -588,6 +589,15 @@ def _final_release_candidate_summary(root: Path, results: Mapping[str, Any]) -> 
         ),
         "runtime_event_ledger_failure_count": _as_int(
             runtime_event_gate.get("failure_count", launch_summary.get("runtime_event_ledger_failure_count"))
+        ),
+        "source_runtime_event_ledger_passed": bool(
+            source_runtime_event_gate.get("passed", launch_summary.get("source_runtime_event_ledger_passed"))
+        ),
+        "source_runtime_event_ledger_failure_count": _as_int(
+            source_runtime_event_gate.get(
+                "failure_count",
+                launch_summary.get("source_runtime_event_ledger_failure_count"),
+            )
         ),
         "route_action_replay_passed": bool(
             route_replay_gate.get("passed", launch_summary.get("route_action_replay_passed"))
@@ -801,6 +811,12 @@ def run_production_release_candidate(
             RUNTIME_EVENT_LEDGER_GATE_REL,
             lambda _r: payloads,
             gate_rel=RUNTIME_EVENT_LEDGER_GATE_REL,
+        )
+        add(
+            "source_runtime_event_ledger",
+            SOURCE_RUNTIME_EVENT_LEDGER_GATE_REL,
+            lambda _r: payloads,
+            gate_rel=SOURCE_RUNTIME_EVENT_LEDGER_GATE_REL,
         )
         add(
             "route_action_replay",

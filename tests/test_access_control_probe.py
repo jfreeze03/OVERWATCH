@@ -71,6 +71,9 @@ class AccessControlProbeTests(unittest.TestCase):
         events = get_runtime_event_ledger()
         admin_events = [event for event in events if event["event_type"] == "explicit_admin_connection_test"]
         self.assertEqual(len(admin_events), 1)
+        self.assertEqual(admin_events[0]["boundary"], "explicit_connection_test")
+        self.assertEqual(admin_events[0]["product_boundary"], "admin_setup_health")
+        self.assertEqual(admin_events[0]["execution_boundary"], "explicit_connection_test")
         self.assertEqual(admin_events[0]["source_module"], "access_control.explicit_admin_connection_test")
         self.assertTrue(admin_events[0]["setup_live_validation_marker_present"])
         self.assertFalse(admin_events[0]["raw_sql_included"])

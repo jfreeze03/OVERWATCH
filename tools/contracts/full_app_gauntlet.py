@@ -22,6 +22,10 @@ from tools.contracts.access_control_runtime import (
     ACCESS_CONTROL_RUNTIME_RESULTS_REL,
     write_access_control_runtime_artifacts,
 )
+from tools.contracts.app_entry_smoke import (
+    APP_ENTRY_SMOKE_RESULTS_REL,
+    write_app_entry_smoke_artifacts,
+)
 from tools.contracts.browser_render_gauntlet import (
     BROWSER_RENDER_ARTIFACTS,
     BROWSER_RENDER_GATE_REL,
@@ -44,6 +48,11 @@ from tools.contracts.full_app_launch_gauntlet import (
 )
 from tools.contracts.full_app_runtime_validation import write_full_app_validation_artifacts
 from tools.contracts.full_app_validation_inventory import write_full_app_contract_inventory_artifacts
+from tools.contracts.import_laziness import (
+    IMPORT_LAZINESS_RESULTS_REL,
+    RUNTIME_IMPORT_GRAPH_RESULTS_REL,
+    write_import_laziness_artifacts,
+)
 from tools.contracts.rendered_ui_leak_scan import (
     RENDERED_UI_LEAK_ARTIFACTS,
     write_rendered_ui_leak_scan_artifacts,
@@ -173,6 +182,12 @@ REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
     SQL_VALUE_INVENTORY_REL,
     SQL_DEAD_CODE_SCAN_REL,
 }
+ARCHITECTURE_FULL_APP_VALIDATION_ARTIFACTS = {
+    APP_ENTRY_SMOKE_RESULTS_REL,
+    IMPORT_LAZINESS_RESULTS_REL,
+    RUNTIME_IMPORT_GRAPH_RESULTS_REL,
+}
+REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS.update(ARCHITECTURE_FULL_APP_VALIDATION_ARTIFACTS)
 
 
 def _write_json(path: Path, payload: Any) -> None:
@@ -1255,6 +1270,16 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
     cleanup_artifacts = write_cleanup_artifacts(root_path)
     inventory_artifacts = write_full_app_contract_inventory_artifacts(root_path)
     validation_artifacts = write_full_app_validation_artifacts(root_path)
+    app_entry_smoke_artifacts = {
+        rel: payload
+        for rel, payload in write_app_entry_smoke_artifacts(root_path).items()
+        if rel.startswith("artifacts/full_app_validation/")
+    }
+    import_laziness_artifacts = {
+        rel: payload
+        for rel, payload in write_import_laziness_artifacts(root_path).items()
+        if rel.startswith("artifacts/full_app_validation/")
+    }
     deterministic_render_artifacts = write_deterministic_streamlit_render_artifacts(root_path)
     browser_smoke_artifacts = write_browser_smoke_runner_artifacts(root_path)
     browser_render_artifacts = write_browser_render_gauntlet_artifacts(root_path)
@@ -1301,6 +1326,8 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
         **cleanup_artifacts,
         **inventory_artifacts,
         **validation_artifacts,
+        **app_entry_smoke_artifacts,
+        **import_laziness_artifacts,
         **deterministic_render_artifacts,
         **browser_smoke_artifacts,
         **browser_render_artifacts,
@@ -1361,6 +1388,7 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             SQL_VALUE_INVENTORY_REL,
             SQL_DEAD_CODE_SCAN_REL,
             ACCESS_CONTROL_RUNTIME_RESULTS_REL,
+            *ARCHITECTURE_FULL_APP_VALIDATION_ARTIFACTS,
             TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL,
             QUERY_SEARCH_AUTORUN_RESULTS_REL,
             RUNTIME_ARTIFACT_PROVENANCE_REL,
@@ -1421,6 +1449,7 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             SQL_VALUE_INVENTORY_REL,
             SQL_DEAD_CODE_SCAN_REL,
             ACCESS_CONTROL_RUNTIME_RESULTS_REL,
+            *ARCHITECTURE_FULL_APP_VALIDATION_ARTIFACTS,
             TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL,
             QUERY_SEARCH_AUTORUN_RESULTS_REL,
             RUNTIME_ARTIFACT_PROVENANCE_REL,

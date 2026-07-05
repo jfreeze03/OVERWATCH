@@ -14,6 +14,7 @@ from tools.contracts.route_action_replay import (
     QUERY_SEARCH_AUTORUN_REL,
     ROUTE_ACTION_REPLAY_GATE_REL,
     SETTINGS_ACTION_REL,
+    SOURCE_RUNTIME_EVENT_LEDGER_REL,
     build_route_action_replay_results,
     write_route_action_replay_artifacts,
 )
@@ -101,6 +102,67 @@ class RouteActionReplayTests(unittest.TestCase):
             {"rows": [{"id": "cost", "commit_sha": self.commit, "passed": True, "autoload_violation_count": 0}]},
         )
         self._write_json(root, SETTINGS_ACTION_REL, {"rows": [{"clicked": True}]})
+        source_rows = [
+            {
+                "event_id": f"source-first-paint-{section.lower().replace(' ', '-')}",
+                "event_type": "query",
+                "section": section,
+                "workflow": "Overview",
+                "execution_boundary": "decision_packet",
+                "query_count_delta": 1,
+                "before_first_paint": True,
+                "producer": "runtime_state",
+                "producer_signature": "sig",
+                "commit_sha": self.commit,
+                "raw_sql_included": False,
+            }
+            for section in PRIMARY_SECTIONS
+        ]
+        source_rows.extend(
+            [
+                {
+                    "event_id": "source-route-credential",
+                    "event_type": "route_action",
+                    "section": "Alert Center",
+                    "workflow": "Overview",
+                    "action_id": "review_credential_expirations",
+                    "execution_boundary": "metadata_bounded",
+                    "route_action_marker_present": True,
+                    "user_initiated": True,
+                    "producer": "runtime_state",
+                    "producer_signature": "sig",
+                    "commit_sha": self.commit,
+                    "raw_sql_included": False,
+                },
+                {
+                    "event_id": "source-query-search-no-click",
+                    "event_type": "scenario_boundary",
+                    "section": "Query Search",
+                    "workflow": "render_no_click",
+                    "execution_boundary": "metadata_bounded",
+                    "producer": "runtime_state",
+                    "producer_signature": "sig",
+                    "commit_sha": self.commit,
+                    "raw_sql_included": False,
+                },
+            ]
+        )
+        self._write_json(
+            root,
+            SOURCE_RUNTIME_EVENT_LEDGER_REL,
+            {
+                "producer": "full_app_runtime_validation",
+                "producer_signature": "sig",
+                "commit_sha": self.commit,
+                "rows": source_rows,
+                "event_count": len(source_rows),
+                "first_paint_source_event_count": len(PRIMARY_SECTIONS),
+                "decision_packet_source_event_count": len(PRIMARY_SECTIONS),
+                "route_action_source_event_count": 1,
+                "passed": True,
+                "raw_sql_included": False,
+            },
+        )
 
     def test_passing_replay_artifacts_emit_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

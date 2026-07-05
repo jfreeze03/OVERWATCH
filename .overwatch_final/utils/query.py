@@ -61,6 +61,7 @@ from performance import (
     get_snowflake_execution_counter,
     increment_snowflake_execution_counter,
     is_first_paint_active,
+    normalize_query_boundary,
     record_query_lint_finding,
     record_ui_query_event,
 )
@@ -132,7 +133,8 @@ def _record_query_source_event(
     actual_query_executed: object = None,
 ) -> None:
     """Record the query module's source event without storing SQL text."""
-    boundary_text = str(boundary or "")
+    raw_boundary_text = str(boundary or "")
+    boundary_text = normalize_query_boundary(raw_boundary_text)
     marker_text = " ".join([boundary_text, str(ttl_key or ""), str(section or "")]).lower()
     before_first_paint = bool(is_first_paint_active() or current_first_paint_render_id())
     try:
@@ -142,7 +144,7 @@ def _record_query_source_event(
             section=_infer_telemetry_section(section, ttl_key),
             workflow=workflow,
             boundary=boundary_text,
-            product_boundary=boundary_text,
+            product_boundary=raw_boundary_text,
             execution_boundary=boundary_text,
             query_tier=tier,
             ttl_key=ttl_key,
@@ -155,11 +157,11 @@ def _record_query_source_event(
             before_first_paint=before_first_paint,
             after_first_paint=not before_first_paint,
             user_initiated=False,
-            account_usage_marker_present=boundary_text == "account_usage" or "account_usage" in marker_text,
+            account_usage_marker_present=raw_boundary_text == "account_usage" or "account_usage" in marker_text,
             evidence_loader_marker_present="evidence" in marker_text,
             cost_evidence_marker_present="cost" in marker_text,
             query_search_broad_marker_present="query_search_broad" in marker_text or "deep_history" in marker_text,
-            setup_live_validation_marker_present=boundary_text in {"setup_health", "admin", "live_validation"},
+            setup_live_validation_marker_present=boundary_text in {"admin_setup_health", "setup_admin", "live_validation", "explicit_connection_test"},
             raw_sql_included=False,
             started_at=started_at,
             finished_at=finished_at,
@@ -367,20 +369,20 @@ def _infer_query_boundary(query_text: str = "", ttl_key: str = "", tier: str = "
     key = str(ttl_key or "").lower()
     tier_text = str(tier or "").lower()
     if key.startswith("query_search_"):
-        return "query_search"
+        return "query_search_exact"
     if key.startswith("query_text_preview_"):
-        return "query_preview"
+        return "metadata_bounded"
     if key.startswith("section_command_packet_") or "MART_SECTION_DECISION_CURRENT" in sql:
         return "decision_packet"
     if "OVERWATCH_DECISION_SETUP_HEALTH" in sql or "setup_health" in key:
-        return "setup_health"
+        return "admin_setup_health"
     if "SNOWFLAKE.ACCOUNT_USAGE" in sql:
-        return "account_usage"
+        return "query_search_broad_explicit"
     if tier_text == "metadata" or _query_is_metadata_probe(sql):
-        return "metadata"
+        return "metadata_bounded"
     if any(token in key for token in ("evidence", "proof", "detail", "history", "splash", "cockpit")):
-        return "evidence"
-    return "other"
+        return "evidence_targeted"
+    return "metadata_bounded"
 
 
 _TARGET_METADATA_COLUMNS = (
@@ -395,7 +397,11 @@ _TARGET_METADATA_COLUMNS = (
 
 def _target_metadata_from_sql(query_text: str, boundary: str) -> dict[str, object]:
     """Extract SQL-free target predicate metadata for telemetry artifacts."""
-    if str(boundary or "") not in {"evidence", "query_search"}:
+    if normalize_query_boundary(str(boundary or "")) not in {
+        "evidence_targeted",
+        "query_search_exact",
+        "query_search_broad_explicit",
+    }:
         return {
             "target_predicate_marker_present": None,
             "target_columns_used": [],
@@ -420,16 +426,16 @@ def _target_metadata_from_sql(query_text: str, boundary: str) -> dict[str, objec
 
 _CRITICAL_TTL_BOUNDARIES: tuple[tuple[str, str], ...] = (
     (r"^section_command_packet_", "decision_packet"),
-    (r"^query_search_recent_detail_", "query_search"),
-    (r"^query_search_related_", "query_search"),
-    (r"^query_text_preview_", "query_preview"),
-    (r"^query_search_account_usage_", "account_usage"),
-    (r"setup_health|decision_setup_health", "setup_health"),
-    (r"cost_targeted_evidence|cost_bounded_evidence|cc_targeted_evidence", "evidence"),
-    (r"alert_.*(evidence|history|delivery|action)", "evidence"),
-    (r"dba_.*(evidence|proof|failed)|dba_control_room_.*", "evidence"),
-    (r"workload_.*(evidence|pipeline)|query_search_recent_detail", "query_search"),
-    (r"security_.*(evidence|proof)", "evidence"),
+    (r"^query_search_recent_detail_", "query_search_exact"),
+    (r"^query_search_related_", "query_search_exact"),
+    (r"^query_text_preview_", "metadata_bounded"),
+    (r"^query_search_account_usage_", "query_search_broad_explicit"),
+    (r"setup_health|decision_setup_health", "admin_setup_health"),
+    (r"cost_targeted_evidence|cost_bounded_evidence|cc_targeted_evidence", "evidence_targeted"),
+    (r"alert_.*(evidence|history|delivery|action)", "evidence_targeted"),
+    (r"dba_.*(evidence|proof|failed)|dba_control_room_.*", "evidence_targeted"),
+    (r"workload_.*(evidence|pipeline)|query_search_recent_detail", "query_search_exact"),
+    (r"security_.*(evidence|proof)", "evidence_targeted"),
 )
 
 
@@ -452,7 +458,7 @@ def _enforce_explicit_critical_boundary(
     required = _critical_boundary_for_ttl(ttl_key)
     if not required:
         return
-    if query_boundary and str(query_boundary) == required:
+    if query_boundary and normalize_query_boundary(str(query_boundary)) == required:
         return
     message = (
         "Critical Decision Workspace query loaders must pass an explicit "
@@ -475,16 +481,12 @@ def _enforce_explicit_critical_boundary(
 def _first_paint_sensitive_boundary(boundary: str) -> bool:
     return str(boundary or "") in {
         "decision_packet",
-        "evidence",
         "evidence_targeted",
-        "query_search",
         "query_search_exact",
-        "query_preview",
-        "metadata",
-        "account_usage",
+        "metadata_bounded",
         "query_search_broad_explicit",
-        "setup_health",
-        "admin",
+        "admin_setup_health",
+        "setup_admin",
     }
 
 
@@ -515,12 +517,9 @@ def _enforce_query_contract(
     findings = list(lint_query_text(query_text, contract))
     if contract.max_rows is not None and boundary in {
         "decision_packet",
-        "evidence",
         "evidence_targeted",
-        "query_search",
         "query_search_exact",
-        "query_preview",
-        "account_usage",
+        "metadata_bounded",
         "query_search_broad_explicit",
     }:
         if max_rows is None or int(max_rows) > int(contract.max_rows):
@@ -989,7 +988,7 @@ def _execute_snowflake_query(
     query_boundary: str | None = None,
 ) -> pd.DataFrame:
     executable_query = _inject_read_limit(query_text, max_rows=max_rows)
-    boundary = str(query_boundary or _infer_query_boundary(executable_query, ttl_key, tier))
+    boundary = normalize_query_boundary(str(query_boundary or _infer_query_boundary(executable_query, ttl_key, tier)))
     telemetry_section = _infer_telemetry_section(section, ttl_key)
     _enforce_explicit_critical_boundary(
         query_boundary=query_boundary,
@@ -1374,7 +1373,7 @@ def _run_query_base(
     Returns:
         Normalized DataFrame and SQL-free execution metadata.
     """
-    boundary = str(query_boundary or _infer_query_boundary(query_text, ttl_key, tier))
+    boundary = normalize_query_boundary(str(query_boundary or _infer_query_boundary(query_text, ttl_key, tier)))
     telemetry_section = _infer_telemetry_section(section, ttl_key)
     _enforce_explicit_critical_boundary(
         query_boundary=query_boundary,

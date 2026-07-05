@@ -12,7 +12,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 
 FULL_APP_DIR = "artifacts/full_app_validation"
@@ -23,9 +23,11 @@ ROUTE_ACTION_REPLAY_GATE_REL = f"{LAUNCH_READINESS_DIR}/route_action_replay_gate
 
 FIRST_PAINT_REL = f"{FULL_APP_DIR}/first_paint_performance_results.json"
 ACTION_CLICK_REL = f"{FULL_APP_DIR}/action_click_results.json"
+BUTTON_CLICK_REL = f"{FULL_APP_DIR}/button_click_results.json"
 QUERY_SEARCH_AUTORUN_REL = f"{FULL_APP_DIR}/query_search_autorun_results.json"
 COST_NO_AUTOLOAD_REL = f"{FULL_APP_DIR}/cost_overview_no_autoload_results.json"
 SETTINGS_ACTION_REL = f"{FULL_APP_DIR}/settings_action_results.json"
+SOURCE_RUNTIME_EVENT_LEDGER_REL = f"{FULL_APP_DIR}/source_runtime_event_ledger_results.json"
 
 PRODUCER = "route_action_replay"
 PRIMARY_SECTIONS = (
@@ -92,12 +94,87 @@ def _as_int(value: Any) -> int:
         return 0
 
 
+def _action_click_source(root: Path) -> tuple[str, list[Mapping[str, Any]]]:
+    rows = _rows(_load_json(root, ACTION_CLICK_REL))
+    if rows:
+        return ACTION_CLICK_REL, rows
+    return BUTTON_CLICK_REL, _rows(_load_json(root, BUTTON_CLICK_REL))
+
+
+def _query_count(row: Mapping[str, Any]) -> int:
+    if row.get("query_count") is not None:
+        return _as_int(row.get("query_count"))
+    return _as_int(row.get("actual_snowflake_executions"))
+
+
 def _action_id(row: Mapping[str, Any], index: int) -> str:
     for key in ("rendered_action_id", "clicked_action_id", "stable_key", "action_key", "id"):
         value = str(row.get(key) or "")
         if value:
             return value
     return f"action[{index}]"
+
+
+def _source_runtime_rows(root: Path) -> list[Mapping[str, Any]]:
+    return _rows(_load_json(root, SOURCE_RUNTIME_EVENT_LEDGER_REL))
+
+
+def _source_section(row: Mapping[str, Any]) -> str:
+    return str(row.get("section") or row.get("source_render_section") or "").strip()
+
+
+def _source_workflow(row: Mapping[str, Any]) -> str:
+    return str(row.get("workflow") or row.get("source_render_workflow") or "").strip()
+
+
+def _source_first_paint_exists(source_rows: Iterable[Mapping[str, Any]], section: str) -> bool:
+    return any(
+        _source_section(row) == section
+        and bool(row.get("before_first_paint") or row.get("first_paint_sensitive"))
+        and str(row.get("execution_boundary") or row.get("query_boundary") or row.get("boundary") or "") == "decision_packet"
+        for row in source_rows
+    )
+
+
+def _source_route_action_exists(source_rows: Iterable[Mapping[str, Any]], section: str, action_id: str = "") -> bool:
+    for row in source_rows:
+        if section and _source_section(row) != section:
+            continue
+        if not (bool(row.get("route_action_marker_present")) or str(row.get("event_type") or "") == "route_action"):
+            continue
+        if not action_id:
+            return True
+        source_ids = {
+            str(row.get(key) or "")
+            for key in (
+                "action_id",
+                "stable_key",
+                "rendered_action_id",
+                "clicked_action_id",
+                "action_key",
+                "source_runtime_action_id_original",
+            )
+            if str(row.get(key) or "")
+        }
+        if action_id in source_ids:
+            return True
+    return False
+
+
+def _source_query_search_no_click_exists(source_rows: Iterable[Mapping[str, Any]]) -> bool:
+    return any(
+        _source_section(row) == "Query Search"
+        and str(row.get("workflow") or row.get("case") or "").lower() in {"render_no_click", "no click", "no_click"}
+        for row in source_rows
+    )
+
+
+def _target_section(row: Mapping[str, Any]) -> str:
+    for key in ("observed_target", "expected_target"):
+        target = str(row.get(key) or "").strip()
+        if target:
+            return target.split("/", 1)[0].strip()
+    return ""
 
 
 def _scenario(
@@ -115,6 +192,8 @@ def _scenario(
     direct_sql_count: int = 0,
     account_usage_count: int = 0,
     explicit_click_required: bool = False,
+    proof_source: str = "artifact_reconciliation",
+    source_runtime_event_present: bool = False,
     passed: bool = True,
     failure_reason: str = "",
 ) -> dict[str, Any]:
@@ -131,6 +210,8 @@ def _scenario(
         "direct_sql_count": direct_sql_count,
         "account_usage_count": account_usage_count,
         "explicit_click_required": explicit_click_required,
+        "proof_source": proof_source,
+        "source_runtime_event_present": source_runtime_event_present,
         "producer": PRODUCER,
         "producer_signature": _row_signature(row_id, commit_sha),
         "provenance_origin": "producer",
@@ -141,7 +222,7 @@ def _scenario(
     }
 
 
-def _first_paint_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]:
+def _first_paint_scenarios(root: Path, commit_sha: str, source_rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     rows = _rows(_load_json(root, FIRST_PAINT_REL))
     by_section = {str(row.get("section") or ""): row for row in rows if str(row.get("section") or "") in PRIMARY_SECTIONS}
     scenarios: list[dict[str, Any]] = []
@@ -156,12 +237,16 @@ def _first_paint_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]:
                     scenario="primary overview first paint",
                     source_artifact=FIRST_PAINT_REL,
                     section=section,
+                    proof_source="blocked_missing_runtime_harness",
                     passed=False,
                     failure_reason="missing first-paint telemetry row",
                 )
             )
             continue
         reasons: list[str] = []
+        source_present = _source_first_paint_exists(source_rows, section)
+        if not source_present:
+            reasons.append("missing source runtime first-paint replay row")
         if str(row.get("commit_sha") or "") != commit_sha:
             reasons.append("commit_sha mismatch")
         if _as_int(row.get("warm_first_paint_query_count")) > 0:
@@ -184,6 +269,8 @@ def _first_paint_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]:
                 session_open_count=_as_int(row.get("session_open_count")),
                 direct_sql_count=_as_int(row.get("direct_sql_count")),
                 account_usage_count=_as_int(row.get("account_usage_count")),
+                proof_source="source_runtime_replay" if source_present else "blocked_missing_runtime_harness",
+                source_runtime_event_present=source_present,
                 passed=not reasons and bool(row.get("passed", True)),
                 failure_reason="; ".join(reasons or [str(row.get("failure_reason") or "")]).strip(),
             )
@@ -191,9 +278,9 @@ def _first_paint_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]:
     return scenarios
 
 
-def _action_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]:
+def _action_scenarios(root: Path, commit_sha: str, source_rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     scenarios: list[dict[str, Any]] = []
-    rows = _rows(_load_json(root, ACTION_CLICK_REL))
+    action_artifact, rows = _action_click_source(root)
     route_rows = [
         row for row in rows
         if str(row.get("action_area") or row.get("area") or "") == "route_action" and bool(row.get("clicked"))
@@ -209,16 +296,28 @@ def _action_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]:
                 row_id="route_actions::missing",
                 commit_sha=commit_sha,
                 scenario="daily route navigation actions",
-                source_artifact=ACTION_CLICK_REL,
+                source_artifact=action_artifact,
+                proof_source="blocked_missing_runtime_harness",
                 passed=False,
                 failure_reason="missing clicked route-action rows",
             )
         )
     for index, row in enumerate(route_rows):
         reasons: list[str] = []
+        source_section = str(row.get("section") or "")
+        target_section = _target_section(row)
+        source_present = _source_route_action_exists(source_rows, source_section, _action_id(row, index)) or (
+            bool(target_section)
+            and _source_route_action_exists(source_rows, target_section, _action_id(row, index))
+        )
+        if not source_present:
+            reasons.append("missing source runtime route-action replay row")
         if str(row.get("commit_sha") or "") != commit_sha:
             reasons.append("commit_sha mismatch")
-        for key in ("query_count", "session_open_count", "direct_sql_count", "account_usage_count"):
+        query_count = _query_count(row)
+        if query_count > 0:
+            reasons.append(f"query_count={query_count}")
+        for key in ("session_open_count", "direct_sql_count", "account_usage_count"):
             if _as_int(row.get(key)) > 0:
                 reasons.append(f"{key}={_as_int(row.get(key))}")
         if not bool(row.get("passed", True)):
@@ -228,15 +327,17 @@ def _action_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]:
                 row_id=f"route_action::{_action_id(row, index)}",
                 commit_sha=commit_sha,
                 scenario="daily route navigation actions",
-                source_artifact=ACTION_CLICK_REL,
+                source_artifact=action_artifact,
                 source_row_id=_action_id(row, index),
                 section=str(row.get("section") or ""),
                 workflow=str(row.get("workflow") or ""),
                 actions_clicked=1,
-                query_count=_as_int(row.get("query_count")),
+                query_count=query_count,
                 session_open_count=_as_int(row.get("session_open_count")),
                 direct_sql_count=_as_int(row.get("direct_sql_count")),
                 account_usage_count=_as_int(row.get("account_usage_count")),
+                proof_source="source_runtime_replay" if source_present else "blocked_missing_runtime_harness",
+                source_runtime_event_present=source_present,
                 passed=not reasons,
                 failure_reason="; ".join(reasons),
             )
@@ -247,7 +348,7 @@ def _action_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]:
                 row_id="explicit_actions::missing",
                 commit_sha=commit_sha,
                 scenario="explicit evidence/search/workbench actions",
-                source_artifact=ACTION_CLICK_REL,
+                source_artifact=action_artifact,
                 explicit_click_required=True,
                 passed=False,
                 failure_reason="missing clicked explicit action rows",
@@ -266,12 +367,12 @@ def _action_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]:
                 row_id=f"explicit_action::{_action_id(row, index)}",
                 commit_sha=commit_sha,
                 scenario="explicit evidence/search/workbench actions",
-                source_artifact=ACTION_CLICK_REL,
+                source_artifact=action_artifact,
                 source_row_id=_action_id(row, index),
                 section=str(row.get("section") or ""),
                 workflow=str(row.get("workflow") or ""),
                 actions_clicked=1,
-                query_count=_as_int(row.get("query_count")),
+                query_count=_query_count(row),
                 session_open_count=_as_int(row.get("session_open_count")),
                 direct_sql_count=_as_int(row.get("direct_sql_count")),
                 account_usage_count=_as_int(row.get("account_usage_count")),
@@ -283,7 +384,7 @@ def _action_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]:
     return scenarios
 
 
-def _query_search_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]:
+def _query_search_scenarios(root: Path, commit_sha: str, source_rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     rows = _rows(_load_json(root, QUERY_SEARCH_AUTORUN_REL))
     scenarios: list[dict[str, Any]] = []
     required = {"render_no_click", "exact_query_id", "warehouse_prefill_no_autorun", "text_contains_no_autorun"}
@@ -292,6 +393,10 @@ def _query_search_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]
         case = str(row.get("case") or row.get("id") or f"case-{index}")
         seen.add(case)
         reasons: list[str] = []
+        requires_source = case in {"render_no_click", "warehouse_prefill_no_autorun", "text_contains_no_autorun"}
+        source_present = not requires_source or _source_query_search_no_click_exists(source_rows)
+        if requires_source and not source_present:
+            reasons.append("missing source runtime Query Search no-click replay row")
         if str(row.get("commit_sha") or "") != commit_sha:
             reasons.append("commit_sha mismatch")
         if _as_int(row.get("query_search_broad_autorun_count")) > 0:
@@ -309,6 +414,14 @@ def _query_search_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]
                 workflow=case,
                 query_count=_as_int(row.get("query_count")),
                 account_usage_count=_as_int(row.get("account_usage_count")),
+                proof_source=(
+                    "source_runtime_replay"
+                    if source_present and requires_source
+                    else "artifact_reconciliation"
+                    if source_present
+                    else "blocked_missing_runtime_harness"
+                ),
+                source_runtime_event_present=bool(source_present and requires_source),
                 passed=not reasons,
                 failure_reason="; ".join(reasons),
             )
@@ -322,6 +435,7 @@ def _query_search_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]
                 source_artifact=QUERY_SEARCH_AUTORUN_REL,
                 source_row_id=case,
                 section="Query Search",
+                proof_source="blocked_missing_runtime_harness",
                 workflow=case,
                 passed=False,
                 failure_reason="missing Query Search replay row",
@@ -330,7 +444,7 @@ def _query_search_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]
     return scenarios
 
 
-def _cost_and_settings_scenarios(root: Path, commit_sha: str) -> list[dict[str, Any]]:
+def _cost_and_settings_scenarios(root: Path, commit_sha: str, source_rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     scenarios: list[dict[str, Any]] = []
     cost_rows = _rows(_load_json(root, COST_NO_AUTOLOAD_REL))
     if not cost_rows:
@@ -341,12 +455,16 @@ def _cost_and_settings_scenarios(root: Path, commit_sha: str) -> list[dict[str, 
                 scenario="Cost Overview before explicit evidence/workbench action",
                 source_artifact=COST_NO_AUTOLOAD_REL,
                 section="Cost & Contract",
+                proof_source="blocked_missing_runtime_harness",
                 passed=False,
                 failure_reason="missing Cost Overview no-autoload row",
             )
         )
     for index, row in enumerate(cost_rows):
         reasons: list[str] = []
+        source_present = _source_first_paint_exists(source_rows, "Cost & Contract")
+        if not source_present:
+            reasons.append("missing source runtime Cost Overview first-paint replay row")
         if str(row.get("commit_sha") or "") != commit_sha:
             reasons.append("commit_sha mismatch")
         for key in ("autoload_violation_count", "evidence_query_count", "cost_workbench_query_count", "detail_query_count", "account_usage_count", "direct_sql_count"):
@@ -364,6 +482,8 @@ def _cost_and_settings_scenarios(root: Path, commit_sha: str) -> list[dict[str, 
                 query_count=_as_int(row.get("cold_first_paint_packet_query_count")),
                 direct_sql_count=_as_int(row.get("direct_sql_count")),
                 account_usage_count=_as_int(row.get("account_usage_count")),
+                proof_source="source_runtime_replay" if source_present else "blocked_missing_runtime_harness",
+                source_runtime_event_present=source_present,
                 passed=not reasons and bool(row.get("passed", True)),
                 failure_reason="; ".join(reasons or [str(row.get("failure_reason") or "")]).strip(),
             )
@@ -388,11 +508,12 @@ def _cost_and_settings_scenarios(root: Path, commit_sha: str) -> list[dict[str, 
 def build_route_action_replay_results(root: Path | str = ".") -> dict[str, Any]:
     root_path = Path(root).resolve()
     commit_sha = _git_commit(root_path)
+    source_rows = _source_runtime_rows(root_path)
     rows = [
-        *_first_paint_scenarios(root_path, commit_sha),
-        *_action_scenarios(root_path, commit_sha),
-        *_query_search_scenarios(root_path, commit_sha),
-        *_cost_and_settings_scenarios(root_path, commit_sha),
+        *_first_paint_scenarios(root_path, commit_sha, source_rows),
+        *_action_scenarios(root_path, commit_sha, source_rows),
+        *_query_search_scenarios(root_path, commit_sha, source_rows),
+        *_cost_and_settings_scenarios(root_path, commit_sha, source_rows),
     ]
     failures = [row for row in rows if not bool(row.get("passed"))]
     signature = _producer_signature()
@@ -407,6 +528,9 @@ def build_route_action_replay_results(root: Path | str = ".") -> dict[str, Any]:
         "passed": not failures,
         "failure_count": len(failures),
         "scenario_count": len(rows),
+        "source_runtime_event_count": len(source_rows),
+        "blocked_missing_runtime_harness_count": sum(1 for row in rows if row.get("proof_source") == "blocked_missing_runtime_harness"),
+        "source_runtime_replay_count": sum(1 for row in rows if row.get("proof_source") == "source_runtime_replay"),
         "route_action_sql_violation_count": sum(
             1 for row in rows
             if row.get("scenario") == "daily route navigation actions"
@@ -439,6 +563,9 @@ def build_route_action_replay_gate(results: Mapping[str, Any]) -> dict[str, Any]
         "passed": bool(results.get("passed")) and not failures,
         "failure_count": len(failures),
         "scenario_count": _as_int(results.get("scenario_count")),
+        "source_runtime_event_count": _as_int(results.get("source_runtime_event_count")),
+        "blocked_missing_runtime_harness_count": _as_int(results.get("blocked_missing_runtime_harness_count")),
+        "source_runtime_replay_count": _as_int(results.get("source_runtime_replay_count")),
         "route_action_sql_violation_count": _as_int(results.get("route_action_sql_violation_count")),
         "query_search_broad_autorun_count": _as_int(results.get("query_search_broad_autorun_count")),
         "cost_overview_autoload_violation_count": _as_int(results.get("cost_overview_autoload_violation_count")),
@@ -473,6 +600,7 @@ if __name__ == "__main__":
 __all__ = [
     "ROUTE_ACTION_REPLAY_GATE_REL",
     "ROUTE_ACTION_REPLAY_RESULTS_REL",
+    "SOURCE_RUNTIME_EVENT_LEDGER_REL",
     "build_route_action_replay_gate",
     "build_route_action_replay_results",
     "write_route_action_replay_artifacts",

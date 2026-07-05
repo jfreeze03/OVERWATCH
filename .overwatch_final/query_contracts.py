@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from hashlib import sha1
 import re
 from typing import Any
@@ -47,6 +47,21 @@ class QueryLintFinding:
 
 _QUERY_CONTRACTS: list[QueryContract] = []
 
+_BOUNDARY_ALIASES = {
+    "evidence": "evidence_targeted",
+    "compact_evidence": "evidence_targeted",
+    "evidence_action": "evidence_targeted",
+    "query_search": "query_search_exact",
+    "query_search_explicit": "query_search_exact",
+    "query_search_related": "query_search_exact",
+    "account_usage": "query_search_broad_explicit",
+    "deep_history_fallback": "query_search_broad_explicit",
+    "metadata": "metadata_bounded",
+    "query_preview": "metadata_bounded",
+    "setup_health": "admin_setup_health",
+    "admin": "setup_admin",
+}
+
 
 def register_query_contract(contract: QueryContract) -> QueryContract:
     _QUERY_CONTRACTS.append(contract)
@@ -69,6 +84,7 @@ def resolve_query_contract(
     tier: str = "",
 ) -> QueryContract:
     boundary = str(boundary or "other")
+    resolved_boundary = _BOUNDARY_ALIASES.get(boundary.strip().lower(), boundary)
     section = str(section or "")
     ttl_key = str(ttl_key or "")
     tier = str(tier or "")
@@ -76,17 +92,17 @@ def resolve_query_contract(
         if (
             contract.ttl_key_pattern
             and _matches(contract.ttl_key_pattern, ttl_key)
-            and (not contract.boundary or contract.boundary == boundary)
+            and (not contract.boundary or contract.boundary in {boundary, resolved_boundary})
         ):
-            return contract
+            return contract if contract.boundary == boundary else replace(contract, boundary=boundary)
     for contract in _QUERY_CONTRACTS:
-        if contract.boundary != boundary:
+        if contract.boundary not in {boundary, resolved_boundary}:
             continue
         if contract.section and contract.section != section:
             continue
         if contract.tier and tier and contract.tier != tier:
             continue
-        return contract
+        return contract if contract.boundary == boundary else replace(contract, boundary=boundary)
     return QueryContract(
         boundary=boundary,
         contract_id=f"default_{boundary or 'other'}",
@@ -165,7 +181,7 @@ def lint_query_text(sql: str, contract: QueryContract) -> list[QueryLintFinding]
             if family.strip()
         ]
         if expected_families and not any(family in upper for family in expected_families):
-            severity = "error" if contract.boundary == "evidence" else "warning"
+            severity = "error" if contract.boundary == "evidence_targeted" else "warning"
             add("UNEXPECTED_TABLE_FAMILY", severity, "Query does not reference the expected table family.")
     return findings
 
@@ -189,7 +205,7 @@ register_query_contract(
 )
 register_query_contract(
     QueryContract(
-        boundary="evidence",
+        boundary="evidence_targeted",
         contract_id="evidence_default_bounded",
         tier="",
         max_rows=500,
@@ -228,25 +244,24 @@ for _ttl_pattern, _section, _markers, _table_family in (
         "MART_SECURITY_EVIDENCE_RECENT",
     ),
 ):
-    for _boundary in ("evidence", "evidence_targeted"):
-        register_query_contract(
-            QueryContract(
-                boundary=_boundary,
-                contract_id=f"{_section.lower().replace(' ', '_').replace('&', 'and')}_targeted_evidence",
-                section=_section,
-                ttl_key_pattern=_ttl_pattern,
-                tier="",
-                max_rows=500,
-                requires_target_predicate=True,
-                target_predicate_marker_required=True,
-                target_predicate_markers=_markers,
-                requires_target_plan_metadata=True,
-                expected_table_family=_table_family,
-            )
+    register_query_contract(
+        QueryContract(
+            boundary="evidence_targeted",
+            contract_id=f"{_section.lower().replace(' ', '_').replace('&', 'and')}_targeted_evidence",
+            section=_section,
+            ttl_key_pattern=_ttl_pattern,
+            tier="",
+            max_rows=500,
+            requires_target_predicate=True,
+            target_predicate_marker_required=True,
+            target_predicate_markers=_markers,
+            requires_target_plan_metadata=True,
+            expected_table_family=_table_family,
         )
+    )
 register_query_contract(
     QueryContract(
-        boundary="query_search",
+        boundary="query_search_exact",
         contract_id="query_search_exact",
         ttl_key_pattern=r"^query_search_recent_detail_.*Exact query ID",
         tier="recent",
@@ -256,7 +271,7 @@ register_query_contract(
 )
 register_query_contract(
     QueryContract(
-        boundary="query_search",
+        boundary="query_search_exact",
         contract_id="query_search_signature",
         ttl_key_pattern=r"^query_search_recent_detail_.*Query signature",
         tier="recent",
@@ -266,7 +281,7 @@ register_query_contract(
 )
 register_query_contract(
     QueryContract(
-        boundary="query_search",
+        boundary="query_search_exact",
         contract_id="query_search_related",
         ttl_key_pattern=r"^query_search_related_",
         tier="recent",
@@ -276,7 +291,7 @@ register_query_contract(
 )
 register_query_contract(
     QueryContract(
-        boundary="query_search",
+        boundary="query_search_exact",
         contract_id="query_search_recent_detail",
         ttl_key_pattern=r"^query_search_recent_detail_",
         tier="recent",
@@ -286,7 +301,7 @@ register_query_contract(
 )
 register_query_contract(
     QueryContract(
-        boundary="query_preview",
+        boundary="metadata_bounded",
         contract_id="query_preview_text",
         ttl_key_pattern=r"^query_text_preview_",
         tier="recent",
@@ -304,19 +319,18 @@ register_query_contract(
         expected_table_family="FACT_QUERY_DETAIL_RECENT",
     )
 )
-for _fallback_boundary in ("account_usage", "query_search_broad_explicit"):
-    register_query_contract(QueryContract(
-        boundary=_fallback_boundary,
-        contract_id="account_usage_confirmed_fallback",
-        tier="historical",
-        max_rows=200,
-        allow_account_usage=True,
-        allow_metadata=True,
-        first_paint_allowed=False,
-    ))
-register_query_contract(QueryContract(boundary="metadata", contract_id="metadata_probe", tier="metadata", allow_metadata=True))
-register_query_contract(QueryContract(boundary="setup_health", contract_id="setup_health_admin", tier="metadata", allow_metadata=True))
-register_query_contract(QueryContract(boundary="other", contract_id="other_bounded", tier="standard", max_rows=5000))
+register_query_contract(QueryContract(
+    boundary="query_search_broad_explicit",
+    contract_id="account_usage_confirmed_fallback",
+    tier="historical",
+    max_rows=200,
+    allow_account_usage=True,
+    allow_metadata=True,
+    first_paint_allowed=False,
+))
+register_query_contract(QueryContract(boundary="metadata_bounded", contract_id="metadata_probe", tier="metadata", allow_metadata=True))
+register_query_contract(QueryContract(boundary="admin_setup_health", contract_id="setup_health_admin", tier="metadata", allow_metadata=True))
+register_query_contract(QueryContract(boundary="setup_admin", contract_id="setup_admin", tier="admin", allow_metadata=True))
 
 
 __all__ = [

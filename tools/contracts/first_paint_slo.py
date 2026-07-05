@@ -20,6 +20,8 @@ COST_OVERVIEW_NO_AUTOLOAD_RESULTS_REL = f"{FULL_APP_DIR}/cost_overview_no_autolo
 TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL = f"{FULL_APP_DIR}/targeted_evidence_sql_pushdown_results.json"
 QUERY_SEARCH_AUTORUN_RESULTS_REL = f"{FULL_APP_DIR}/query_search_autorun_results.json"
 QUERY_BOUNDARY_LINT_RESULTS_REL = f"{FULL_APP_DIR}/query_boundary_lint_results.json"
+RUNTIME_EVENT_LEDGER_RESULTS_REL = f"{FULL_APP_DIR}/runtime_event_ledger_results.json"
+SOURCE_RUNTIME_EVENT_LEDGER_RESULTS_REL = f"{FULL_APP_DIR}/source_runtime_event_ledger_results.json"
 
 COLD_FIRST_PAINT_SLO_MS = 1_500
 WARM_SECTION_SWITCH_SLO_MS = 300
@@ -136,6 +138,8 @@ def evaluate_first_paint_slo(
     target_pushdown_payload: Any | None = None,
     query_search_autorun_payload: Any | None = None,
     query_boundary_lint_payload: Any | None = None,
+    runtime_event_ledger_payload: Any | None = None,
+    source_runtime_event_ledger_payload: Any | None = None,
 ) -> dict[str, Any]:
     """Evaluate SLO rows without treating missing telemetry as success."""
 
@@ -174,6 +178,33 @@ def evaluate_first_paint_slo(
             query_boundary_lint_payload,
             (),
         ),
+        (
+            "Runtime event ledger",
+            runtime_event_ledger_payload,
+            (
+                "pre_first_paint_session_open_count",
+                "shell_session_open_count",
+                "active_session_probe_count",
+                "admin_connection_test_count",
+                "explicit_connection_test_count",
+                "evidence_query_count_before_first_paint",
+                "account_usage_query_count_before_first_paint",
+                "cost_overview_autoload_violation_count",
+                "query_search_broad_autorun_count",
+                "target_pushdown_violation_count",
+                "route_action_sql_violation_count",
+            ),
+        ),
+        (
+            "Source runtime event ledger",
+            source_runtime_event_ledger_payload,
+            (
+                "session_open_count",
+                "active_session_probe_count",
+                "direct_sql_count",
+                "account_usage_count",
+            ),
+        ),
     ):
         artifact_failures, summary = verify_supporting_artifact(
             label,
@@ -183,6 +214,15 @@ def evaluate_first_paint_slo(
         )
         support_checks[label] = summary
         supporting_failures.extend(artifact_failures)
+    source_summary = support_checks.get("Source runtime event ledger", {})
+    if _as_int(source_summary.get("row_count")) <= 0:
+        supporting_failures.append(
+            {
+                "section": "Source runtime event ledger",
+                "workflow": "Supporting artifact",
+                "failure_reason": "missing source runtime event rows",
+            }
+        )
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = [*supporting_failures]
     seen_sections: set[str] = set()
@@ -393,6 +433,8 @@ def write_first_paint_slo_artifacts(root: Path | str = ".") -> dict[str, Any]:
     target_pushdown = _load_json(root_path / TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL)
     query_search_autorun = _load_json(root_path / QUERY_SEARCH_AUTORUN_RESULTS_REL)
     query_boundary_lint = _load_json(root_path / QUERY_BOUNDARY_LINT_RESULTS_REL)
+    runtime_event_ledger = _load_json(root_path / RUNTIME_EVENT_LEDGER_RESULTS_REL)
+    source_runtime_event_ledger = _load_json(root_path / SOURCE_RUNTIME_EVENT_LEDGER_RESULTS_REL)
     gate = evaluate_first_paint_slo(
         first_paint,
         packet_size_payload=packet_size,
@@ -401,6 +443,8 @@ def write_first_paint_slo_artifacts(root: Path | str = ".") -> dict[str, Any]:
         target_pushdown_payload=target_pushdown,
         query_search_autorun_payload=query_search_autorun,
         query_boundary_lint_payload=query_boundary_lint,
+        runtime_event_ledger_payload=runtime_event_ledger,
+        source_runtime_event_ledger_payload=source_runtime_event_ledger,
     )
     results = {
         "source": "first_paint_slo_results",
@@ -452,6 +496,8 @@ __all__ = [
     "FIRST_PAINT_SLO_GATE_REL",
     "FIRST_PAINT_SLO_RESULTS_REL",
     "QUERY_BOUNDARY_LINT_RESULTS_REL",
+    "RUNTIME_EVENT_LEDGER_RESULTS_REL",
+    "SOURCE_RUNTIME_EVENT_LEDGER_RESULTS_REL",
     "evaluate_first_paint_slo",
     "write_first_paint_slo_artifacts",
 ]

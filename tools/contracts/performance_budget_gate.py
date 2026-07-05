@@ -22,6 +22,8 @@ COST_OVERVIEW_NO_AUTOLOAD_GATE_REL = f"{LAUNCH_READINESS_DIR}/cost_overview_no_a
 TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL = f"{FULL_APP_DIR}/targeted_evidence_sql_pushdown_results.json"
 QUERY_SEARCH_AUTORUN_RESULTS_REL = f"{FULL_APP_DIR}/query_search_autorun_results.json"
 QUERY_BOUNDARY_LINT_RESULTS_REL = f"{FULL_APP_DIR}/query_boundary_lint_results.json"
+RUNTIME_EVENT_LEDGER_RESULTS_REL = f"{FULL_APP_DIR}/runtime_event_ledger_results.json"
+SOURCE_RUNTIME_EVENT_LEDGER_RESULTS_REL = f"{FULL_APP_DIR}/source_runtime_event_ledger_results.json"
 
 PRIMARY_SECTIONS = (
     "Executive Landing",
@@ -377,6 +379,8 @@ def evaluate_performance_budget_gate(
     query_search_autorun_payload: Any = None,
     access_control_payload: Any = None,
     query_boundary_lint_payload: Any = None,
+    runtime_event_ledger_payload: Any = None,
+    source_runtime_event_ledger_payload: Any = None,
     telemetry_rows: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     first_paint_rows, first_paint_failures = _evaluate_first_paint_rows(_rows(first_paint_payload))
@@ -403,6 +407,43 @@ def evaluate_performance_budget_gate(
         query_boundary_lint_payload,
         expected_commit_sha=expected_commit_sha,
     )
+    runtime_ledger_failures, runtime_ledger_summary = verify_supporting_artifact(
+        "Runtime event ledger",
+        runtime_event_ledger_payload,
+        expected_commit_sha=expected_commit_sha,
+        zero_counter_keys=(
+            "pre_first_paint_session_open_count",
+            "shell_session_open_count",
+            "active_session_probe_count",
+            "admin_connection_test_count",
+            "explicit_connection_test_count",
+            "evidence_query_count_before_first_paint",
+            "account_usage_query_count_before_first_paint",
+            "cost_overview_autoload_violation_count",
+            "query_search_broad_autorun_count",
+            "target_pushdown_violation_count",
+            "route_action_sql_violation_count",
+        ),
+    )
+    source_runtime_failures, source_runtime_summary = verify_supporting_artifact(
+        "Source runtime event ledger",
+        source_runtime_event_ledger_payload,
+        expected_commit_sha=expected_commit_sha,
+        zero_counter_keys=(
+            "session_open_count",
+            "active_session_probe_count",
+            "direct_sql_count",
+            "account_usage_count",
+        ),
+    )
+    if _as_int(source_runtime_summary.get("row_count")) <= 0:
+        source_runtime_failures.append(
+            {
+                "section": "Source runtime event ledger",
+                "workflow": "Supporting artifact",
+                "failure_reason": "missing source runtime event rows",
+            }
+        )
     cost_payload = cost_overview_payload if isinstance(cost_overview_payload, Mapping) else {}
     cost_rows = _rows(cost_payload)
     cost_failures, cost_summary = verify_supporting_artifact(
@@ -438,6 +479,8 @@ def evaluate_performance_budget_gate(
         + budget_failures
         + access_control_failures
         + query_boundary_failures
+        + runtime_ledger_failures
+        + source_runtime_failures
         + cost_failures
         + target_pushdown_failures
         + query_autorun_failures
@@ -467,6 +510,10 @@ def evaluate_performance_budget_gate(
         "access_control_runtime_row_count": _as_int(access_control_summary.get("row_count")),
         "query_boundary_lint_passed": bool(query_boundary_summary.get("passed")),
         "query_boundary_lint_row_count": _as_int(query_boundary_summary.get("row_count")),
+        "runtime_event_ledger_passed": bool(runtime_ledger_summary.get("passed")),
+        "runtime_event_ledger_row_count": _as_int(runtime_ledger_summary.get("row_count")),
+        "source_runtime_event_ledger_passed": bool(source_runtime_summary.get("passed")) and not source_runtime_failures,
+        "source_runtime_event_ledger_row_count": _as_int(source_runtime_summary.get("row_count")),
         "cost_overview_autoload_violation_count": cost_violation_count,
         "target_pushdown_violation_count": target_pushdown_violation_count,
         "query_search_broad_autorun_count": query_search_broad_autorun_count,
@@ -520,6 +567,8 @@ def write_performance_budget_gate_artifacts(root: Path | str = ".") -> dict[str,
     target_pushdown = _load_json(root_path / TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL)
     query_search_autorun = _load_json(root_path / QUERY_SEARCH_AUTORUN_RESULTS_REL)
     query_boundary_lint = _load_json(root_path / QUERY_BOUNDARY_LINT_RESULTS_REL)
+    runtime_event_ledger = _load_json(root_path / RUNTIME_EVENT_LEDGER_RESULTS_REL)
+    source_runtime_event_ledger = _load_json(root_path / SOURCE_RUNTIME_EVENT_LEDGER_RESULTS_REL)
     gate = evaluate_performance_budget_gate(
         first_paint,
         query_budget,
@@ -528,6 +577,8 @@ def write_performance_budget_gate_artifacts(root: Path | str = ".") -> dict[str,
         query_search_autorun,
         access_control,
         query_boundary_lint,
+        runtime_event_ledger,
+        source_runtime_event_ledger,
     )
     cost_gate = evaluate_cost_overview_no_autoload_gate(cost_overview, commit_sha=_git_commit(root_path))
     results = {
@@ -546,6 +597,10 @@ def write_performance_budget_gate_artifacts(root: Path | str = ".") -> dict[str,
         "access_control_runtime_row_count": int(gate.get("access_control_runtime_row_count") or 0),
         "query_boundary_lint_passed": bool(gate.get("query_boundary_lint_passed")),
         "query_boundary_lint_row_count": int(gate.get("query_boundary_lint_row_count") or 0),
+        "runtime_event_ledger_passed": bool(gate.get("runtime_event_ledger_passed")),
+        "runtime_event_ledger_row_count": int(gate.get("runtime_event_ledger_row_count") or 0),
+        "source_runtime_event_ledger_passed": bool(gate.get("source_runtime_event_ledger_passed")),
+        "source_runtime_event_ledger_row_count": int(gate.get("source_runtime_event_ledger_row_count") or 0),
         "cost_overview_autoload_violation_count": int(gate.get("cost_overview_autoload_violation_count") or 0),
         "target_pushdown_violation_count": int(gate.get("target_pushdown_violation_count") or 0),
         "query_search_broad_autorun_count": int(gate.get("query_search_broad_autorun_count") or 0),
@@ -577,6 +632,8 @@ __all__ = [
     "ACCESS_CONTROL_RUNTIME_RESULTS_REL",
     "QUERY_SEARCH_AUTORUN_RESULTS_REL",
     "QUERY_BOUNDARY_LINT_RESULTS_REL",
+    "RUNTIME_EVENT_LEDGER_RESULTS_REL",
+    "SOURCE_RUNTIME_EVENT_LEDGER_RESULTS_REL",
     "TARGETED_EVIDENCE_SQL_PUSHDOWN_RESULTS_REL",
     "PERFORMANCE_BUDGET_GATE_REL",
     "PERFORMANCE_BUDGET_RESULTS_REL",

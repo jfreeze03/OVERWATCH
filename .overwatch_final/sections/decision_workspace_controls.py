@@ -9,7 +9,7 @@ from typing import Any
 import streamlit as st
 
 from performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
-from runtime_state import set_state
+from runtime_state import record_runtime_event, set_state
 from sections.decision_workspace_target_filters import (
     SECTION_TARGET_COLUMNS,
     apply_target_dataframe_filter,
@@ -77,6 +77,19 @@ def make_decision_refresh_action(section: str) -> Callable[[], None]:
     def _refresh() -> None:
         with query_budget_context("refresh_packet", section=section, workflow="", budget=1):
             st.session_state[refresh_key] = True
+            record_runtime_event(
+                event_type="route_action",
+                route=section,
+                section=section,
+                workflow="",
+                boundary="refresh_fast",
+                product_boundary="refresh_fast",
+                execution_boundary="refresh_fast",
+                action_id=f"refresh_packet::{section.lower().replace(' ', '_')}",
+                user_initiated=True,
+                route_action_marker_present=True,
+                source_module="decision_workspace_controls.make_decision_refresh_action",
+            )
 
     return _refresh
 

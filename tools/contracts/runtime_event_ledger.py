@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 
 FULL_APP_DIR = "artifacts/full_app_validation"
@@ -24,10 +25,12 @@ RUNTIME_EVENT_LEDGER_GATE_REL = f"{LAUNCH_READINESS_DIR}/runtime_event_ledger_ga
 
 FIRST_PAINT_REL = f"{FULL_APP_DIR}/first_paint_performance_results.json"
 ACTION_CLICK_REL = f"{FULL_APP_DIR}/action_click_results.json"
+BUTTON_CLICK_REL = f"{FULL_APP_DIR}/button_click_results.json"
 QUERY_SEARCH_AUTORUN_REL = f"{FULL_APP_DIR}/query_search_autorun_results.json"
 COST_NO_AUTOLOAD_REL = f"{FULL_APP_DIR}/cost_overview_no_autoload_results.json"
 ACCESS_CONTROL_RUNTIME_REL = f"{FULL_APP_DIR}/access_control_runtime_results.json"
 SOURCE_RUNTIME_EVENT_LEDGER_REL = f"{FULL_APP_DIR}/source_runtime_event_ledger_results.json"
+SOURCE_RUNTIME_EVENT_LEDGER_GATE_REL = f"{LAUNCH_READINESS_DIR}/source_runtime_event_ledger_gate_results.json"
 
 PRODUCER = "runtime_event_ledger"
 PRIMARY_SECTIONS = (
@@ -38,6 +41,35 @@ PRIMARY_SECTIONS = (
     "Workload Operations",
     "Security Monitoring",
 )
+
+_FALLBACK_APPROVED_BOUNDARIES = {
+    "decision_packet",
+    "evidence_targeted",
+    "query_search_exact",
+    "query_search_broad_explicit",
+    "setup_admin",
+    "live_validation",
+    "refresh_fast",
+    "refresh_full",
+    "export_case",
+    "admin_setup_health",
+    "explicit_connection_test",
+    "metadata_bounded",
+}
+
+
+def _runtime_boundary_helpers(root: Path) -> tuple[set[str], Any]:
+    boundary_path = root / ".overwatch_final" / "runtime_boundaries.py"
+    if boundary_path.exists():
+        spec = importlib.util.spec_from_file_location("_overwatch_runtime_boundaries", boundary_path)
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            approved = getattr(module, "APPROVED_RELEASE_EXECUTION_BOUNDARIES", None)
+            normalizer = getattr(module, "normalize_release_boundary", None)
+            if approved and callable(normalizer):
+                return {str(item) for item in approved}, normalizer
+    return set(_FALLBACK_APPROVED_BOUNDARIES), lambda value: str(value or "").strip().lower() if str(value or "").strip().lower() in _FALLBACK_APPROVED_BOUNDARIES else "metadata_bounded"
 
 
 def _now() -> str:
@@ -94,6 +126,13 @@ def _rows(payload: Any) -> list[Mapping[str, Any]]:
     return []
 
 
+def _action_click_rows(root: Path) -> list[Mapping[str, Any]]:
+    rows = _rows(_load_json(root, ACTION_CLICK_REL))
+    if rows:
+        return rows
+    return _rows(_load_json(root, BUTTON_CLICK_REL))
+
+
 def _as_int(value: Any) -> int:
     try:
         return int(float(str(value or 0)))
@@ -132,6 +171,8 @@ def _event_row(
     session_open_count_delta: int = 0,
     active_session_probe_count_delta: int = 0,
     direct_sql_count_delta: int = 0,
+    account_usage_count_delta: int = 0,
+    metadata_probe_count_delta: int = 0,
     account_usage_marker_present: bool = False,
     evidence_loader_marker_present: bool = False,
     cost_evidence_marker_present: bool = False,
@@ -160,6 +201,8 @@ def _event_row(
         "session_open_count_delta": session_open_count_delta,
         "active_session_probe_count_delta": active_session_probe_count_delta,
         "direct_sql_count_delta": direct_sql_count_delta,
+        "account_usage_count_delta": account_usage_count_delta,
+        "metadata_probe_count_delta": metadata_probe_count_delta,
         "account_usage_marker_present": account_usage_marker_present,
         "evidence_loader_marker_present": evidence_loader_marker_present,
         "cost_evidence_marker_present": cost_evidence_marker_present,
@@ -209,6 +252,13 @@ def _first_paint_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
             reasons.append("cold first paint exceeded one packet query")
         if _as_int(first_paint_row.get("warm_first_paint_query_count")) > 0:
             reasons.append("warm first paint executed a query")
+        cold_packet_count = _as_int(first_paint_row.get("cold_first_paint_packet_query_count"))
+        session_open_count = _as_int(first_paint_row.get("session_open_count"))
+        allowed_packet_sessions = cold_packet_count if (
+            cold_packet_count <= 1
+            and str(first_paint_row.get("query_boundary") or first_paint_row.get("execution_boundary") or "") == "decision_packet"
+        ) else 0
+        first_paint_session_violation_count = max(0, session_open_count - allowed_packet_sessions)
         blocked_counts = {
             "evidence_query_count": first_paint_row.get("evidence_query_count"),
             "account_usage_count": first_paint_row.get("account_usage_count"),
@@ -216,6 +266,7 @@ def _first_paint_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
             "cost_workbench_query_count": first_paint_row.get("cost_workbench_query_count"),
             "query_search_query_count": first_paint_row.get("query_search_query_count"),
             "direct_sql_count": first_paint_row.get("direct_sql_count"),
+            "session_open_count": first_paint_session_violation_count,
             "non_packet_first_paint_event_count": first_paint_row.get("non_packet_first_paint_event_count"),
             "pre_first_paint_session_open_count": first_paint_row.get("pre_first_paint_session_open_count"),
             "shell_session_open_count": first_paint_row.get("shell_session_open_count"),
@@ -236,7 +287,7 @@ def _first_paint_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
                 query_boundary=str(first_paint_row.get("query_boundary") or first_paint_row.get("execution_boundary") or ""),
                 before_first_paint=True,
                 source_module=str(first_paint_row.get("producer") or ""),
-                session_open_count_delta=_as_int(first_paint_row.get("session_open_count")),
+                session_open_count_delta=first_paint_session_violation_count,
                 active_session_probe_count_delta=_as_int(first_paint_row.get("active_session_probe_count")),
                 account_usage_marker_present=_as_int(first_paint_row.get("account_usage_count")) > 0,
                 evidence_loader_marker_present=_as_int(first_paint_row.get("evidence_query_count")) > 0,
@@ -254,14 +305,17 @@ def _first_paint_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
 
 def _route_action_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
-    for index, row in enumerate(_rows(_load_json(root, ACTION_CLICK_REL))):
+    for index, row in enumerate(_action_click_rows(root)):
         area = str(row.get("action_area") or row.get("area") or "")
         clicked = bool(row.get("clicked"))
         if area != "route_action" or not clicked:
             continue
         rid = f"route_action::{_identity(row, index)}"
         reasons: list[str] = []
-        for key in ("query_count", "session_open_count", "direct_sql_count", "account_usage_count"):
+        query_count = _as_int(row.get("query_count") if row.get("query_count") is not None else row.get("actual_snowflake_executions"))
+        if query_count > 0:
+            reasons.append(f"query_count={query_count}")
+        for key in ("session_open_count", "direct_sql_count", "account_usage_count"):
             if _as_int(row.get(key)) > 0:
                 reasons.append(f"{key}={_as_int(row.get(key))}")
         if str(row.get("commit_sha") or "") != commit_sha:
@@ -428,6 +482,7 @@ def _access_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
 
 
 def _source_runtime_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
+    approved_boundaries, normalize_boundary = _runtime_boundary_helpers(root)
     payload = _load_json(root, SOURCE_RUNTIME_EVENT_LEDGER_REL)
     rows = _rows(payload)
     if not rows:
@@ -449,7 +504,47 @@ def _source_runtime_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
         if row_commit and row_commit != commit_sha:
             reasons.append("source runtime event commit_sha mismatch")
         event_type = str(row.get("event_type") or "source_runtime_event")
-        boundary = str(row.get("execution_boundary") or row.get("query_boundary") or row.get("boundary") or "")
+        raw_boundary = str(row.get("execution_boundary") or row.get("query_boundary") or row.get("boundary") or "")
+        boundary = str(normalize_boundary(raw_boundary))
+        if raw_boundary and raw_boundary.strip().lower() not in approved_boundaries:
+            reasons.append(f"source runtime event used unapproved execution_boundary '{raw_boundary}'")
+        query_count_delta = _as_int(row.get("query_count_delta"))
+        session_open_count_delta = _as_int(row.get("session_open_count_delta"))
+        direct_sql_count_delta = _as_int(row.get("direct_sql_count_delta"))
+        account_usage_count_delta = _as_int(row.get("account_usage_count_delta"))
+        metadata_probe_count_delta = _as_int(row.get("metadata_probe_count_delta"))
+        before_first_paint = bool(row.get("before_first_paint") or row.get("first_paint_sensitive"))
+        user_initiated = bool(row.get("user_initiated")) or event_type in {"action", "route_action", "evidence_action"}
+        account_usage_marker_present = bool(row.get("account_usage_marker_present")) or account_usage_count_delta > 0
+        marker_text = " ".join(
+            str(row.get(key) or "")
+            for key in ("ttl_key", "event_type", "source_module", "source_query_runner")
+        ).lower()
+        evidence_loader_marker_present = bool(row.get("evidence_loader_marker_present")) or boundary == "evidence_targeted"
+        cost_evidence_marker_present = bool(row.get("cost_evidence_marker_present")) or (
+            boundary == "evidence_targeted" and "cost" in marker_text
+        )
+        query_search_broad_marker_present = (
+            bool(row.get("query_search_broad_marker_present"))
+            or boundary == "query_search_broad_explicit"
+            or "deep_history" in str(row.get("ttl_key") or "").lower()
+        )
+        setup_live_validation_marker_present = (
+            bool(row.get("setup_live_validation_marker_present"))
+            or boundary in {"admin_setup_health", "setup_admin", "live_validation", "explicit_connection_test"}
+            or event_type in {"session_open", "role_capture", "explicit_admin_connection_test"}
+        )
+        route_action_marker_present = bool(row.get("route_action_marker_present")) or event_type == "route_action"
+        if before_first_paint and evidence_loader_marker_present:
+            reasons.append("source runtime event loaded evidence before first paint completed")
+        if before_first_paint and account_usage_marker_present:
+            reasons.append("source runtime event crossed Account Usage before first paint completed")
+        if before_first_paint and cost_evidence_marker_present:
+            reasons.append("source runtime event loaded Cost evidence before explicit click")
+        if route_action_marker_present and (query_count_delta or session_open_count_delta or direct_sql_count_delta or account_usage_count_delta):
+            reasons.append("source runtime route action crossed query/session/direct-SQL boundary")
+        if query_search_broad_marker_present and not user_initiated:
+            reasons.append("source runtime Query Search broad path ran without explicit click")
         events.append(
             _event_row(
                 row_id=f"source_runtime_event::{_identity(row, index)}",
@@ -459,29 +554,25 @@ def _source_runtime_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
                 workflow=str(row.get("workflow") or row.get("source_render_workflow") or ""),
                 action_id=str(row.get("action_id") or ""),
                 query_boundary=boundary,
-                before_first_paint=bool(row.get("before_first_paint") or row.get("first_paint_sensitive")),
+                before_first_paint=before_first_paint,
                 after_first_paint=bool(row.get("after_first_paint")),
-                user_initiated=bool(row.get("user_initiated")) or event_type in {"action", "route_action", "evidence_action"},
+                user_initiated=user_initiated,
                 source_module=str(row.get("source_module") or row.get("producer") or ""),
-                query_count_delta=_as_int(row.get("query_count_delta")),
-                session_open_count_delta=_as_int(row.get("session_open_count_delta")),
+                query_count_delta=query_count_delta,
+                session_open_count_delta=session_open_count_delta,
                 active_session_probe_count_delta=_as_int(
                     row.get("active_session_probe_count_delta")
                     or row.get("metadata_probe_count_delta")
                 ),
-                direct_sql_count_delta=_as_int(row.get("direct_sql_count_delta")),
-                account_usage_marker_present=bool(row.get("account_usage_marker_present"))
-                or _as_int(row.get("account_usage_count_delta")) > 0,
-                evidence_loader_marker_present=bool(row.get("evidence_loader_marker_present"))
-                or boundary in {"evidence", "evidence_targeted"},
-                cost_evidence_marker_present=bool(row.get("cost_evidence_marker_present")) or "cost" in boundary.lower(),
-                query_search_broad_marker_present=bool(row.get("query_search_broad_marker_present"))
-                or "query_search_broad" in boundary.lower()
-                or "deep_history" in boundary.lower(),
-                setup_live_validation_marker_present=bool(row.get("setup_live_validation_marker_present"))
-                or boundary in {"setup_health", "admin", "live_validation"}
-                or event_type in {"session_open", "role_capture", "explicit_admin_connection_test"},
-                route_action_marker_present=bool(row.get("route_action_marker_present")) or event_type == "route_action",
+                direct_sql_count_delta=direct_sql_count_delta,
+                account_usage_count_delta=account_usage_count_delta,
+                metadata_probe_count_delta=metadata_probe_count_delta,
+                account_usage_marker_present=account_usage_marker_present,
+                evidence_loader_marker_present=evidence_loader_marker_present,
+                cost_evidence_marker_present=cost_evidence_marker_present,
+                query_search_broad_marker_present=query_search_broad_marker_present,
+                setup_live_validation_marker_present=setup_live_validation_marker_present,
+                route_action_marker_present=route_action_marker_present,
                 target_pushdown_violation=bool(row.get("target_pushdown_violation")),
                 broad_load_before_filter=bool(row.get("broad_load_before_filter")),
                 passed=not reasons,
@@ -489,6 +580,189 @@ def _source_runtime_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
             )
         )
     return events
+
+
+def normalize_source_runtime_event_rows(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    commit_sha: str,
+    root: Path | str = ".",
+) -> list[dict[str, Any]]:
+    """Return producer-ready source runtime event rows with release fields."""
+    root_path = Path(root).resolve()
+    _approved, normalize_boundary = _runtime_boundary_helpers(root_path)
+    normalized_rows: list[dict[str, Any]] = []
+    for index, source_row in enumerate(rows):
+        row = dict(source_row)
+        raw_boundary = str(row.get("execution_boundary") or row.get("query_boundary") or row.get("boundary") or "")
+        boundary = str(normalize_boundary(raw_boundary))
+        event_id = str(row.get("event_id") or f"source-runtime-{index}")
+        row_commit = str(row.get("commit_sha") or commit_sha)
+        section = str(row.get("source_render_section") or row.get("section") or "")
+        workflow = str(row.get("source_render_workflow") or row.get("workflow") or "")
+        query_count_delta = _as_int(row.get("query_count_delta"))
+        session_open_count_delta = _as_int(row.get("session_open_count_delta"))
+        active_session_probe_count_delta = _as_int(
+            row.get("active_session_probe_count_delta")
+            or row.get("metadata_probe_count_delta")
+        )
+        direct_sql_count_delta = _as_int(row.get("direct_sql_count_delta"))
+        account_usage_count_delta = _as_int(row.get("account_usage_count_delta"))
+        metadata_probe_count_delta = _as_int(row.get("metadata_probe_count_delta"))
+        event_type = str(row.get("event_type") or "source_runtime_event")
+        marker_text = " ".join(
+            str(row.get(key) or "")
+            for key in ("ttl_key", "event_type", "source_module", "source_query_runner")
+        ).lower()
+        before_first_paint = bool(row.get("before_first_paint") or row.get("first_paint_sensitive"))
+        normalized_rows.append(
+            {
+                "event_id": event_id,
+                "row_id": f"source_runtime_event::{event_id}",
+                "event_type": event_type,
+                "route": str(row.get("route") or section),
+                "section": section,
+                "workflow": workflow,
+                "app_source_section": str(row.get("section") or ""),
+                "app_source_workflow": str(row.get("workflow") or ""),
+                "action_id": str(row.get("action_id") or ""),
+                "boundary": boundary,
+                "product_boundary": boundary,
+                "execution_boundary": boundary,
+                "query_tier": str(row.get("query_tier") or ""),
+                "ttl_key": str(row.get("ttl_key") or "")[:160],
+                "cache_hit": row.get("cache_hit"),
+                "elapsed_ms": round(float(row.get("elapsed_ms") or 0), 2),
+                "row_count": _as_int(row.get("row_count")),
+                "max_rows": row.get("max_rows") if isinstance(row.get("max_rows"), int) else None,
+                "error": str(row.get("error") or "")[:300],
+                "source_module": str(row.get("source_module") or row.get("producer") or "runtime_state"),
+                "before_first_paint": before_first_paint,
+                "after_first_paint": bool(row.get("after_first_paint")) or not before_first_paint,
+                "user_initiated": bool(row.get("user_initiated"))
+                or event_type in {"action", "route_action", "evidence_action"},
+                "query_count_delta": query_count_delta,
+                "session_open_count_delta": session_open_count_delta,
+                "active_session_probe_count_delta": active_session_probe_count_delta,
+                "direct_sql_count_delta": direct_sql_count_delta,
+                "account_usage_count_delta": account_usage_count_delta,
+                "metadata_probe_count_delta": metadata_probe_count_delta,
+                "account_usage_marker_present": bool(row.get("account_usage_marker_present"))
+                or account_usage_count_delta > 0,
+                "evidence_loader_marker_present": bool(row.get("evidence_loader_marker_present"))
+                or boundary == "evidence_targeted",
+                "cost_evidence_marker_present": bool(row.get("cost_evidence_marker_present"))
+                or (boundary == "evidence_targeted" and "cost" in marker_text),
+                "query_search_broad_marker_present": bool(row.get("query_search_broad_marker_present"))
+                or boundary == "query_search_broad_explicit"
+                or "deep_history" in marker_text,
+                "setup_live_validation_marker_present": bool(row.get("setup_live_validation_marker_present"))
+                or boundary in {"admin_setup_health", "setup_admin", "live_validation", "explicit_connection_test"},
+                "route_action_marker_present": bool(row.get("route_action_marker_present"))
+                or event_type == "route_action",
+                "target_pushdown_violation": bool(row.get("target_pushdown_violation")),
+                "broad_load_before_filter": bool(row.get("broad_load_before_filter")),
+                "producer": str(row.get("producer") or "runtime_state"),
+                "producer_signature": str(row.get("producer_signature") or _row_signature(f"source::{event_id}", row_commit)),
+                "provenance_origin": str(row.get("provenance_origin") or "producer"),
+                "commit_sha": row_commit,
+                "raw_sql_included": bool(row.get("raw_sql_included")),
+            }
+        )
+    return normalized_rows
+
+
+def build_source_runtime_event_ledger_payload(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    commit_sha: str,
+    root: Path | str = ".",
+    producer: str = "full_app_runtime_validation",
+) -> dict[str, Any]:
+    normalized_rows = normalize_source_runtime_event_rows(rows, commit_sha=commit_sha, root=root)
+    failures = [
+        row for row in normalized_rows
+        if bool(row.get("raw_sql_included")) or str(row.get("commit_sha") or "") != str(commit_sha or "")
+    ]
+    first_paint_source_count = sum(1 for row in normalized_rows if bool(row.get("before_first_paint")))
+    decision_packet_source_count = sum(1 for row in normalized_rows if row.get("execution_boundary") == "decision_packet")
+    if not normalized_rows:
+        failures.append({"failure_reason": "missing app-source runtime event ledger rows"})
+    if not first_paint_source_count:
+        failures.append({"failure_reason": "missing app-source first-paint runtime event row"})
+    if not decision_packet_source_count:
+        failures.append({"failure_reason": "missing app-source decision_packet runtime event row"})
+    return {
+        "source": "source_runtime_event_ledger_results",
+        "proof_source": "runtime_state",
+        "runtime_source": "actual_app_runtime_state",
+        "producer": producer,
+        "producer_signature": _row_signature("source_runtime_event_ledger", commit_sha),
+        "provenance_origin": "producer",
+        "generated_at": _now(),
+        "commit_sha": commit_sha,
+        "rows": normalized_rows,
+        "event_count": len(normalized_rows),
+        "first_paint_source_event_count": first_paint_source_count,
+        "decision_packet_source_event_count": decision_packet_source_count,
+        "route_action_source_event_count": sum(1 for row in normalized_rows if bool(row.get("route_action_marker_present"))),
+        "query_count": sum(_as_int(row.get("query_count_delta")) for row in normalized_rows),
+        "session_open_count": sum(_as_int(row.get("session_open_count_delta")) for row in normalized_rows),
+        "active_session_probe_count": sum(_as_int(row.get("active_session_probe_count_delta")) for row in normalized_rows),
+        "direct_sql_count": sum(_as_int(row.get("direct_sql_count_delta")) for row in normalized_rows),
+        "account_usage_count": sum(_as_int(row.get("account_usage_count_delta")) for row in normalized_rows),
+        "metadata_probe_count": sum(_as_int(row.get("metadata_probe_count_delta")) for row in normalized_rows),
+        "failure_count": len(failures),
+        "passed": not failures,
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+
+
+def build_source_runtime_event_ledger_gate(payload: Mapping[str, Any]) -> dict[str, Any]:
+    commit_sha = str(payload.get("commit_sha") or "")
+    rows = _rows(payload)
+    failures = [dict(row) for row in rows if bool(row.get("raw_sql_included"))]
+    failures.extend(dict(row) for row in payload.get("failures", []) if isinstance(row, Mapping))
+    failures.extend(
+        {
+            "row_id": str(row.get("row_id") or row.get("event_id") or ""),
+            "failure_reason": "source runtime event commit_sha mismatch",
+        }
+        for row in rows
+        if commit_sha and str(row.get("commit_sha") or commit_sha) != commit_sha
+    )
+    if _as_int(payload.get("event_count")) <= 0:
+        failures.append({"failure_reason": "missing app-source runtime event ledger rows"})
+    if _as_int(payload.get("first_paint_source_event_count")) <= 0:
+        failures.append({"failure_reason": "missing app-source first-paint runtime event row"})
+    if _as_int(payload.get("decision_packet_source_event_count")) <= 0:
+        failures.append({"failure_reason": "missing app-source decision_packet runtime event row"})
+    return {
+        "source": "source_runtime_event_ledger_gate_results",
+        "gate": "source_runtime_event_ledger",
+        "producer": PRODUCER,
+        "producer_signature": _row_signature("source_runtime_event_ledger_gate", str(payload.get("commit_sha") or "")),
+        "provenance_origin": "producer",
+        "generated_at": _now(),
+        "commit_sha": commit_sha,
+        "passed": bool(payload.get("passed")) and not failures,
+        "failure_count": len(failures),
+        "event_count": _as_int(payload.get("event_count")),
+        "first_paint_source_event_count": _as_int(payload.get("first_paint_source_event_count")),
+        "decision_packet_source_event_count": _as_int(payload.get("decision_packet_source_event_count")),
+        "route_action_source_event_count": _as_int(payload.get("route_action_source_event_count")),
+        "query_count": _as_int(payload.get("query_count")),
+        "session_open_count": _as_int(payload.get("session_open_count")),
+        "active_session_probe_count": _as_int(payload.get("active_session_probe_count")),
+        "direct_sql_count": _as_int(payload.get("direct_sql_count")),
+        "account_usage_count": _as_int(payload.get("account_usage_count")),
+        "metadata_probe_count": _as_int(payload.get("metadata_probe_count")),
+        "rows": [dict(row) for row in rows],
+        "proof_rows": [dict(row) for row in rows],
+        "failures": failures,
+        "raw_sql_included": False,
+    }
 
 
 def build_runtime_event_ledger_results(root: Path | str = ".") -> dict[str, Any]:
@@ -592,11 +866,20 @@ def write_runtime_event_ledger_artifacts(root: Path | str = ".") -> dict[str, An
     root_path = Path(root).resolve()
     results = build_runtime_event_ledger_results(root_path)
     gate = build_runtime_event_ledger_gate(results)
+    source_payload = _load_json(root_path, SOURCE_RUNTIME_EVENT_LEDGER_REL)
+    if isinstance(source_payload, Mapping):
+        source_gate = build_source_runtime_event_ledger_gate(source_payload)
+    else:
+        source_gate = build_source_runtime_event_ledger_gate(
+            build_source_runtime_event_ledger_payload([], commit_sha=_git_commit(root_path), root=root_path)
+        )
     _write_json(root_path / RUNTIME_EVENT_LEDGER_RESULTS_REL, results)
     _write_json(root_path / RUNTIME_EVENT_LEDGER_GATE_REL, gate)
+    _write_json(root_path / SOURCE_RUNTIME_EVENT_LEDGER_GATE_REL, source_gate)
     return {
         RUNTIME_EVENT_LEDGER_RESULTS_REL: results,
         RUNTIME_EVENT_LEDGER_GATE_REL: gate,
+        SOURCE_RUNTIME_EVENT_LEDGER_GATE_REL: source_gate,
     }
 
 
@@ -612,7 +895,10 @@ if __name__ == "__main__":
 __all__ = [
     "RUNTIME_EVENT_LEDGER_GATE_REL",
     "RUNTIME_EVENT_LEDGER_RESULTS_REL",
+    "SOURCE_RUNTIME_EVENT_LEDGER_GATE_REL",
     "SOURCE_RUNTIME_EVENT_LEDGER_REL",
+    "build_source_runtime_event_ledger_gate",
+    "build_source_runtime_event_ledger_payload",
     "build_runtime_event_ledger_gate",
     "build_runtime_event_ledger_results",
     "write_runtime_event_ledger_artifacts",

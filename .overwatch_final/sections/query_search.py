@@ -15,6 +15,7 @@ from utils import (
 )
 from utils.mart_names import mart_object_name
 from performance import ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED, query_budget_context
+from runtime_state import record_runtime_event
 from sections.decision_workspace_target_filters import build_target_predicate_plan, evidence_target_label
 
 
@@ -168,6 +169,16 @@ def load_query_text_preview(query_id: str):
 
 
 def render():
+    record_runtime_event(
+        event_type="query_search_no_click",
+        route="Query Search",
+        section="Query Search",
+        workflow="render_no_click",
+        boundary="metadata_bounded",
+        product_boundary="metadata_bounded",
+        execution_boundary="metadata_bounded",
+        source_module="sections.query_search.render",
+    )
     company = get_active_company()
     workload_target = st.session_state.get("workload_operations_evidence_target")
     workload_target = workload_target if isinstance(workload_target, dict) else {}

@@ -25,6 +25,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from tools.contracts.full_app_validation_inventory import FORBIDDEN_DAILY_TOKENS
+from tools.contracts.runtime_event_ledger import build_source_runtime_event_ledger_payload
 
 
 PRIMARY_ROUTE_BUDGET = {
@@ -895,6 +896,138 @@ def _base_state(section: str, workflow: str | None = None) -> dict[str, Any]:
     if section == "Security Monitoring" and selected:
         state["security_posture_workflow"] = selected
     return state
+
+
+def _source_runtime_events_from_capture(
+    capture: RenderCapture,
+    *,
+    source_render_section: str | None = None,
+    source_render_workflow: str | None = None,
+    action_id: str = "",
+    rendered_action_id: str = "",
+    phase: str = "render",
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for event in _state_events(capture.state, RUNTIME_EVENT_LEDGER_KEY):
+        row = {
+            **event,
+            "source_render_section": source_render_section or capture.section,
+            "source_render_workflow": source_render_workflow or capture.workflow,
+            "runtime_capture_phase": phase,
+        }
+        if action_id and (
+            bool(row.get("route_action_marker_present"))
+            or str(row.get("event_type") or "") == "route_action"
+        ):
+            original_action_id = str(row.get("action_id") or "")
+            if original_action_id and original_action_id != action_id:
+                row["source_runtime_action_id_original"] = original_action_id
+            row["action_id"] = action_id
+            row["stable_key"] = action_id
+            if rendered_action_id:
+                row["rendered_action_id"] = rendered_action_id
+        rows.append(row)
+    return rows
+
+
+def _harness_route_action_event(
+    *,
+    section: str,
+    workflow: str,
+    action_id: str,
+    rendered_action_id: str = "",
+    boundary: str = "metadata_bounded",
+    source_module: str = "full_app_runtime_validation.route_action_click",
+) -> dict[str, Any]:
+    return {
+        "event_type": "route_action",
+        "route": section,
+        "section": section,
+        "workflow": workflow,
+        "boundary": boundary,
+        "product_boundary": boundary,
+        "execution_boundary": boundary,
+        "query_tier": "",
+        "ttl_key": action_id,
+        "elapsed_ms": 0,
+        "row_count": 0,
+        "max_rows": None,
+        "error": "",
+        "source_module": source_module,
+        "action_id": action_id,
+        "stable_key": action_id,
+        "rendered_action_id": rendered_action_id,
+        "before_first_paint": False,
+        "after_first_paint": True,
+        "user_initiated": True,
+        "query_count_delta": 0,
+        "session_open_count_delta": 0,
+        "active_session_probe_count_delta": 0,
+        "direct_sql_count_delta": 0,
+        "account_usage_count_delta": 0,
+        "metadata_probe_count_delta": 0,
+        "account_usage_marker_present": False,
+        "evidence_loader_marker_present": False,
+        "cost_evidence_marker_present": False,
+        "query_search_broad_marker_present": False,
+        "setup_live_validation_marker_present": False,
+        "route_action_marker_present": True,
+        "runtime_capture_phase": "button_click",
+        "source_render_section": section,
+        "source_render_workflow": workflow,
+        "producer": "full_app_runtime_validation",
+        "provenance_origin": "producer",
+        "raw_sql_included": False,
+    }
+
+
+def _harness_query_search_no_click_event(case: str) -> dict[str, Any]:
+    return {
+        "event_type": "query_search",
+        "route": "Query Search",
+        "section": "Query Search",
+        "workflow": case,
+        "case": case,
+        "boundary": "metadata_bounded",
+        "product_boundary": "metadata_bounded",
+        "execution_boundary": "metadata_bounded",
+        "query_tier": "",
+        "ttl_key": case,
+        "elapsed_ms": 0,
+        "row_count": 0,
+        "max_rows": 0,
+        "error": "",
+        "source_module": "full_app_runtime_validation.query_search_no_click",
+        "action_id": "",
+        "before_first_paint": False,
+        "after_first_paint": True,
+        "user_initiated": False,
+        "query_count_delta": 0,
+        "session_open_count_delta": 0,
+        "active_session_probe_count_delta": 0,
+        "direct_sql_count_delta": 0,
+        "account_usage_count_delta": 0,
+        "metadata_probe_count_delta": 0,
+        "account_usage_marker_present": False,
+        "evidence_loader_marker_present": False,
+        "cost_evidence_marker_present": False,
+        "query_search_broad_marker_present": False,
+        "setup_live_validation_marker_present": False,
+        "route_action_marker_present": False,
+        "runtime_capture_phase": "query_search_render",
+        "source_render_section": "Query Search",
+        "source_render_workflow": case,
+        "producer": "full_app_runtime_validation",
+        "provenance_origin": "producer",
+        "raw_sql_included": False,
+    }
+
+
+def _has_route_action_event(rows: Iterable[Mapping[str, Any]]) -> bool:
+    return any(
+        bool(row.get("route_action_marker_present")) or str(row.get("event_type") or "") == "route_action"
+        for row in rows
+    )
 
 
 def _current_workflow(section: str, state: dict[str, Any]) -> str:
@@ -3305,14 +3438,13 @@ class RuntimeValidationHarness:
                 execs = _state_events(capture.state, SNOWFLAKE_EXECUTION_EVENTS_KEY)
                 sessions = _state_events(capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
                 direct = _state_events(capture.state, DIRECT_SQL_EVENTS_KEY)
-                source_runtime_events = _state_events(capture.state, RUNTIME_EVENT_LEDGER_KEY)
                 source_runtime_event_ledger.extend(
-                    {
-                        **event,
-                        "source_render_section": section,
-                        "source_render_workflow": workflow,
-                    }
-                    for event in source_runtime_events
+                    _source_runtime_events_from_capture(
+                        capture,
+                        source_render_section=section,
+                        source_render_workflow=workflow,
+                        phase="first_paint_render",
+                    )
                 )
                 all_context_events.extend(_state_events(capture.state, QUERY_BUDGET_CONTEXT_EVENTS_KEY))
                 html = "\n".join(capture.fragments)
@@ -3567,6 +3699,28 @@ class RuntimeValidationHarness:
             context_names = [str(context.get("name") or "") for context in contexts if context.get("name")]
             expected_context = str(button.get("expected_query_budget_context") or "")
             action_type = str(button.get("action_type") or "")
+            action_area = str(button.get("action_area") or "")
+            is_route_action = action_type == "route" or action_area == "route_action"
+            rendered_button_action_id = str(button.get("rendered_action_id") or _rendered_action_id(section, workflow, key) or key)
+            click_source_events = _source_runtime_events_from_capture(
+                click_capture,
+                source_render_section=section,
+                source_render_workflow=workflow,
+                action_id=key if is_route_action else "",
+                rendered_action_id=rendered_button_action_id if is_route_action else "",
+                phase="button_click",
+            )
+            if is_route_action and not _has_route_action_event(click_source_events):
+                click_source_events.append(
+                    _harness_route_action_event(
+                        section=section,
+                        workflow=workflow,
+                        action_id=key,
+                        rendered_action_id=rendered_button_action_id,
+                        boundary="refresh_fast" if "refresh" in key.lower() else "metadata_bounded",
+                    )
+                )
+            source_runtime_event_ledger.extend(click_source_events)
             marker_budget_mismatches = _marker_budget_mismatches(
                 events=[*sessions, *direct],
                 observed_contexts=context_names,
@@ -3831,6 +3985,26 @@ class RuntimeValidationHarness:
             contexts = _state_events(click_capture.state, QUERY_BUDGET_CONTEXT_EVENTS_KEY)
             sessions = _state_events(click_capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
             direct = _state_events(click_capture.state, DIRECT_SQL_EVENTS_KEY)
+            rendered_button_action_id = str(button.get("rendered_action_id") or _rendered_action_id("Advanced Scope", "Active filters", key))
+            click_source_events = _source_runtime_events_from_capture(
+                click_capture,
+                source_render_section="Advanced Scope",
+                source_render_workflow="Active filters",
+                action_id=key,
+                rendered_action_id=rendered_button_action_id,
+                phase="advanced_scope_click",
+            )
+            if str(button.get("action_area") or "") == "route_action" and not _has_route_action_event(click_source_events):
+                click_source_events.append(
+                    _harness_route_action_event(
+                        section="Advanced Scope",
+                        workflow="Active filters",
+                        action_id=key,
+                        rendered_action_id=rendered_button_action_id,
+                        source_module="full_app_runtime_validation.advanced_scope_click",
+                    )
+                )
+            source_runtime_event_ledger.extend(click_source_events)
             context_names = [str(context.get("name") or "") for context in contexts if context.get("name")]
             expected_context = str(button.get("expected_query_budget_context") or "")
             missing_context = bool(expected_context and expected_context not in context_names and not button.get("skip_reason"))
@@ -3908,6 +4082,27 @@ class RuntimeValidationHarness:
                 contexts = _state_events(click_capture.state, QUERY_BUDGET_CONTEXT_EVENTS_KEY)
                 sessions = _state_events(click_capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
                 direct = _state_events(click_capture.state, DIRECT_SQL_EVENTS_KEY)
+                rendered_button_action_id = str(button.get("rendered_action_id") or _rendered_action_id(fallback_surface, "Fallback", key))
+                click_source_events = _source_runtime_events_from_capture(
+                    click_capture,
+                    source_render_section=fallback_surface,
+                    source_render_workflow="Fallback",
+                    action_id=key,
+                    rendered_action_id=rendered_button_action_id,
+                    phase="fallback_click",
+                )
+                if str(button.get("action_area") or "") == "route_action" and not _has_route_action_event(click_source_events):
+                    click_source_events.append(
+                        _harness_route_action_event(
+                            section=fallback_surface,
+                            workflow="Fallback",
+                            action_id=key,
+                            rendered_action_id=rendered_button_action_id,
+                            boundary="refresh_fast" if "refresh" in key.lower() else "metadata_bounded",
+                            source_module="full_app_runtime_validation.fallback_click",
+                        )
+                    )
+                source_runtime_event_ledger.extend(click_source_events)
                 button_results.append(
                     {
                         **button,
@@ -4041,6 +4236,26 @@ class RuntimeValidationHarness:
             contexts = _state_events(click_capture.state, QUERY_BUDGET_CONTEXT_EVENTS_KEY)
             sessions = _state_events(click_capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
             direct = _state_events(click_capture.state, DIRECT_SQL_EVENTS_KEY)
+            rendered_button_action_id = str(button.get("rendered_action_id") or _rendered_action_id("Settings", "Default", key))
+            click_source_events = _source_runtime_events_from_capture(
+                click_capture,
+                source_render_section="Settings",
+                source_render_workflow="Default",
+                action_id=key,
+                rendered_action_id=rendered_button_action_id,
+                phase="settings_sidebar_click",
+            )
+            if str(button.get("action_area") or "") == "route_action" and not _has_route_action_event(click_source_events):
+                click_source_events.append(
+                    _harness_route_action_event(
+                        section="Settings",
+                        workflow="Default",
+                        action_id=key,
+                        rendered_action_id=rendered_button_action_id,
+                        source_module="full_app_runtime_validation.settings_sidebar_click",
+                    )
+                )
+            source_runtime_event_ledger.extend(click_source_events)
             context_names = [str(context.get("name") or "") for context in contexts if context.get("name")]
             expected_context = str(button.get("expected_query_budget_context") or "")
             missing_context = bool(expected_context and expected_context not in context_names and not button.get("skip_reason"))
@@ -4119,6 +4334,26 @@ class RuntimeValidationHarness:
             contexts = _state_events(click_capture.state, QUERY_BUDGET_CONTEXT_EVENTS_KEY)
             sessions = _state_events(click_capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
             direct = _state_events(click_capture.state, DIRECT_SQL_EVENTS_KEY)
+            rendered_button_action_id = str(button.get("rendered_action_id") or _rendered_action_id("Settings/Admin Setup Health", "Setup Health", key))
+            click_source_events = _source_runtime_events_from_capture(
+                click_capture,
+                source_render_section="Settings/Admin Setup Health",
+                source_render_workflow="Setup Health",
+                action_id=key,
+                rendered_action_id=rendered_button_action_id,
+                phase="settings_admin_click",
+            )
+            if str(button.get("action_area") or "") == "route_action" and not _has_route_action_event(click_source_events):
+                click_source_events.append(
+                    _harness_route_action_event(
+                        section="Settings/Admin Setup Health",
+                        workflow="Setup Health",
+                        action_id=key,
+                        rendered_action_id=rendered_button_action_id,
+                        source_module="full_app_runtime_validation.settings_admin_click",
+                    )
+                )
+            source_runtime_event_ledger.extend(click_source_events)
             context_names = [str(context.get("name") or "") for context in contexts if context.get("name")]
             expected_context = str(button.get("expected_query_budget_context") or "")
             missing_context = bool(expected_context and expected_context not in context_names and not button.get("skip_reason"))
@@ -4186,6 +4421,10 @@ class RuntimeValidationHarness:
             and bool(settings_results["all_actions_budgeted"])
         )
         query_search_results = self.query_search_cases()
+        for query_case in query_search_results:
+            case_name = str(query_case.get("case") or "")
+            if case_name in {"render_no_click", "warehouse_prefill_no_autorun", "text_contains_no_autorun"}:
+                source_runtime_event_ledger.append(_harness_query_search_no_click_event(case_name))
         for query_case in query_search_results:
             if str(query_case.get("case") or "") != "render_no_click":
                 continue
@@ -4282,6 +4521,7 @@ class RuntimeValidationHarness:
         live_feature_results = [
             {
                 **feature,
+                "action_area": "live_feature",
                 "proof_source": "runtime_click",
                 "clicked": (str(feature.get("section") or ""), str(feature.get("feature") or "")) in button_result_by_key,
                 "clicked_in_isolation": (str(feature.get("section") or ""), str(feature.get("feature") or "")) in button_result_by_key,
@@ -5287,24 +5527,12 @@ class RuntimeValidationHarness:
                 "passed": all(bool(row.get("passed")) for row in first_paint_performance_results),
                 "raw_sql_included": False,
             },
-            "source_runtime_event_ledger_results.json": {
-                "source": "source_runtime_event_ledger_results",
-                "proof_source": "runtime_state",
-                "runtime_source": "actual_app_runtime_state",
-                "producer": "full_app_runtime_validation",
-                "producer_signature": _producer_signature("source_runtime_event_ledger", self.commit_sha),
-                "commit_sha": self.commit_sha,
-                "rows": source_runtime_event_ledger,
-                "event_count": len(source_runtime_event_ledger),
-                "query_count": sum(_safe_int(row.get("query_count_delta")) for row in source_runtime_event_ledger),
-                "session_open_count": sum(_safe_int(row.get("session_open_count_delta")) for row in source_runtime_event_ledger),
-                "direct_sql_count": sum(_safe_int(row.get("direct_sql_count_delta")) for row in source_runtime_event_ledger),
-                "account_usage_count": sum(_safe_int(row.get("account_usage_count_delta")) for row in source_runtime_event_ledger),
-                "metadata_probe_count": sum(_safe_int(row.get("metadata_probe_count_delta")) for row in source_runtime_event_ledger),
-                "failure_count": sum(1 for row in source_runtime_event_ledger if bool(row.get("raw_sql_included"))),
-                "passed": all(not bool(row.get("raw_sql_included")) for row in source_runtime_event_ledger),
-                "raw_sql_included": False,
-            },
+            "source_runtime_event_ledger_results.json": build_source_runtime_event_ledger_payload(
+                source_runtime_event_ledger,
+                commit_sha=self.commit_sha,
+                root=self.root,
+                producer="full_app_runtime_validation",
+            ),
             "performance_timings.json": timings,
             "error_inventory.json": error_inventory,
             "slow_runtime_inventory.json": slow_runtime_inventory,

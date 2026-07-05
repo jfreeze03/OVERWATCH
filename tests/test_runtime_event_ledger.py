@@ -132,6 +132,29 @@ class RuntimeEventLedgerTests(unittest.TestCase):
                 ]
             },
         )
+        source_rows = [
+            {
+                "event_id": f"source-query-{section.lower().replace(' ', '-')}",
+                "event_type": "query",
+                "section": section,
+                "workflow": "Overview",
+                "execution_boundary": "decision_packet",
+                "query_tier": "command_summary",
+                "ttl_key": "decision_packet",
+                "query_count_delta": 1,
+                "session_open_count_delta": 0,
+                "direct_sql_count_delta": 0,
+                "account_usage_count_delta": 0,
+                "metadata_probe_count_delta": 0,
+                "before_first_paint": True,
+                "account_usage_marker_present": False,
+                "producer": "runtime_state",
+                "producer_signature": "sig",
+                "commit_sha": self.commit,
+                "raw_sql_included": False,
+            }
+            for section in PRIMARY_SECTIONS
+        ]
         self._write_json(
             root,
             SOURCE_RUNTIME_EVENT_LEDGER_REL,
@@ -140,28 +163,10 @@ class RuntimeEventLedgerTests(unittest.TestCase):
                 "producer_signature": "sig",
                 "commit_sha": self.commit,
                 "passed": True,
-                "rows": [
-                    {
-                        "event_id": "source-query-1",
-                        "event_type": "query",
-                        "section": "Executive Landing",
-                        "workflow": "Overview",
-                        "execution_boundary": "decision_packet",
-                        "query_tier": "command_summary",
-                        "ttl_key": "decision_packet",
-                        "query_count_delta": 1,
-                        "session_open_count_delta": 0,
-                        "direct_sql_count_delta": 0,
-                        "account_usage_count_delta": 0,
-                        "metadata_probe_count_delta": 0,
-                        "before_first_paint": True,
-                        "account_usage_marker_present": False,
-                        "producer": "runtime_state",
-                        "producer_signature": "sig",
-                        "commit_sha": self.commit,
-                        "raw_sql_included": False,
-                    }
-                ],
+                "rows": source_rows,
+                "event_count": len(source_rows),
+                "first_paint_source_event_count": len(source_rows),
+                "decision_packet_source_event_count": len(source_rows),
                 "raw_sql_included": False,
             },
         )
@@ -174,6 +179,9 @@ class RuntimeEventLedgerTests(unittest.TestCase):
                 artifacts = write_runtime_event_ledger_artifacts(root)
 
         self.assertTrue(artifacts[RUNTIME_EVENT_LEDGER_GATE_REL]["passed"], artifacts[RUNTIME_EVENT_LEDGER_GATE_REL])
+        source_gate = artifacts["artifacts/launch_readiness/source_runtime_event_ledger_gate_results.json"]
+        self.assertTrue(source_gate["passed"], source_gate)
+        self.assertGreater(len(source_gate["proof_rows"]), 0)
 
     def test_missing_first_paint_row_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -187,6 +195,20 @@ class RuntimeEventLedgerTests(unittest.TestCase):
 
         self.assertFalse(results["passed"])
         self.assertIn("missing first-paint", json.dumps(results["failures"]))
+
+    def test_extra_first_paint_session_open_fails_runtime_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._seed_passing(root)
+            payload = json.loads((root / FIRST_PAINT_REL).read_text(encoding="utf-8"))
+            payload["rows"][0]["session_open_count"] = 2
+            self._write_json(root, FIRST_PAINT_REL, payload)
+            with patch("tools.contracts.runtime_event_ledger._git_commit", return_value=self.commit):
+                results = build_runtime_event_ledger_results(root)
+
+        self.assertFalse(results["passed"])
+        self.assertIn("session_open_count=1", json.dumps(results["failures"]))
+        self.assertGreater(results["pre_first_paint_session_open_count"], 0)
 
     def test_route_action_query_violation_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -244,6 +266,142 @@ class RuntimeEventLedgerTests(unittest.TestCase):
         self.assertEqual(len(source_rows), 1)
         self.assertTrue(source_rows[0]["setup_live_validation_marker_present"])
         self.assertEqual(source_rows[0]["session_open_count_delta"], 1)
+
+    def test_source_runtime_raw_sql_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._seed_passing(root)
+            payload = json.loads((root / SOURCE_RUNTIME_EVENT_LEDGER_REL).read_text(encoding="utf-8"))
+            payload["rows"][0]["raw_sql_included"] = True
+            self._write_json(root, SOURCE_RUNTIME_EVENT_LEDGER_REL, payload)
+            with patch("tools.contracts.runtime_event_ledger._git_commit", return_value=self.commit):
+                results = build_runtime_event_ledger_results(root)
+
+        self.assertFalse(results["passed"])
+        self.assertIn("raw SQL", json.dumps(results["failures"]))
+
+    def test_source_runtime_wrong_commit_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._seed_passing(root)
+            payload = json.loads((root / SOURCE_RUNTIME_EVENT_LEDGER_REL).read_text(encoding="utf-8"))
+            payload["rows"][0]["commit_sha"] = "old"
+            self._write_json(root, SOURCE_RUNTIME_EVENT_LEDGER_REL, payload)
+            with patch("tools.contracts.runtime_event_ledger._git_commit", return_value=self.commit):
+                results = build_runtime_event_ledger_results(root)
+
+        self.assertFalse(results["passed"])
+        self.assertIn("commit_sha mismatch", json.dumps(results["failures"]))
+
+    def test_source_runtime_first_paint_evidence_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._seed_passing(root)
+            payload = json.loads((root / SOURCE_RUNTIME_EVENT_LEDGER_REL).read_text(encoding="utf-8"))
+            payload["rows"].append(
+                {
+                    "event_id": "source-evidence-first-paint",
+                    "event_type": "query",
+                    "section": "Alert Center",
+                    "workflow": "Overview",
+                    "execution_boundary": "evidence_targeted",
+                    "before_first_paint": True,
+                    "query_count_delta": 1,
+                    "producer": "runtime_state",
+                    "producer_signature": "sig",
+                    "commit_sha": self.commit,
+                    "raw_sql_included": False,
+                }
+            )
+            self._write_json(root, SOURCE_RUNTIME_EVENT_LEDGER_REL, payload)
+            with patch("tools.contracts.runtime_event_ledger._git_commit", return_value=self.commit):
+                results = build_runtime_event_ledger_results(root)
+
+        self.assertFalse(results["passed"])
+        self.assertIn("loaded evidence before first paint", json.dumps(results["failures"]))
+
+    def test_source_runtime_route_action_sql_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._seed_passing(root)
+            payload = json.loads((root / SOURCE_RUNTIME_EVENT_LEDGER_REL).read_text(encoding="utf-8"))
+            payload["rows"].append(
+                {
+                    "event_id": "source-route-query",
+                    "event_type": "route_action",
+                    "section": "Alert Center",
+                    "workflow": "Overview",
+                    "execution_boundary": "metadata_bounded",
+                    "route_action_marker_present": True,
+                    "query_count_delta": 1,
+                    "user_initiated": True,
+                    "producer": "runtime_state",
+                    "producer_signature": "sig",
+                    "commit_sha": self.commit,
+                    "raw_sql_included": False,
+                }
+            )
+            self._write_json(root, SOURCE_RUNTIME_EVENT_LEDGER_REL, payload)
+            with patch("tools.contracts.runtime_event_ledger._git_commit", return_value=self.commit):
+                results = build_runtime_event_ledger_results(root)
+
+        self.assertFalse(results["passed"])
+        self.assertIn("route action crossed", json.dumps(results["failures"]))
+
+    def test_source_runtime_query_search_broad_without_click_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._seed_passing(root)
+            payload = json.loads((root / SOURCE_RUNTIME_EVENT_LEDGER_REL).read_text(encoding="utf-8"))
+            payload["rows"].append(
+                {
+                    "event_id": "source-query-search-broad",
+                    "event_type": "query",
+                    "section": "Query Search",
+                    "workflow": "No click",
+                    "execution_boundary": "query_search_broad_explicit",
+                    "query_count_delta": 1,
+                    "user_initiated": False,
+                    "producer": "runtime_state",
+                    "producer_signature": "sig",
+                    "commit_sha": self.commit,
+                    "raw_sql_included": False,
+                }
+            )
+            self._write_json(root, SOURCE_RUNTIME_EVENT_LEDGER_REL, payload)
+            with patch("tools.contracts.runtime_event_ledger._git_commit", return_value=self.commit):
+                results = build_runtime_event_ledger_results(root)
+
+        self.assertFalse(results["passed"])
+        self.assertIn("broad path ran without explicit click", json.dumps(results["failures"]))
+
+    def test_source_runtime_cost_evidence_before_click_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._seed_passing(root)
+            payload = json.loads((root / SOURCE_RUNTIME_EVENT_LEDGER_REL).read_text(encoding="utf-8"))
+            payload["rows"].append(
+                {
+                    "event_id": "source-cost-evidence",
+                    "event_type": "query",
+                    "section": "Cost & Contract",
+                    "workflow": "Cost Overview",
+                    "execution_boundary": "evidence_targeted",
+                    "ttl_key": "cost_targeted_evidence",
+                    "before_first_paint": True,
+                    "query_count_delta": 1,
+                    "producer": "runtime_state",
+                    "producer_signature": "sig",
+                    "commit_sha": self.commit,
+                    "raw_sql_included": False,
+                }
+            )
+            self._write_json(root, SOURCE_RUNTIME_EVENT_LEDGER_REL, payload)
+            with patch("tools.contracts.runtime_event_ledger._git_commit", return_value=self.commit):
+                results = build_runtime_event_ledger_results(root)
+
+        self.assertFalse(results["passed"])
+        self.assertIn("Cost evidence before explicit click", json.dumps(results["failures"]))
 
 
 if __name__ == "__main__":

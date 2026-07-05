@@ -57,6 +57,8 @@ PHASES: tuple[PhaseSpec, ...] = (
         (
             "artifacts/full_app_validation/runtime_event_ledger_results.json",
             "artifacts/launch_readiness/runtime_event_ledger_gate_results.json",
+            "artifacts/full_app_validation/source_runtime_event_ledger_results.json",
+            "artifacts/launch_readiness/source_runtime_event_ledger_gate_results.json",
         ),
     ),
     PhaseSpec(

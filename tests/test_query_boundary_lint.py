@@ -49,6 +49,25 @@ class QueryBoundaryLintTests(unittest.TestCase):
 
         self.assertTrue(results["passed"], results.get("failures"))
 
+    def test_legacy_release_boundary_fails(self):
+        from tools.contracts.query_boundary_lint import lint_query_boundary_paths
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / ".overwatch_final" / "sections" / "query_search.py"
+            target.parent.mkdir(parents=True)
+            target.write_text(
+                "from utils.query import run_query\n"
+                "def bad():\n"
+                "    return run_query('select 1', query_boundary='query_search')\n",
+                encoding="utf-8",
+            )
+
+            results = lint_query_boundary_paths(root)
+
+        self.assertFalse(results["passed"])
+        self.assertIn("unapproved query_boundary", str(results["failures"]))
+
     def test_aliased_run_query_requires_query_boundary(self):
         from tools.contracts.query_boundary_lint import lint_query_boundary_paths
 

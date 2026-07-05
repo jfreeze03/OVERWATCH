@@ -14,6 +14,8 @@ import re
 
 import streamlit as st
 
+from runtime_boundaries import APPROVED_RELEASE_EXECUTION_BOUNDARIES, normalize_release_boundary
+
 
 DECISION_FIRST_PAINT_QUERY_BUDGET = 1
 DECISION_WARM_QUERY_BUDGET = 0
@@ -40,47 +42,29 @@ _ROLE_CAPTURE_EVENTS_KEY = "_overwatch_role_capture_events"
 _QUERY_BUDGET_CONTEXT_STACK_KEY = "_overwatch_query_budget_context_stack"
 _QUERY_BUDGET_CONTEXT_EVENTS_KEY = "_overwatch_query_budget_context_events"
 _VALID_CACHE_LAYERS = {"none", "session", "streamlit_cache", "paused", "budget_blocked", "unknown"}
-_VALID_QUERY_BOUNDARIES = {
-    "decision_packet",
-    "evidence",
-    "evidence_targeted",
-    "query_search",
-    "query_search_exact",
-    "query_search_broad_explicit",
-    "query_preview",
-    "metadata",
-    "account_usage",
-    "setup_health",
-    "admin",
-    "other",
-}
+_VALID_QUERY_BOUNDARIES = set(APPROVED_RELEASE_EXECUTION_BOUNDARIES)
 _QUERY_BOUNDARY_ALIASES = {
     "first_paint_packet": "decision_packet",
     "warm_first_paint": "decision_packet",
-    "route_action": "other",
+    "route_action": "metadata_bounded",
     "evidence_action": "evidence_targeted",
     "compact_evidence": "evidence_targeted",
     "detail_mart": "evidence_targeted",
-    "query_search_no_click": "query_search",
-    "query_search_explicit": "query_search",
+    "query_search_no_click": "metadata_bounded",
+    "query_search_explicit": "query_search_exact",
     "cost_workbench": "evidence_targeted",
     "deep_history_fallback": "query_search_broad_explicit",
-    "setup_health": "setup_health",
-    "live_validation": "admin",
+    "setup_health": "admin_setup_health",
+    "live_validation": "live_validation",
+    "admin": "setup_admin",
+    "metadata": "metadata_bounded",
+    "account_usage": "query_search_broad_explicit",
+    "evidence": "evidence_targeted",
+    "query_search": "query_search_exact",
+    "query_preview": "metadata_bounded",
+    "cost_evidence": "evidence_targeted",
 }
-_FIRST_PAINT_BOUNDARIES = {
-    "decision_packet",
-    "evidence",
-    "evidence_targeted",
-    "query_search",
-    "query_search_exact",
-    "query_search_broad_explicit",
-    "query_preview",
-    "metadata",
-    "account_usage",
-    "setup_health",
-    "admin",
-}
+_FIRST_PAINT_BOUNDARIES = set(APPROVED_RELEASE_EXECUTION_BOUNDARIES)
 _QUERY_BUDGET_LIMITS = {
     "first_paint": DECISION_FIRST_PAINT_QUERY_BUDGET,
     "warm_first_paint": DECISION_WARM_QUERY_BUDGET,
@@ -104,7 +88,7 @@ def normalize_query_boundary(query_boundary: str) -> str:
     """Map product workflow boundaries to the execution boundary vocabulary."""
     raw = str(query_boundary or "other").strip().lower()
     normalized = _QUERY_BOUNDARY_ALIASES.get(raw, raw)
-    return normalized if normalized in _VALID_QUERY_BOUNDARIES else "other"
+    return normalize_release_boundary(normalized)
 
 
 def _session_list(key: str) -> list[Any]:
@@ -427,14 +411,17 @@ def record_first_paint_budget_violation(
 ) -> dict[str, Any]:
     """Record a SQL-free first-paint SLO violation for admin diagnostics."""
     context = _current_first_paint_context()
-    boundary = normalize_query_boundary(query_boundary)
+    product_boundary = str(query_boundary or "other")
+    boundary = normalize_query_boundary(product_boundary)
     event = {
         "event_id": uuid4().hex[:16],
         "render_id": str(render_id or context.get("render_id") or ""),
         "section": str(section or context.get("section") or ""),
         "workflow": str(context.get("workflow") or ""),
         "boundary": boundary,
-        "query_boundary": boundary,
+        "product_boundary": product_boundary,
+        "execution_boundary": boundary,
+        "query_boundary": product_boundary,
         "ttl_key": str(ttl_key or "")[:160],
         "tier": str(tier or ""),
         "max_rows": None if max_rows is None else int(max_rows),
@@ -483,7 +470,7 @@ def assert_first_paint_query_allowed(
     if not violation_reason:
         return
     record_first_paint_budget_violation(
-        query_boundary=boundary,
+        query_boundary=query_boundary,
         section=section or current_first_paint_section(),
         ttl_key=ttl_key,
         tier=tier,
@@ -776,11 +763,11 @@ def record_direct_sql_event(
         direct_sql_kind = "packet_direct_sql"
     elif allowance:
         direct_sql_kind = "runner_sql"
-    elif boundary == "account_usage" and re.search(r"metadata|probe|columns|filter_existing", reason_text, re.IGNORECASE):
+    elif boundary == "query_search_broad_explicit" and re.search(r"metadata|probe|columns|filter_existing", reason_text, re.IGNORECASE):
         direct_sql_kind = "account_usage_metadata_probe"
-    elif boundary == "metadata" or re.search(r"\b(show|describe|desc|metadata|current_role|select 1)\b", reason_text, re.IGNORECASE):
+    elif boundary == "metadata_bounded" or re.search(r"\b(show|describe|desc|metadata|current_role|select 1)\b", reason_text, re.IGNORECASE):
         direct_sql_kind = "metadata_probe"
-    elif boundary == "admin":
+    elif boundary in {"setup_admin", "admin_setup_health", "live_validation", "explicit_connection_test"}:
         direct_sql_kind = "admin_direct_sql"
     else:
         direct_sql_kind = "direct_sql"
@@ -830,7 +817,7 @@ def record_direct_sql_event(
             source_module="performance.record_direct_sql_event",
             direct_sql_count_delta=1,
             metadata_probe_count_delta=1 if metadata_probe else 0,
-            account_usage_count_delta=1 if boundary == "account_usage" else 0,
+            account_usage_count_delta=1 if normalize_release_boundary(query_boundary) == "query_search_broad_explicit" else 0,
             started_at=str(event.get("recorded_at") or ""),
             finished_at=str(event.get("recorded_at") or ""),
             raw_sql_included=False,
@@ -1109,7 +1096,7 @@ def record_ui_query_event(
     except Exception:
         pass
     _record_query_budget_context_event(
-        query_boundary=query_boundary,
+        query_boundary=original_boundary,
         # UI query events are diagnostic. Actual Snowflake execution budgets are
         # driven by increment_snowflake_execution_counter() and direct SQL
         # events so a single runner call is not counted twice.
@@ -1134,7 +1121,7 @@ def record_ui_query_event(
             error=str(event.get("error") or ""),
             source_module="performance.record_ui_query_event",
             query_count_delta=1,
-            account_usage_count_delta=1 if query_boundary == "account_usage" else 0,
+            account_usage_count_delta=1 if original_boundary.strip().lower() == "account_usage" else 0,
             started_at=str(event.get("started_at") or ""),
             finished_at=str(event.get("finished_at") or ""),
             raw_sql_included=False,
@@ -1233,7 +1220,7 @@ def increment_snowflake_execution_counter(
             del events[:-250]
     except Exception:
         pass
-    _record_query_budget_context_event(query_boundary=boundary, actual_execution=True)
+    _record_query_budget_context_event(query_boundary=str(query_boundary or "other"), actual_execution=True)
     try:
         from runtime_state import record_runtime_event
 
@@ -1248,7 +1235,7 @@ def increment_snowflake_execution_counter(
             ttl_key=str(ttl_key or ""),
             source_module="performance.increment_snowflake_execution_counter",
             query_count_delta=1,
-            account_usage_count_delta=1 if boundary == "account_usage" else 0,
+            account_usage_count_delta=1 if str(query_boundary or "").strip().lower() == "account_usage" else 0,
             started_at=str(event.get("timestamp") or ""),
             finished_at=str(event.get("timestamp") or ""),
             raw_sql_included=False,

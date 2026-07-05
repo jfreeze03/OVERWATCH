@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 from datetime import UTC, datetime
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
@@ -38,7 +39,7 @@ SELECTED_TOOL_PATH_SUFFIXES = (
     "tools/contracts/ui_system_grade.py",
 )
 
-ALLOWED_QUERY_BOUNDARIES = {
+_FALLBACK_ALLOWED_QUERY_BOUNDARIES = {
     "decision_packet",
     "evidence_targeted",
     "query_search_exact",
@@ -52,6 +53,22 @@ ALLOWED_QUERY_BOUNDARIES = {
     "explicit_connection_test",
     "metadata_bounded",
 }
+
+
+def _load_allowed_query_boundaries(root: Path) -> set[str]:
+    app_boundary_path = root / ".overwatch_final" / "runtime_boundaries.py"
+    if app_boundary_path.exists():
+        spec = importlib.util.spec_from_file_location("_overwatch_runtime_boundaries", app_boundary_path)
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            boundaries = getattr(module, "APPROVED_RELEASE_EXECUTION_BOUNDARIES", None)
+            if boundaries:
+                return {str(item) for item in boundaries}
+    return set(_FALLBACK_ALLOWED_QUERY_BOUNDARIES)
+
+
+ALLOWED_QUERY_BOUNDARIES = set(_FALLBACK_ALLOWED_QUERY_BOUNDARIES)
 
 DIRECT_SQL_RELEASE_BLOCKING_SUFFIXES = (
     "app.py",
@@ -197,6 +214,7 @@ def lint_query_boundary_paths(root: Path | str = ".", *, critical_suffixes: Iter
     direct_session_sql_call_count = 0
     direct_session_sql_violation_count = 0
     commit_sha = _git_commit(root_path)
+    allowed_boundaries = _load_allowed_query_boundaries(root_path)
     for path in _selected_scan_files(root_path):
         rel = path.relative_to(root_path)
         app_file = rel.as_posix().startswith(".overwatch_final/")
@@ -227,7 +245,7 @@ def lint_query_boundary_paths(root: Path | str = ".", *, critical_suffixes: Iter
                 run_query_call_count += 1
                 boundary_value = _keyword_literal(node, "query_boundary")
                 has_boundary = any(keyword.arg == "query_boundary" for keyword in node.keywords)
-                invalid_boundary = bool(boundary_value) and boundary_value not in ALLOWED_QUERY_BOUNDARIES
+                invalid_boundary = bool(boundary_value) and boundary_value not in allowed_boundaries
                 release_blocking = critical
                 reasons: list[str] = []
                 if release_blocking and not has_boundary:

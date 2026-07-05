@@ -13,6 +13,7 @@ from uuid import uuid4
 import streamlit as st
 
 from config import DEFAULT_COMPANY
+from runtime_boundaries import normalize_release_boundary
 from utils.evidence_mode import (
     TRIAGE_MODE_TRIAGE,
     evidence_mode_from_exceptions,
@@ -300,15 +301,17 @@ def record_runtime_event(
 ) -> dict[str, Any]:
     """Record an app-source runtime event without storing SQL or secrets."""
     now = datetime.now().isoformat(timespec="milliseconds")
+    execution_boundary_value = normalize_release_boundary(execution_boundary or boundary or product_boundary)
+    product_boundary_value = normalize_release_boundary(product_boundary or boundary or execution_boundary)
     event = {
         "event_id": uuid4().hex[:16],
         "event_type": str(event_type or "runtime"),
         "route": str(route or section or ""),
         "section": str(section or ""),
         "workflow": str(workflow or ""),
-        "boundary": str(boundary or execution_boundary or product_boundary or ""),
-        "product_boundary": str(product_boundary or boundary or ""),
-        "execution_boundary": str(execution_boundary or boundary or ""),
+        "boundary": execution_boundary_value,
+        "product_boundary": product_boundary_value,
+        "execution_boundary": execution_boundary_value,
         "query_tier": str(query_tier or ""),
         "ttl_key": str(ttl_key or "")[:160],
         "cache_hit": cache_hit,

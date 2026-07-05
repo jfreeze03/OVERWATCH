@@ -123,7 +123,7 @@ def _security_target_query_kwargs(target: dict | None) -> dict[str, object]:
         available_columns=SECURITY_TARGET_COLUMNS,
     ).with_fingerprint()
     return {
-        "query_boundary": "evidence",
+        "query_boundary": "evidence_targeted",
         "max_rows": 500,
         "section": "Security Monitoring",
         "target_label": evidence_target_label(target or {}),

@@ -37,7 +37,7 @@ class RuntimeSourceEventTests(unittest.TestCase):
                     {
                         "actual_query_executed": False,
                         "cache_layer": "test",
-                        "query_boundary": "cost_evidence",
+                        "query_boundary": "evidence_targeted",
                         "query_contract_id": "contract",
                         "first_paint_sensitive": False,
                     },
@@ -58,7 +58,7 @@ class RuntimeSourceEventTests(unittest.TestCase):
         rows = get_runtime_event_ledger()
         source_rows = [row for row in rows if row["event_type"] == "run_query_source"]
         self.assertEqual(len(source_rows), 1)
-        self.assertEqual(source_rows[0]["execution_boundary"], "cost_evidence")
+        self.assertEqual(source_rows[0]["execution_boundary"], "evidence_targeted")
         self.assertEqual(source_rows[0]["source_module"], "utils.query")
         self.assertTrue(source_rows[0]["cost_evidence_marker_present"])
         self.assertFalse(source_rows[0]["raw_sql_included"])

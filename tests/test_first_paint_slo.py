@@ -157,6 +157,61 @@ class FirstPaintSloTests(unittest.TestCase):
                 ],
                 "raw_sql_included": False,
             },
+            "runtime_event_ledger_payload": {
+                "commit_sha": commit_sha,
+                "producer": "runtime_event_ledger",
+                "producer_signature": "runtime_event_ledger::v1",
+                "passed": True,
+                "failure_count": 0,
+                "event_count": 6,
+                "pre_first_paint_session_open_count": 0,
+                "shell_session_open_count": 0,
+                "active_session_probe_count": 0,
+                "admin_connection_test_count": 0,
+                "explicit_connection_test_count": 0,
+                "evidence_query_count_before_first_paint": 0,
+                "account_usage_query_count_before_first_paint": 0,
+                "cost_overview_autoload_violation_count": 0,
+                "query_search_broad_autorun_count": 0,
+                "target_pushdown_violation_count": 0,
+                "route_action_sql_violation_count": 0,
+                "rows": [
+                    {
+                        "id": "runtime_event_ledger::repo_scan",
+                        "commit_sha": commit_sha,
+                        "producer": "runtime_event_ledger",
+                        "producer_signature": "runtime_event_ledger::row",
+                        "passed": True,
+                        "raw_sql_included": False,
+                    }
+                ],
+                "raw_sql_included": False,
+            },
+            "source_runtime_event_ledger_payload": {
+                "commit_sha": commit_sha,
+                "producer": "full_app_runtime_validation",
+                "producer_signature": "source_runtime_event_ledger::v1",
+                "passed": True,
+                "failure_count": 0,
+                "event_count": 6,
+                "first_paint_source_event_count": 6,
+                "decision_packet_source_event_count": 6,
+                "session_open_count": 0,
+                "active_session_probe_count": 0,
+                "direct_sql_count": 0,
+                "account_usage_count": 0,
+                "rows": [
+                    {
+                        "id": "source_runtime_event::first_paint",
+                        "commit_sha": commit_sha,
+                        "producer": "runtime_state",
+                        "producer_signature": "runtime_state::row",
+                        "passed": True,
+                        "raw_sql_included": False,
+                    }
+                ],
+                "raw_sql_included": False,
+            },
         }
 
     def test_primary_packet_rows_under_slo_pass(self):

@@ -167,6 +167,7 @@ from tools.contracts.route_action_replay import (
 from tools.contracts.runtime_event_ledger import (
     RUNTIME_EVENT_LEDGER_GATE_REL,
     RUNTIME_EVENT_LEDGER_RESULTS_REL,
+    SOURCE_RUNTIME_EVENT_LEDGER_GATE_REL,
     write_runtime_event_ledger_artifacts,
 )
 from tools.contracts.post_deploy_smoke import (
@@ -6437,6 +6438,9 @@ def evaluate_launch_readiness(
         launch_artifacts.get("release_evidence_registry_gate_results")
     )
     runtime_event_ledger_gate = _as_mapping(launch_artifacts.get("runtime_event_ledger_gate_results"))
+    source_runtime_event_ledger_gate = _as_mapping(
+        launch_artifacts.get("source_runtime_event_ledger_gate_results")
+    )
     route_action_replay_gate = _as_mapping(launch_artifacts.get("route_action_replay_gate_results"))
     export_case_parity_gate = _as_mapping(launch_artifacts.get("export_case_parity_gate_results"))
     launch_summary = {
@@ -6526,6 +6530,7 @@ def evaluate_launch_readiness(
         and bool(snowflake_object_drift_gate.get("passed"))
         and bool(release_evidence_registry_gate.get("passed"))
         and bool(runtime_event_ledger_gate.get("passed"))
+        and bool(source_runtime_event_ledger_gate.get("passed"))
         and bool(route_action_replay_gate.get("passed"))
         and bool(export_case_parity_gate.get("passed")),
         "a_grade_ready": bool(a_grade_execution_matrix_gate.get("a_grade_ready")),
@@ -6543,6 +6548,13 @@ def evaluate_launch_readiness(
         "runtime_event_ledger_passed": bool(runtime_event_ledger_gate.get("passed")),
         "runtime_event_ledger_failure_count": _as_int(runtime_event_ledger_gate.get("failure_count")),
         "runtime_event_ledger_event_count": _as_int(runtime_event_ledger_gate.get("event_count")),
+        "source_runtime_event_ledger_passed": bool(source_runtime_event_ledger_gate.get("passed")),
+        "source_runtime_event_ledger_failure_count": _as_int(
+            source_runtime_event_ledger_gate.get("failure_count")
+        ),
+        "source_runtime_event_ledger_event_count": _as_int(
+            source_runtime_event_ledger_gate.get("event_count")
+        ),
         "route_action_replay_passed": bool(route_action_replay_gate.get("passed")),
         "route_action_replay_failure_count": _as_int(route_action_replay_gate.get("failure_count")),
         "route_action_replay_scenario_count": _as_int(route_action_replay_gate.get("scenario_count")),
@@ -7005,14 +7017,14 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     payloads.update(query_search_autorun_artifacts)
     query_boundary_lint_artifacts = write_query_boundary_lint_artifacts(root_path)
     payloads.update(query_boundary_lint_artifacts)
-    performance_budget_artifacts = write_performance_budget_gate_artifacts(root_path)
-    payloads.update(performance_budget_artifacts)
-    first_paint_slo_artifacts = write_first_paint_slo_artifacts(root_path)
-    payloads.update(first_paint_slo_artifacts)
     runtime_event_ledger_artifacts = write_runtime_event_ledger_artifacts(root_path)
     payloads.update(runtime_event_ledger_artifacts)
     route_action_replay_artifacts = write_route_action_replay_artifacts(root_path)
     payloads.update(route_action_replay_artifacts)
+    performance_budget_artifacts = write_performance_budget_gate_artifacts(root_path)
+    payloads.update(performance_budget_artifacts)
+    first_paint_slo_artifacts = write_first_paint_slo_artifacts(root_path)
+    payloads.update(first_paint_slo_artifacts)
     export_case_parity_artifacts = write_export_case_parity_artifacts(root_path)
     payloads.update(export_case_parity_artifacts)
     ui_system_grade_artifacts = write_ui_system_grade_artifacts(root_path)
@@ -7092,6 +7104,9 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["first_paint_slo_gate_results"] = first_paint_slo_artifacts[FIRST_PAINT_SLO_GATE_REL]
     launch_artifacts["runtime_event_ledger_gate_results"] = runtime_event_ledger_artifacts[
         RUNTIME_EVENT_LEDGER_GATE_REL
+    ]
+    launch_artifacts["source_runtime_event_ledger_gate_results"] = runtime_event_ledger_artifacts[
+        SOURCE_RUNTIME_EVENT_LEDGER_GATE_REL
     ]
     launch_artifacts["route_action_replay_gate_results"] = route_action_replay_artifacts[
         ROUTE_ACTION_REPLAY_GATE_REL

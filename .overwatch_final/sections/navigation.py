@@ -29,6 +29,7 @@ from runtime_state import (
     WORKLOAD_OPERATIONS_WORKFLOW,
     get_state,
     pop_state,
+    record_runtime_event,
     set_state,
 )
 
@@ -84,6 +85,19 @@ def apply_navigation_state(section: str, *, mark_pending: bool = True) -> str:
     for key, value in compatibility_state_for_section(raw_section).items():
         set_state(key, value)
     set_state(NAV_SECTION, target)
+    record_runtime_event(
+        event_type="route_action",
+        route=target,
+        section=target,
+        workflow="",
+        boundary="metadata_bounded",
+        product_boundary="metadata_bounded",
+        execution_boundary="metadata_bounded",
+        action_id=f"section_nav::{target.lower().replace(' ', '_')}",
+        user_initiated=True,
+        route_action_marker_present=True,
+        source_module="sections.navigation.apply_navigation_state",
+    )
     return target
 
 

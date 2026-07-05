@@ -11,11 +11,18 @@ from sections.alert_center_boards import (
 )
 from sections.shell_helpers import render_shell_snapshot, render_shell_status_strip
 from utils.explicit_load import render_export_controls
+from utils.primitives import safe_int
 from utils.workflows import render_priority_dataframe
 
 
 def _download_csv(df: pd.DataFrame, file_name: str) -> None:
     render_export_controls(df, file_name, label="Export CSV")
+
+
+def _metric_snapshot_value(metric_lookup: dict[str, object], metric_name: str) -> str:
+    row = metric_lookup.get(metric_name, {})
+    value = row.get("VALUE", 0) if hasattr(row, "get") else 0
+    return f"{safe_int(value):,}"
 
 
 def render_active_alerts_pane(
@@ -36,10 +43,10 @@ def render_active_alerts_pane(
     if isinstance(metrics, pd.DataFrame) and not metrics.empty:
         metric_lookup = {str(row["METRIC"]): row for _, row in metrics.iterrows()}
         render_shell_snapshot((
-            ("Open Critical", f"{int(metric_lookup.get('Open critical', {}).get('VALUE', 0)):,}"),
-            ("Warnings", f"{int(metric_lookup.get('Warning alerts', {}).get('VALUE', 0)):,}"),
-            ("Info", f"{int(metric_lookup.get('Info alerts', {}).get('VALUE', 0)):,}"),
-            ("Resolved", f"{int(metric_lookup.get('Resolved alerts', {}).get('VALUE', 0)):,}"),
+            ("Open Critical", _metric_snapshot_value(metric_lookup, "Open critical")),
+            ("Warnings", _metric_snapshot_value(metric_lookup, "Warning alerts")),
+            ("Info", _metric_snapshot_value(metric_lookup, "Info alerts")),
+            ("Resolved", _metric_snapshot_value(metric_lookup, "Resolved alerts")),
         ))
 
     incident_board = build_alert_incident_action_board(alerts, queue, limit=25)

@@ -105,6 +105,23 @@ class AlertCenterSplitTests(unittest.TestCase):
         self.assertIs(alert_center._render_advanced_alert_diagnostics, diagnostics_view._render_advanced_alert_diagnostics)
         self.assertIs(alert_center._render_alert_change_context, diagnostics_view._render_alert_change_context)
 
+    def test_active_alert_metric_snapshot_handles_nan_values(self):
+        metrics = pd.DataFrame(
+            [
+                {"METRIC": "Open critical", "VALUE": float("nan")},
+                {"METRIC": "Warning alerts", "VALUE": "4"},
+                {"METRIC": "Info alerts", "VALUE": pd.NA},
+                {"METRIC": "Resolved alerts", "VALUE": None},
+            ]
+        )
+        metric_lookup = {str(row["METRIC"]): row for _, row in metrics.iterrows()}
+
+        self.assertEqual(active_view._metric_snapshot_value(metric_lookup, "Open critical"), "0")
+        self.assertEqual(active_view._metric_snapshot_value(metric_lookup, "Warning alerts"), "4")
+        self.assertEqual(active_view._metric_snapshot_value(metric_lookup, "Info alerts"), "0")
+        self.assertEqual(active_view._metric_snapshot_value(metric_lookup, "Resolved alerts"), "0")
+        self.assertEqual(active_view._metric_snapshot_value(metric_lookup, "Missing metric"), "0")
+
     def test_alert_center_board_helpers_reexport_focused_module(self):
         for name in [
             "_open_alert_mask",

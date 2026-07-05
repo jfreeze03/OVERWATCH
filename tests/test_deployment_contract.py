@@ -1,3 +1,4 @@
+import ast
 from pathlib import Path
 import re
 import sys
@@ -123,6 +124,33 @@ class DeploymentContractTests(unittest.TestCase):
                 self.assertTrue((APP_ROOT / artifact.rstrip("/")).exists())
 
         self.assertNotIn("execute_as:", manifest)
+
+    def test_manifest_packages_imported_root_modules(self):
+        root_modules = {path.stem for path in APP_ROOT.glob("*.py")}
+        packaged_modules = {
+            artifact.removesuffix(".py")
+            for artifact in STREAMLIT_SNOWFLAKE_ARTIFACTS
+            if artifact.endswith(".py")
+        }
+        imported_root_modules: set[str] = set()
+
+        for path in APP_ROOT.rglob("*.py"):
+            if "__pycache__" in path.parts:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        module = alias.name.split(".", 1)[0]
+                        if module in root_modules:
+                            imported_root_modules.add(module)
+                elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                    module = node.module.split(".", 1)[0]
+                    if module in root_modules:
+                        imported_root_modules.add(module)
+
+        missing = sorted(imported_root_modules - packaged_modules)
+        self.assertEqual(missing, [])
 
     def test_theme_assets_are_packaged_and_non_empty(self):
         theme_asset_dir = APP_ROOT / "theme_assets"

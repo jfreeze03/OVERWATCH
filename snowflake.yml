@@ -29,6 +29,8 @@ entities:
         dest: access_control.py
       - src: .overwatch_final/app_entry_timing.py
         dest: app_entry_timing.py
+      - src: .overwatch_final/brand.py
+        dest: brand.py
       - src: .overwatch_final/config.py
         dest: config.py
       - src: .overwatch_final/filters.py
@@ -39,10 +41,16 @@ entities:
         dest: navigation.py
       - src: .overwatch_final/perf_trace.py
         dest: perf_trace.py
+      - src: .overwatch_final/performance.py
+        dest: performance.py
+      - src: .overwatch_final/query_contracts.py
+        dest: query_contracts.py
       - src: .overwatch_final/refresh.py
         dest: refresh.py
       - src: .overwatch_final/route_registry.py
         dest: route_registry.py
+      - src: .overwatch_final/runtime_boundaries.py
+        dest: runtime_boundaries.py
       - src: .overwatch_final/runtime_state.py
         dest: runtime_state.py
       - src: .overwatch_final/section_dispatch.py

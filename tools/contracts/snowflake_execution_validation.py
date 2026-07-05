@@ -1297,9 +1297,10 @@ def _streamlit_manifest_validation(root: Path) -> dict[str, Any]:
         if "execute_as:" in text:
             failures.append({"code": "UNSUPPORTED_STREAMLIT_EXECUTE_AS", "manifest": manifest_name})
     for artifact in (
-        "access_control.py", "app_entry_timing.py", "config.py", "filters.py", "layout.py",
-        "navigation.py", "perf_trace.py", "refresh.py", "route_registry.py", "runtime_state.py",
-        "section_dispatch.py", "shell.py", "theme.py", "theme_assets/", "version.py", "workflow_contracts.py",
+        "access_control.py", "app_entry_timing.py", "brand.py", "config.py", "filters.py", "layout.py",
+        "navigation.py", "perf_trace.py", "performance.py", "query_contracts.py", "refresh.py",
+        "route_registry.py", "runtime_boundaries.py", "runtime_state.py", "section_dispatch.py", "shell.py",
+        "theme.py", "theme_assets/", "version.py", "workflow_contracts.py",
         "environment.yml", "pyproject.toml", "utils/", "sections/",
     ):
         if f"src: .overwatch_final/{artifact}" not in root_text or f"dest: {artifact}" not in root_text:

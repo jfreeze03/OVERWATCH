@@ -238,8 +238,8 @@ def render() -> None:
             detail_action = make_evidence_action(
                 "Cost & Contract",
                 workflow,
-                label="Load Cost Evidence",
-                help_text="Load official spend facts and supporting cost evidence for the current scope.",
+                label="Open Cost Drivers",
+                help_text="Open official spend facts and supporting cost details for the current scope.",
                 state_key="cost_contract_command_brief_load_evidence",
                 key="cost_contract_refresh",
             )

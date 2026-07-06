@@ -797,7 +797,7 @@ class FormulaRegressionTests(unittest.TestCase):
         })
         display = apply_operator_status_labels(raw)
 
-        self.assertEqual(display.loc[0, "STATE"], "Load on demand")
+        self.assertEqual(display.loc[0, "STATE"], "Explicit action")
         self.assertEqual(display.loc[1, "STATE"], "Refresh available")
         self.assertEqual(display.loc[0, "VERIFICATION_STATUS"], "Awaiting telemetry")
         self.assertEqual(display.loc[0, "OWNER_APPROVAL_STATUS"], "Awaiting review")
@@ -996,7 +996,7 @@ class FormulaRegressionTests(unittest.TestCase):
         run_rate = pd.DataFrame([{"AVG_DAILY_7D": 1.5, "YOY_7D_PCT": 4.0, "YOY_30D_PCT": 3.0}])
         attribution = pd.DataFrame([
             {
-                "WAREHOUSE_NAME": "COMPUTE_WH",
+                "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
                 "EXACT_METERED_CREDITS": 10.0,
                 "ALLOCATED_QUERY_CREDITS": 6.0,
                 "OFFICIAL_ATTRIBUTED_COMPUTE_CREDITS": 5.5,
@@ -1004,7 +1004,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "VARIANCE_CREDITS": 4.0,
             },
             {
-                "WAREHOUSE_NAME": "COMPUTE_WH",
+                "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
                 "EXACT_METERED_CREDITS": 2.0,
                 "ALLOCATED_QUERY_CREDITS": 1.5,
                 "OFFICIAL_ATTRIBUTED_COMPUTE_CREDITS": 1.5,
@@ -1053,7 +1053,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(gap["official_queries"], 15)
         self.assertAlmostEqual(gap["exact_credits"], 12.0)
         self.assertAlmostEqual(gap["query_credits"], 7.5)
-        self.assertEqual(gap["top_gap_warehouse"], "COMPUTE_WH")
+        self.assertEqual(gap["top_gap_warehouse"], "WH_ALFA_OVERWATCH")
 
         service_summary = _build_service_cost_lens_summary(service_lens)
         self.assertAlmostEqual(service_summary["total_credits"], 13.0)
@@ -1856,7 +1856,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "df_chargeback": pd.DataFrame([{
                 "COMPANY": "ALFA",
                 "ENVIRONMENT": "PROD",
-                "DATABASE_NAME": "ALFA_EDW_PROD",
+                "DATABASE_NAME": "ALFA_EDW_PRD",
                 "TOTAL_CREDITS": 40,
             }]),
             "df_cost_explorer_detail": pd.DataFrame([{
@@ -1878,7 +1878,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(by_driver["Warehouse movement"]["ENTITY"], "ALFA_WH")
         self.assertEqual(by_driver["Warehouse movement"]["TRUST"], "Exact warehouse metering")
-        self.assertEqual(by_driver["Database / DEV rollup"]["ENTITY"], "ALFA_EDW_PROD")
+        self.assertEqual(by_driver["Database / DEV rollup"]["ENTITY"], "ALFA_EDW_PRD")
         self.assertEqual(by_driver["Database / DEV rollup"]["TRUST"], "Allocated / Estimated")
         self.assertEqual(by_driver["Role / user / department"]["ENTITY"], "ETL_ROLE")
         self.assertIn("post-period measurement", by_driver["Open savings queue"]["NEXT_ACTION"])
@@ -2143,14 +2143,14 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("DATEADD('HOUR', -24, CURRENT_TIMESTAMP())", setup_upper)
         self.assertIn("ROUND(SUM(CREDITS_BILLED * RATE_USD), 2) AS EST_COST_USD", setup_upper)
         self.assertIn("SERVICE_CATEGORY", setup_upper)
-        self.assertIn("CREATE WAREHOUSE IF NOT EXISTS COMPUTE_WH", setup_upper)
+        self.assertIn("CREATE WAREHOUSE IF NOT EXISTS WH_ALFA_OVERWATCH", setup_upper)
         self.assertIn("STATEMENT_TIMEOUT_IN_SECONDS = 600", setup_upper)
-        self.assertIn("CREATE RESOURCE MONITOR IF NOT EXISTS COMPUTE_WH_RM", setup_upper)
+        self.assertIn("CREATE RESOURCE MONITOR IF NOT EXISTS WH_ALFA_OVERWATCH_RM", setup_upper)
         self.assertIn("WITH CREDIT_QUOTA = 50", setup_upper)
         self.assertIn("TRIGGERS ON 80 PERCENT DO NOTIFY", setup_upper)
         self.assertIn("ON 100 PERCENT DO SUSPEND", setup_upper)
-        self.assertIn("ALTER WAREHOUSE IF EXISTS COMPUTE_WH", setup_upper)
-        self.assertIn("SET RESOURCE_MONITOR = COMPUTE_WH_RM", setup_upper)
+        self.assertIn("ALTER WAREHOUSE IF EXISTS WH_ALFA_OVERWATCH", setup_upper)
+        self.assertIn("SET RESOURCE_MONITOR = WH_ALFA_OVERWATCH_RM", setup_upper)
         self.assertIn("WHEN SRC.SETTING_NAME = 'DEFAULT_ALERT_EMAIL'", setup_upper)
         self.assertIn("ILIKE '%YOURCOMPANY.COM%'", setup_upper)
         self.assertIn("'CONFIG_REQUIRED'", setup_upper)
@@ -2159,7 +2159,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("AFTER OVERWATCH_REFRESH_CONTROL_ROOM", setup_upper)
         self.assertIn("OVERWATCH_ALERTS", setup_upper)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_ANNOTATIONS", setup_upper)
-        self.assertIn("WAREHOUSE = COMPUTE_WH", setup_upper)
+        self.assertIn("WAREHOUSE = WH_ALFA_OVERWATCH", setup_upper)
         self.assertIn("WAREHOUSE_COST_MOVEMENT", setup_upper)
         self.assertIn("CORTEX_SPEND_AND_QUOTA", setup_upper)
         self.assertIn("CHANGE_COST_CORRELATION", setup_upper)
@@ -2342,10 +2342,10 @@ class FormulaRegressionTests(unittest.TestCase):
         sis = by_runtime["Streamlit in Snowflake"]
         self.assertEqual(sis["MANIFEST"], ".overwatch_final/snowflake.yml")
         self.assertEqual(sis["ENTRYPOINT"], ".overwatch_final/app.py")
-        self.assertEqual(sis["WAREHOUSE"], "COMPUTE_WH")
+        self.assertEqual(sis["WAREHOUSE"], "WH_ALFA_OVERWATCH")
         self.assertEqual(sis["EXECUTE_AS"], "owner_default_no_manifest_key")
         self.assertIn("streamlit_app.py", sis["DO_NOT_USE"])
-        self.assertNotIn("COMPUTE_WH", sis["DO_NOT_USE"])
+        self.assertNotIn("WH_ALFA_OVERWATCH", sis["DO_NOT_USE"])
 
         cloud = by_runtime["Streamlit Community Cloud"]
         self.assertEqual(cloud["ENTRYPOINT"], "streamlit_app.py")
@@ -2363,7 +2363,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("SP_OVERWATCH_REFRESH_COST_MONITORING", sql)
         self.assertIn("OVERWATCH_COST_MONITORING_REFRESH", sql)
         self.assertIn("OVERWATCH_ALERTS", sql)
-        self.assertIn("WAREHOUSE = COMPUTE_WH", sql)
+        self.assertIn("WAREHOUSE = WH_ALFA_OVERWATCH", sql)
 
     def test_control_room_snapshot_maps_to_watch_floor_shape(self):
         snapshot = pd.DataFrame([
@@ -2482,7 +2482,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "global_warehouse": "WH_ALFA",
             "global_user": "",
             "global_role": "",
-            "global_database": "ALFA_EDW_PROD",
+            "global_database": "ALFA_EDW_PRD",
             "global_start_date": "",
             "global_end_date": "",
         }
@@ -2721,7 +2721,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "global_end_date": "",
         }
         filtered = dict(unfiltered)
-        filtered["global_database"] = "ALFA_EDW_PROD"
+        filtered["global_database"] = "ALFA_EDW_PRD"
 
         self.assertTrue(_dba_snapshot_scope_compatible("ALL", unfiltered))
         self.assertFalse(_dba_snapshot_scope_compatible("PROD", unfiltered))
@@ -3236,7 +3236,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "SOURCE_SURFACE": "Cost Advisor",
             "SEVERITY": "High",
             "SIGNAL": "Idle warehouse",
-            "ENTITY": "COMPUTE_WH",
+            "ENTITY": "WH_ALFA_OVERWATCH",
             "ROUTE": "Cost & Contract",
             "NEXT_ACTION": "Review suspend setting.",
             "TELEMETRY_BASIS": "metering and warehouse history",
@@ -3759,16 +3759,16 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state.clear()
             st.session_state["active_company"] = "ALFA"
             prod_clause = get_environment_filter_clause("q.database_name", "PROD").upper()
-            self.assertIn("ALFA_EDW_PROD", prod_clause)
+            self.assertIn("ALFA_EDW_PRD", prod_clause)
 
             dev_clause = get_environment_filter_clause("q.database_name", "DEV_ALL").upper()
             for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
                 self.assertIn(db_name, dev_clause)
-            self.assertNotIn("ALFA_EDW_PROD", dev_clause)
+            self.assertNotIn("ALFA_EDW_PRD", dev_clause)
 
             optional_clause = get_environment_filter_or_no_database_clause("q.database_name", "PROD").upper()
             self.assertIn("Q.DATABASE_NAME IS NULL", optional_clause)
-            self.assertIn("ALFA_EDW_PROD", optional_clause)
+            self.assertIn("ALFA_EDW_PRD", optional_clause)
 
             st.session_state["active_company"] = "Trexis"
             trexis_prod_clause = get_environment_filter_clause("q.database_name", "PROD").upper()
@@ -3788,7 +3788,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("THEN 'PROD'", case_expr)
         self.assertIn("THEN 'ALFA_EDW_DEV'", case_expr)
         self.assertIn("NO DATABASE CONTEXT", case_expr)
-        self.assertEqual(environment_label_for_database("ALFA_EDW_PROD"), "PROD")
+        self.assertEqual(environment_label_for_database("ALFA_EDW_PRD"), "PROD")
         self.assertEqual(environment_label_for_database("ALFA_EDW_SAN"), "ALFA_EDW_SAN")
         self.assertEqual(environment_label_for_database("TRXS_EDW_PRD"), "PROD")
         self.assertEqual(environment_label_for_database("TRXS_EDW_SIT"), "DEV_ALL")
@@ -3808,7 +3808,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 role_col="q.role_name",
                 db_col="q.database_name",
             ).upper()
-            self.assertIn("ALFA_EDW_PROD", clause)
+            self.assertIn("ALFA_EDW_PRD", clause)
         finally:
             st.session_state.clear()
             st.session_state.update(previous)
@@ -3825,7 +3825,7 @@ class FormulaRegressionTests(unittest.TestCase):
             db_sql = build_mart_adoption_users_db_sql(30, "ALFA").upper()
             for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
                 self.assertIn(db_name, db_sql)
-            self.assertNotIn("ALFA_EDW_PROD", db_sql)
+            self.assertNotIn("ALFA_EDW_PRD", db_sql)
 
             login_sql = build_mart_control_room_failed_logins_sql(24, "ALFA").upper()
             self.assertNotIn("ALFA_EDW_DEV", login_sql)
@@ -3838,7 +3838,7 @@ class FormulaRegressionTests(unittest.TestCase):
     def test_mart_setup_adds_explicit_environment_dimensions(self):
         setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
         self.assertIn("CREATE OR REPLACE FUNCTION OVERWATCH_DATABASE_ENVIRONMENT", setup_sql)
-        self.assertIn("UPPER(DATABASE_NAME) = 'ALFA_EDW_PROD'", setup_sql)
+        self.assertIn("UPPER(DATABASE_NAME) = 'ALFA_EDW_PRD'", setup_sql)
         self.assertNotIn("OVERWATCH_COMPANY_SCOPE", setup_sql)
 
         env_tables = [
@@ -3984,7 +3984,7 @@ class FormulaRegressionTests(unittest.TestCase):
             {
                 "COMPANY": "ALFA",
                 "ENVIRONMENT": "PROD",
-                "DATABASE_NAME": "ALFA_EDW_PROD",
+                "DATABASE_NAME": "ALFA_EDW_PRD",
                 "USER_NAME": "ANALYST_1",
                 "ROLE_NAME": "REPORTING_ROLE",
                 "WAREHOUSE_NAME": "WH_ALFA_BI",
@@ -4312,8 +4312,8 @@ class FormulaRegressionTests(unittest.TestCase):
                     "Object Grant",
                     "Shared Database Exposure",
                 ],
-                "ENTITY": ["ALFA_USER", "ALFA_MFA_GAP", "ETL_RUNNER", "ALFA_EDW_DEV.PUBLIC.POLICY", "ALFA_EDW_PROD"],
-                "DATABASE_NAME": ["", "", "", "ALFA_EDW_DEV", "ALFA_EDW_PROD"],
+                "ENTITY": ["ALFA_USER", "ALFA_MFA_GAP", "ETL_RUNNER", "ALFA_EDW_DEV.PUBLIC.POLICY", "ALFA_EDW_PRD"],
+                "DATABASE_NAME": ["", "", "", "ALFA_EDW_DEV", "ALFA_EDW_PRD"],
                 "EVENT_COUNT": [12, 1, 4, 5, 1],
                 "DISTINCT_SOURCES": [3, 0, 2, 2, 0],
                 "LAST_SEEN": ["2026-05-01", "2026-05-02", "2026-05-03", "2026-05-03", "2026-05-04"],
@@ -4421,7 +4421,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("GOR.PRIVILEGE AS PRIVILEGE", sql_upper)
         self.assertIn("AS GRANT_OPTION", sql_upper)
         self.assertIn("GRANT_AGE_DAYS", sql_upper)
-        self.assertIn("ALFA_EDW_PROD", sql_upper)
+        self.assertIn("ALFA_EDW_PRD", sql_upper)
         self.assertNotIn("GTU.TABLE_CATALOG", sql_upper)
         self.assertEqual(verification_query_safety_issues(sql), [])
 
@@ -4525,7 +4525,7 @@ class FormulaRegressionTests(unittest.TestCase):
             {
                 "SEVERITY": ["High", "Medium"],
                 "FINDING_TYPE": ["Failed Login", "Shared Database Exposure"],
-                "ENTITY": ["ALFA_USER", "ALFA_EDW_PROD"],
+                "ENTITY": ["ALFA_USER", "ALFA_EDW_PRD"],
                 "EVENT_COUNT": [12, 1],
                 "DISTINCT_SOURCES": [3, 0],
                 "LAST_SEEN": ["2026-05-01", "2026-05-04"],
@@ -4583,8 +4583,8 @@ class FormulaRegressionTests(unittest.TestCase):
                 {
                     "SEVERITY": ["High", "High"],
                     "FINDING_TYPE": ["Failed Login", "Shared Database Exposure"],
-                    "ENTITY": ["ALFA_USER", "ALFA_EDW_PROD"],
-                    "DATABASE_NAME": ["", "ALFA_EDW_PROD"],
+                    "ENTITY": ["ALFA_USER", "ALFA_EDW_PRD"],
+                    "DATABASE_NAME": ["", "ALFA_EDW_PRD"],
                     "EVENT_COUNT": [12, 1],
                     "DISTINCT_SOURCES": [3, 0],
                     "LAST_SEEN": ["2026-05-01", "2026-05-04"],
@@ -4614,8 +4614,8 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(by_entity["ALFA_USER"]["CONTROL_STATE"], "Closure Overdue")
         self.assertEqual(by_entity["ALFA_USER"]["CONTROL_RANK"], 0)
-        self.assertEqual(by_entity["ALFA_EDW_PROD"]["CONTROL_STATE"], "Ticket / Review Date Blocked")
-        self.assertIn("access ticket", by_entity["ALFA_EDW_PROD"]["CONTROL_BLOCKERS"])
+        self.assertEqual(by_entity["ALFA_EDW_PRD"]["CONTROL_STATE"], "Ticket / Review Date Blocked")
+        self.assertIn("access ticket", by_entity["ALFA_EDW_PRD"]["CONTROL_BLOCKERS"])
 
     def test_security_action_queue_closure_sql_scores_evidence_gaps(self):
         sql = _security_action_queue_closure_sql(45, "ALFA", "DEV_ALL").upper()
@@ -4699,7 +4699,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_surface["Security exceptions"]["ROWS"], 1)
         self.assertEqual(by_surface["Control summary"]["STATE"], "Unavailable")
         self.assertEqual(by_surface["Privileged grants"]["STATE"], "Stale")
-        self.assertEqual(by_surface["Access review trend"]["STATE"], "On demand")
+        self.assertEqual(by_surface["Access review trend"]["STATE"], "Details available when needed")
         self.assertIn("Reload", by_surface["Privileged grants"]["NEXT_ACTION"])
 
     def test_source_health_helpers_do_not_read_empty_session_keys(self):
@@ -4874,7 +4874,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "ROOT_CAUSE": ["Warehouse Queue"],
                 "QUERY_ID": ["01abc"],
                 "WAREHOUSE_NAME": ["BI_COMPUTE_WH"],
-                "DATABASE_NAME": ["ALFA_EDW_PROD"],
+                "DATABASE_NAME": ["ALFA_EDW_PRD"],
                 "SCHEMA_NAME": ["PUBLIC"],
                 "ELAPSED_SEC": [91.2],
                 "QUEUED_SEC": [45.0],
@@ -4965,7 +4965,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("WAREHOUSE_METERING_HISTORY", sql_upper)
         for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
             self.assertIn(db_name, sql_upper)
-        self.assertNotIn("ALFA_EDW_PROD", sql_upper)
+        self.assertNotIn("ALFA_EDW_PRD", sql_upper)
         self.assertEqual(verification_query_safety_issues(sql), [])
 
     def test_warehouse_owner_inventory_path_stays_removed(self):
@@ -4978,7 +4978,7 @@ class FormulaRegressionTests(unittest.TestCase):
     def test_warehouse_guardrail_coverage_blocks_missing_monitor_and_never_suspend(self):
         overview = pd.DataFrame(
             {
-                "WAREHOUSE_NAME": ["COMPUTE_WH", "BI_COMPUTE_WH"],
+                "WAREHOUSE_NAME": ["WH_ALFA_OVERWATCH", "BI_COMPUTE_WH"],
                 "TOTAL_QUERIES": [120, 600],
                 "AVG_QUEUED_SEC": [0.2, 3.5],
                 "TOTAL_REMOTE_SPILL_GB": [0.0, 18.0],
@@ -4990,7 +4990,7 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         settings = pd.DataFrame(
             {
-                "NAME": ["COMPUTE_WH", "BI_COMPUTE_WH"],
+                "NAME": ["WH_ALFA_OVERWATCH", "BI_COMPUTE_WH"],
                 "RESOURCE_MONITOR": ["", "BI_WH_RM"],
                 "AUTO_SUSPEND": [300, 0],
                 "STATEMENT_TIMEOUT_IN_SECONDS": [3600, 0],
@@ -5004,10 +5004,10 @@ class FormulaRegressionTests(unittest.TestCase):
         by_wh = {row["WAREHOUSE_NAME"]: row for _, row in board.iterrows()}
 
         self.assertEqual(summary["blocked"], 2)
-        self.assertEqual(by_wh["COMPUTE_WH"]["GUARDRAIL_STATE"], "Blocked")
-        self.assertEqual(by_wh["COMPUTE_WH"]["RESOURCE_MONITOR_STATE"], "Blocked")
-        self.assertEqual(by_wh["COMPUTE_WH"]["TIMEOUT_STATE"], "Ready")
-        self.assertIn("COMPUTE_WH_RM", by_wh["COMPUTE_WH"]["NEXT_ACTION"])
+        self.assertEqual(by_wh["WH_ALFA_OVERWATCH"]["GUARDRAIL_STATE"], "Blocked")
+        self.assertEqual(by_wh["WH_ALFA_OVERWATCH"]["RESOURCE_MONITOR_STATE"], "Blocked")
+        self.assertEqual(by_wh["WH_ALFA_OVERWATCH"]["TIMEOUT_STATE"], "Ready")
+        self.assertIn("WH_ALFA_OVERWATCH_RM", by_wh["WH_ALFA_OVERWATCH"]["NEXT_ACTION"])
         self.assertEqual(by_wh["BI_COMPUTE_WH"]["AUTO_SUSPEND_STATE"], "Blocked")
         self.assertEqual(by_wh["BI_COMPUTE_WH"]["TIMEOUT_STATE"], "Review")
         self.assertEqual(by_wh["BI_COMPUTE_WH"]["ESCALATION_ROUTE_STATE"], "Ready")
@@ -5033,7 +5033,7 @@ class FormulaRegressionTests(unittest.TestCase):
     def test_warehouse_cost_control_posture_flags_shared_compute_idle_burn(self):
         settings = pd.DataFrame(
             {
-                "NAME": ["COMPUTE_WH", "ANALYTICS_WH"],
+                "NAME": ["WH_ALFA_OVERWATCH", "ANALYTICS_WH"],
                 "WAREHOUSE_SIZE": ["XSMALL", "SMALL"],
                 "STATE": ["SUSPENDED", "STARTED"],
                 "AUTO_SUSPEND": [1001, 60],
@@ -5042,7 +5042,7 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         overview = pd.DataFrame(
             {
-                "WAREHOUSE_NAME": ["COMPUTE_WH", "ANALYTICS_WH"],
+                "WAREHOUSE_NAME": ["WH_ALFA_OVERWATCH", "ANALYTICS_WH"],
                 "METERED_CREDITS": [8.0, 2.0],
             }
         )
@@ -5052,17 +5052,17 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(summary["warehouses"], 2)
         self.assertEqual(summary["overwatch_candidates"], 1)
-        self.assertEqual(by_wh["COMPUTE_WH"]["COST_CONTROL_STATE"], "Needs Review")
-        self.assertEqual(by_wh["COMPUTE_WH"]["IDLE_RISK"], "Longer than current 1000s session timeout")
-        self.assertEqual(by_wh["COMPUTE_WH"]["RECOMMENDED_AUTO_SUSPEND_SEC"], 60)
-        self.assertIn("ALTER WAREHOUSE", by_wh["COMPUTE_WH"]["REVIEW_SQL"])
-        self.assertIn("AUTO_RESUME = TRUE", by_wh["COMPUTE_WH"]["REVIEW_SQL"])
+        self.assertEqual(by_wh["WH_ALFA_OVERWATCH"]["COST_CONTROL_STATE"], "Needs Review")
+        self.assertEqual(by_wh["WH_ALFA_OVERWATCH"]["IDLE_RISK"], "Longer than current 1000s session timeout")
+        self.assertEqual(by_wh["WH_ALFA_OVERWATCH"]["RECOMMENDED_AUTO_SUSPEND_SEC"], 60)
+        self.assertIn("ALTER WAREHOUSE", by_wh["WH_ALFA_OVERWATCH"]["REVIEW_SQL"])
+        self.assertIn("AUTO_RESUME = TRUE", by_wh["WH_ALFA_OVERWATCH"]["REVIEW_SQL"])
         self.assertEqual(by_wh["ANALYTICS_WH"]["COST_CONTROL_STATE"], "Ready")
 
     def test_warehouse_cost_control_posture_blocks_never_suspend_and_documents_future_wh(self):
         settings = pd.DataFrame(
             {
-                "NAME": ["COMPUTE_WH"],
+                "NAME": ["WH_ALFA_OVERWATCH"],
                 "WAREHOUSE_SIZE": ["XSMALL"],
                 "STATE": ["STARTED"],
                 "AUTO_SUSPEND": [0],
@@ -5078,7 +5078,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(row["IDLE_RISK"], "Never suspends")
         self.assertIn("AUTO_SUSPEND = 60", row["REVIEW_SQL"])
         setup_sql = _overwatch_dedicated_warehouse_setup_sql()
-        self.assertIn("CREATE WAREHOUSE IF NOT EXISTS COMPUTE_WH", setup_sql)
+        self.assertIn("CREATE WAREHOUSE IF NOT EXISTS WH_ALFA_OVERWATCH", setup_sql)
         self.assertIn("AUTO_RESUME = TRUE", setup_sql)
 
     def test_warehouse_advisor_recommendations_show_savings_without_sql(self):
@@ -5097,7 +5097,7 @@ class FormulaRegressionTests(unittest.TestCase):
         ])
         posture = pd.DataFrame([
             {
-                "WAREHOUSE_NAME": "COMPUTE_WH",
+                "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
                 "COST_CONTROL_STATE": "Needs Review",
                 "IDLE_RISK": "Longer than current 1000s session timeout",
                 "AUTO_SUSPEND_SEC": 1001,
@@ -5107,7 +5107,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "METERED_CREDITS": 8.0,
                 "RECOMMENDED_AUTO_SUSPEND_SEC": 60,
                 "RECOMMENDED_ACTION": "Validate workload impact, then consider AUTO_SUSPEND=60.",
-                "REVIEW_SQL": "ALTER WAREHOUSE COMPUTE_WH SET AUTO_SUSPEND = 60;",
+                "REVIEW_SQL": "ALTER WAREHOUSE WH_ALFA_OVERWATCH SET AUTO_SUSPEND = 60;",
             }
         ])
         overview = pd.DataFrame([
@@ -5472,7 +5472,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_surface["Control summary"]["STATE"], "Unavailable")
         self.assertEqual(by_surface["Overview"]["STATE"], "Stale")
         self.assertEqual(by_surface["Overview"]["CONFIDENCE"], "Fast summary")
-        self.assertEqual(by_surface["Scaling events"]["STATE"], "On demand")
+        self.assertEqual(by_surface["Scaling events"]["STATE"], "Details available when needed")
         self.assertIn("Reload", by_surface["Overview"]["NEXT_ACTION"])
 
     def test_warehouse_setting_control_board_prioritizes_closure_owner_and_audit_blocks(self):
@@ -6904,17 +6904,17 @@ class FormulaRegressionTests(unittest.TestCase):
             "Severity": "High",
             "Category": "Cost Control",
             "Entity Type": "Warehouse",
-            "Entity": "COMPUTE_WH",
-            "Finding": "COMPUTE_WH idle 12h, wasting 4.5 credits",
+            "Entity": "WH_ALFA_OVERWATCH",
+            "Finding": "WH_ALFA_OVERWATCH idle 12h, wasting 4.5 credits",
             "Action": "Reduce AUTO_SUSPEND",
             "Idle Hours": 12,
             "Estimated Monthly Savings": 72.5,
-            "Proof Query": _idle_warehouse_verification_sql("COMPUTE_WH"),
+            "Proof Query": _idle_warehouse_verification_sql("WH_ALFA_OVERWATCH"),
             "Baseline Value": 4.5,
         })
 
         self.assertEqual(rec["Decision"], "Implement suspend control")
-        self.assertIn("COMPUTE_WH", rec["Telemetry Summary"])
+        self.assertIn("WH_ALFA_OVERWATCH", rec["Telemetry Summary"])
         self.assertIn("12 idle hour", rec["Telemetry Summary"])
         self.assertIn("AUTO_SUSPEND", rec["Safe Next Action"])
         self.assertIn("Telemetry query is available", rec["Telemetry Basis"])
@@ -6932,9 +6932,9 @@ class FormulaRegressionTests(unittest.TestCase):
             "Source": "Idle warehouse detector",
             "Category": "Cost Control",
             "Entity Type": "Warehouse",
-            "Entity": "COMPUTE_WH",
+            "Entity": "WH_ALFA_OVERWATCH",
             "Finding": "Idle warehouse",
-            "Evidence Packet": "COMPUTE_WH idle 12h",
+            "Evidence Packet": "WH_ALFA_OVERWATCH idle 12h",
             "Proof Required": "Rerun idle proof query.",
         })
         query_contract = duplicate_query_decision(pd.Series({
@@ -6956,7 +6956,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "cost_contract_cost_advisor_board": pd.DataFrame([{
                 "SEVERITY": "High",
                 "FINDING": "Idle warehouse",
-                "ENTITY": "COMPUTE_WH",
+                "ENTITY": "WH_ALFA_OVERWATCH",
                 "WORKFLOW_ROUTE": "Cost & Contract > Advisor",
                 "SAFE_NEXT_ACTION": "Review auto-suspend.",
                 "VALIDATION_NEEDED": "metering telemetry",
@@ -7096,17 +7096,17 @@ class FormulaRegressionTests(unittest.TestCase):
             "Severity": "High",
             "Category": "Cost Control",
             "Entity Type": "Warehouse",
-            "Entity": "COMPUTE_WH",
+            "Entity": "WH_ALFA_OVERWATCH",
             "Owner": "OVERWATCH Platform Owner",
             "Approver": "DBA Lead",
             "Owner Approval Status": "Approved",
-            "Finding": "COMPUTE_WH idle 12h, wasting 4.5 credits",
+            "Finding": "WH_ALFA_OVERWATCH idle 12h, wasting 4.5 credits",
             "Action": "Reduce AUTO_SUSPEND",
             "Idle Hours": 12,
             "Estimated Monthly Savings": 72.5,
-            "Generated SQL Fix": "ALTER WAREHOUSE COMPUTE_WH SET AUTO_SUSPEND = 600;",
-            "Proof Query": _idle_warehouse_verification_sql("COMPUTE_WH"),
-            "Verification Query": _idle_warehouse_verification_sql("COMPUTE_WH"),
+            "Generated SQL Fix": "ALTER WAREHOUSE WH_ALFA_OVERWATCH SET AUTO_SUSPEND = 600;",
+            "Proof Query": _idle_warehouse_verification_sql("WH_ALFA_OVERWATCH"),
+            "Verification Query": _idle_warehouse_verification_sql("WH_ALFA_OVERWATCH"),
             "Baseline Value": 4.5,
         }])
         row = board.iloc[0]
@@ -7131,11 +7131,11 @@ class FormulaRegressionTests(unittest.TestCase):
                 "Severity": "High",
                 "Category": "Cost Control",
                 "Entity Type": "Warehouse",
-                "Entity": "COMPUTE_WH",
+                "Entity": "WH_ALFA_OVERWATCH",
                 "Owner": "OVERWATCH Platform Owner",
-                "Finding": "COMPUTE_WH idle 12h",
-                "Generated SQL Fix": "ALTER WAREHOUSE COMPUTE_WH SET AUTO_SUSPEND = 600;",
-                "Proof Query": _idle_warehouse_verification_sql("COMPUTE_WH"),
+                "Finding": "WH_ALFA_OVERWATCH idle 12h",
+                "Generated SQL Fix": "ALTER WAREHOUSE WH_ALFA_OVERWATCH SET AUTO_SUSPEND = 600;",
+                "Proof Query": _idle_warehouse_verification_sql("WH_ALFA_OVERWATCH"),
             },
             {
                 "Source": "Task failure detector",
@@ -7147,14 +7147,14 @@ class FormulaRegressionTests(unittest.TestCase):
                 "Approver": "Pipeline Owner",
                 "Owner Approval Status": "Approved",
                 "Finding": "Task failed repeatedly",
-                "Generated SQL Fix": "EXECUTE TASK ALFA_EDW_PROD.PUBLIC.LOAD_POLICY;",
+                "Generated SQL Fix": "EXECUTE TASK ALFA_EDW_PRD.PUBLIC.LOAD_POLICY;",
                 "Proof Query": _task_failure_verification_sql("LOAD_POLICY"),
             },
         ])
         by_entity = {row["ENTITY"]: row for _, row in board.iterrows()}
 
-        self.assertEqual(by_entity["COMPUTE_WH"]["AUTOMATION_LANE"], "Telemetry Pending")
-        self.assertIn("telemetry status", by_entity["COMPUTE_WH"]["BLOCKERS"])
+        self.assertEqual(by_entity["WH_ALFA_OVERWATCH"]["AUTOMATION_LANE"], "Telemetry Pending")
+        self.assertIn("telemetry status", by_entity["WH_ALFA_OVERWATCH"]["BLOCKERS"])
         self.assertEqual(by_entity["LOAD_POLICY"]["AUTOMATION_LANE"], "DBA Review")
         self.assertIn("DBA review", by_entity["LOAD_POLICY"]["BLOCKERS"])
 
@@ -7179,11 +7179,11 @@ class FormulaRegressionTests(unittest.TestCase):
                 "Severity": "High",
                 "Category": "Cost Control",
                 "Entity Type": "Warehouse",
-                "Entity": "COMPUTE_WH",
-                "Finding": "COMPUTE_WH idle 12h, wasting 4.5 credits",
+                "Entity": "WH_ALFA_OVERWATCH",
+                "Finding": "WH_ALFA_OVERWATCH idle 12h, wasting 4.5 credits",
                 "Action": "Reduce AUTO_SUSPEND",
                 "Estimated Monthly Savings": 72.5,
-                "Proof Query": _idle_warehouse_verification_sql("COMPUTE_WH"),
+                "Proof Query": _idle_warehouse_verification_sql("WH_ALFA_OVERWATCH"),
             }],
             "dba_control_room_data": {
                 "summary": pd.DataFrame([{
@@ -7205,7 +7205,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(all_cards[0]["rank"], 1)
         self.assertLessEqual(len(all_cards), 5)
-        self.assertIn("COMPUTE_WH", cost_cards[0]["entity"])
+        self.assertIn("WH_ALFA_OVERWATCH", cost_cards[0]["entity"])
         self.assertIn("credit", cost_cards[0]["evidence"].lower())
         self.assertIn("Control-room workload risk", warehouse_cards[0]["signal"])
         self.assertIn("queued", warehouse_cards[0]["evidence"])
@@ -7375,12 +7375,12 @@ class FormulaRegressionTests(unittest.TestCase):
                     "Severity": "High",
                     "Category": "Cost Control",
                     "Entity Type": "Warehouse",
-                    "Entity": "COMPUTE_WH",
-                    "Finding": "COMPUTE_WH idle 12h, wasting 4.5 credits",
+                    "Entity": "WH_ALFA_OVERWATCH",
+                    "Finding": "WH_ALFA_OVERWATCH idle 12h, wasting 4.5 credits",
                     "Action": "Reduce AUTO_SUSPEND",
                     "Idle Hours": 12,
                     "Estimated Monthly Savings": 72.5,
-                    "Proof Query": _idle_warehouse_verification_sql("COMPUTE_WH"),
+                    "Proof Query": _idle_warehouse_verification_sql("WH_ALFA_OVERWATCH"),
                     "Baseline Value": 4.5,
                 }]
             },
@@ -7391,7 +7391,7 @@ class FormulaRegressionTests(unittest.TestCase):
         )
 
         self.assertEqual(result["confidence"], "Telemetry-grounded")
-        self.assertIn("COMPUTE_WH", result["answer"])
+        self.assertIn("WH_ALFA_OVERWATCH", result["answer"])
         self.assertIn("AUTO_SUSPEND", result["answer"])
         self.assertIn("Telemetry query is available", result["answer"])
         self.assertIn("Do not disable", result["answer"])
@@ -7402,13 +7402,13 @@ class FormulaRegressionTests(unittest.TestCase):
             "Severity": "High",
             "Category": "Cost Control",
             "Entity Type": "Warehouse",
-            "Entity": "COMPUTE_WH",
+            "Entity": "WH_ALFA_OVERWATCH",
             "Owner": "OVERWATCH Platform Owner",
             "Approver": "DBA Lead",
             "Owner Approval Status": "Approved",
-            "Finding": "COMPUTE_WH idle 12h",
-            "Generated SQL Fix": "ALTER WAREHOUSE COMPUTE_WH SET AUTO_SUSPEND = 600;",
-            "Proof Query": _idle_warehouse_verification_sql("COMPUTE_WH"),
+            "Finding": "WH_ALFA_OVERWATCH idle 12h",
+            "Generated SQL Fix": "ALTER WAREHOUSE WH_ALFA_OVERWATCH SET AUTO_SUSPEND = 600;",
+            "Proof Query": _idle_warehouse_verification_sql("WH_ALFA_OVERWATCH"),
         }])
         result = answer_ask_overwatch(
             "What can we automate?",
@@ -7420,7 +7420,7 @@ class FormulaRegressionTests(unittest.TestCase):
         )
 
         self.assertEqual(result["confidence"], "Telemetry-grounded")
-        self.assertIn("COMPUTE_WH", result["answer"])
+        self.assertIn("WH_ALFA_OVERWATCH", result["answer"])
         self.assertIn("Telemetry Pending", result["answer"])
         self.assertIn("Telemetry Pending", result["cards"][0]["signal"])
         self.assertEqual(result["cards"][0]["surface"], "Queue Health")
@@ -7429,8 +7429,8 @@ class FormulaRegressionTests(unittest.TestCase):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         huge_frame = pd.DataFrame({"VALUE": list(range(100))})
         state = {
-            "rec_recommendations": [{"Entity": "COMPUTE_WH", "Finding": "Idle warehouse"}],
-            "rec_automation_board": pd.DataFrame([{"ENTITY": "COMPUTE_WH"}]),
+            "rec_recommendations": [{"Entity": "WH_ALFA_OVERWATCH", "Finding": "Idle warehouse"}],
+            "rec_automation_board": pd.DataFrame([{"ENTITY": "WH_ALFA_OVERWATCH"}]),
             "unrelated_large_frame": huge_frame,
             "executive_landing_platform_summary": {"score": 58},
             "executive_landing_snapshot": {"errors": []},
@@ -7462,7 +7462,7 @@ class FormulaRegressionTests(unittest.TestCase):
             [{
                 "surface": "Recommendations",
                 "severity": "High",
-                "entity": "COMPUTE_WH",
+                "entity": "WH_ALFA_OVERWATCH",
                 "evidence": "12 idle hours",
                 "next_action": "Set AUTO_SUSPEND",
                 "proof": "Rerun idle proof query",
@@ -7479,12 +7479,12 @@ class FormulaRegressionTests(unittest.TestCase):
             pd.Series({
                 "SIGNAL": "Failed Task Run",
                 "TASK_NAME": "LOAD_POLICY",
-                "TASK_FQN": '"ALFA_EDW_PROD"."PUBLIC"."LOAD_POLICY"',
+                "TASK_FQN": '"ALFA_EDW_PRD"."PUBLIC"."LOAD_POLICY"',
                 "PROCEDURE_NAME": "SP_LOAD_POLICY",
                 "QUERY_ID": "01abc",
                 "FAILURE_CATEGORY": "Object Dependency / Drift",
                 "ERROR_SIGNATURE": "table does not exist",
-                "RETRY_SQL": 'EXECUTE TASK "ALFA_EDW_PROD"."PUBLIC"."LOAD_POLICY";',
+                "RETRY_SQL": 'EXECUTE TASK "ALFA_EDW_PRD"."PUBLIC"."LOAD_POLICY";',
                 "ROLE_NAME": "TASK_OWNER_ROLE",
                 "INCIDENT_PRIORITY": "P2 - Production Risk",
                 "RECOVERY_READINESS": "Blocked - object dependency fix first",
@@ -7528,7 +7528,7 @@ class FormulaRegressionTests(unittest.TestCase):
         action = _build_procedure_reliability_action(
             pd.Series({
                 "SIGNAL": "Procedure Cost Regression",
-                "PROCEDURE_NAME": "ALFA_EDW_PROD.PUBLIC.SP_LOAD_POLICY",
+                "PROCEDURE_NAME": "ALFA_EDW_PRD.PUBLIC.SP_LOAD_POLICY",
                 "ROOT_QUERY_ID": "01root",
                 "RUNTIME_CHANGE_PCT": 25,
                 "COST_CHANGE_PCT": 180,
@@ -7748,7 +7748,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "CATEGORY": "Reliability",
             "ALERT_TYPE": "Task Failure",
             "SEVERITY": "Critical",
-            "ENTITY_NAME": "ALFA_EDW_PROD.PUBLIC.T_LOAD",
+            "ENTITY_NAME": "ALFA_EDW_PRD.PUBLIC.T_LOAD",
             "MESSAGE": "Task failed.",
             "SUGGESTED_ACTION": "Open task graph.",
             "OWNER": "DBA",
@@ -7872,13 +7872,13 @@ class FormulaRegressionTests(unittest.TestCase):
                 "ALERT_TS": "2026-05-31 10:00:00",
                 "COMPANY": "ALFA",
                 "ENVIRONMENT": "PROD",
-                "DATABASE_NAME": "ALFA_EDW_PROD",
+                "DATABASE_NAME": "ALFA_EDW_PRD",
                 "SCHEMA_NAME": "PUBLIC",
                 "CATEGORY": "Reliability",
                 "ALERT_TYPE": "Task Failure",
                 "SEVERITY": "High",
                 "STATUS": "New",
-                "ENTITY_NAME": "ALFA_EDW_PROD.PUBLIC.T_LOAD_POLICY",
+                "ENTITY_NAME": "ALFA_EDW_PRD.PUBLIC.T_LOAD_POLICY",
                 "MESSAGE": "2 failed task run(s) in the last 24 hours. Sample: table does not exist.",
                 "SUGGESTED_ACTION": "Open Workload Operations task graphs.",
                 "PROOF_QUERY": "",
@@ -7926,7 +7926,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
         actions = alert_history_to_actions(alerts, company="ALFA")
         by_entity = {action["Entity"]: action for action in actions}
-        task = by_entity["ALFA_EDW_PROD.PUBLIC.T_LOAD_POLICY"]
+        task = by_entity["ALFA_EDW_PRD.PUBLIC.T_LOAD_POLICY"]
         proc = by_entity["ALFA_EDW_DEV.PUBLIC.SP_LOAD_POLICY"]
         cost = by_entity["WH_ALFA_LOAD"]
 
@@ -8057,7 +8057,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "SEVERITY": "Medium",
                 "CATEGORY": "Cost Control",
                 "ALERT_TYPE": "Credit Spike",
-                "ENTITY_NAME": "COMPUTE_WH",
+                "ENTITY_NAME": "WH_ALFA_OVERWATCH",
                 "OWNER": "DBA / Cost owner",
                 "EMAIL_TARGET": "",
                 "DELIVERY_STATUS": "",
@@ -8160,7 +8160,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "CATEGORY": "Reliability",
                 "SEVERITY": "High",
                 "STATUS": "New",
-                "ENTITY_NAME": "ALFA_EDW_PROD.PUBLIC.T_LOAD",
+                "ENTITY_NAME": "ALFA_EDW_PRD.PUBLIC.T_LOAD",
                 "OWNER": "DBA",
                 "MESSAGE": "Task failed twice.",
                 "SUGGESTED_ACTION": "Open task graph and assign owner.",
@@ -8224,7 +8224,7 @@ class FormulaRegressionTests(unittest.TestCase):
             }
         ])
         queue = pd.DataFrame([
-            {"STATUS": "New", "CATEGORY": "Reliability", "ENTITY_NAME": "ALFA_EDW_PROD.PUBLIC.T_LOAD"},
+            {"STATUS": "New", "CATEGORY": "Reliability", "ENTITY_NAME": "ALFA_EDW_PRD.PUBLIC.T_LOAD"},
             {"STATUS": "Fixed", "CATEGORY": "Capacity", "ENTITY_NAME": "WH_ALFA_LOAD"},
         ])
         rules = alert_rule_catalog()
@@ -8903,7 +8903,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "ALERT_TYPE": "Task Failure",
                 "SEVERITY": "High",
                 "STATUS": "Acknowledged",
-                "ENTITY_NAME": "ALFA_EDW_PROD.PUBLIC.T_LOAD",
+                "ENTITY_NAME": "ALFA_EDW_PRD.PUBLIC.T_LOAD",
                 "OWNER": "Pipeline Owner",
                 "SUGGESTED_ACTION": "Identify failed child task and safe rerun path.",
                 "PROOF_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY;",
@@ -8944,7 +8944,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "ALERT_TYPE": "Root task failed",
                 "SEVERITY": "High",
                 "STATUS": "Acknowledged",
-                "ENTITY_NAME": "ALFA_EDW_PROD.PUBLIC.T_LOAD_POLICY",
+                "ENTITY_NAME": "ALFA_EDW_PRD.PUBLIC.T_LOAD_POLICY",
                 "OWNER": "Pipeline Owner",
                 "SUGGESTED_ACTION": "Fix failed child task before retrying graph.",
                 "PROOF_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY;",
@@ -8966,7 +8966,7 @@ class FormulaRegressionTests(unittest.TestCase):
         queue = pd.DataFrame([
             {
                 "CATEGORY": "Task / Pipeline",
-                "ENTITY_NAME": "ALFA_EDW_PROD.PUBLIC.T_LOAD_POLICY",
+                "ENTITY_NAME": "ALFA_EDW_PRD.PUBLIC.T_LOAD_POLICY",
                 "STATUS": "In Progress",
                 "TICKET_ID": "INC123",
                 "DUE_STATE": "Breached",

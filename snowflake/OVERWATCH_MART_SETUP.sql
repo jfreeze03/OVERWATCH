@@ -108,9 +108,9 @@ USING (
     ('ALERT_DELIVERY_METHOD', 'EMAIL', 'STRING', 'Alert delivery channel used by the OVERWATCH anomaly task.'),
     ('ALERT_EMAIL_NOTIFICATION_INTEGRATION', 'OVERWATCH_EMAIL_INT', 'STRING', 'Approved Snowflake notification integration name for optional Alert Center email delivery.'),
     ('DEFAULT_ALERT_EMAILS', '["jdees@alfains.com"]', 'JSON', 'Governed default alert recipients. App constants are fallback only when settings are unavailable.'),
-    ('ALFA_WAREHOUSES', '["BI_COMPUTE_WH","WH_ALFA_OVERWATCH","CROWDSTRIKE_WH","DOC_AI_WH","POSIT_WORKBENCH","SNOWFLAKE_LEARNING_WH","SYSTEM$STREAMLIT_NOTEBOOK_WH","WH_ALFA_ANALYTICS","WH_ALFA_LOAD","WH_ALFA_LOAD_PROD","WH_ALFA_QA","WH_ALFA_QUERY","WH_ALFA_TRANSFORM","WH_ALFA_TRANSFORM_PROD","WH_ALFA_UNLOAD","WH_ALFA_UNLOAD_PROD"]', 'JSON', 'Governed ALFA warehouse list used by scope controls and summary loaders.'),
+    ('ALFA_WAREHOUSES', '["BI_COMPUTE_WH","WH_ALFA_OVERWATCH","CROWDSTRIKE_WH","DOC_AI_WH","POSIT_WORKBENCH","SNOWFLAKE_LEARNING_WH","SYSTEM$STREAMLIT_NOTEBOOK_WH","WH_ALFA_ANALYTICS","WH_ALFA_LOAD","WH_ALFA_LOAD_PRD","WH_ALFA_QA","WH_ALFA_QUERY","WH_ALFA_TRANSFORM","WH_ALFA_TRANSFORM_PRD","WH_ALFA_UNLOAD","WH_ALFA_UNLOAD_PRD"]', 'JSON', 'Governed ALFA warehouse list used by scope controls and summary loaders.'),
     ('TREXIS_WAREHOUSES', '["WH_TRXS_LOAD","WH_TRXS_QUERY","WH_TRXS_TRANSFORM","WH_TRXS_UNLOAD"]', 'JSON', 'Governed Trexis warehouse list used by scope controls and summary loaders.'),
-    ('ALL_WAREHOUSES', '["BI_COMPUTE_WH","WH_ALFA_OVERWATCH","CROWDSTRIKE_WH","DOC_AI_WH","POSIT_WORKBENCH","SNOWFLAKE_LEARNING_WH","SYSTEM$STREAMLIT_NOTEBOOK_WH","WH_ALFA_ANALYTICS","WH_ALFA_LOAD","WH_ALFA_LOAD_PROD","WH_ALFA_QA","WH_ALFA_QUERY","WH_ALFA_TRANSFORM","WH_ALFA_TRANSFORM_PROD","WH_ALFA_UNLOAD","WH_ALFA_UNLOAD_PROD","WH_TRXS_LOAD","WH_TRXS_QUERY","WH_TRXS_TRANSFORM","WH_TRXS_UNLOAD"]', 'JSON', 'Governed combined warehouse list. Keep aligned with company-specific warehouse settings.'),
+    ('ALL_WAREHOUSES', '["BI_COMPUTE_WH","WH_ALFA_OVERWATCH","CROWDSTRIKE_WH","DOC_AI_WH","POSIT_WORKBENCH","SNOWFLAKE_LEARNING_WH","SYSTEM$STREAMLIT_NOTEBOOK_WH","WH_ALFA_ANALYTICS","WH_ALFA_LOAD","WH_ALFA_LOAD_PRD","WH_ALFA_QA","WH_ALFA_QUERY","WH_ALFA_TRANSFORM","WH_ALFA_TRANSFORM_PRD","WH_ALFA_UNLOAD","WH_ALFA_UNLOAD_PRD","WH_TRXS_LOAD","WH_TRXS_QUERY","WH_TRXS_TRANSFORM","WH_TRXS_UNLOAD"]', 'JSON', 'Governed combined warehouse list. Keep aligned with company-specific warehouse settings.'),
     ('ADMIN_ACCESS_ROLES', '["SNOW_ACCOUNTADMINS","SNOW_SYSADMINS"]', 'JSON', 'Governed admin roles for Setup Health and guarded live actions.'),
     ('COMPANY_DEFINITIONS', '{"ALFA":{"label":"ALFA","color":"#34d399"},"Trexis":{"label":"Trexis","color":"#c084fc"},"ALL":{"label":"ALL","color":"#38bdf8"}}', 'JSON', 'Governed company display definitions.'),
     ('COMPANY_DATABASE_PATTERNS', '{"ALFA":["ADMIN","ALFA%"],"Trexis":["TRXS_ABC_METADATA_%","TRXS_EDW_%","TRXS_GW_DATA_%"],"ALL":[]}', 'JSON', 'Governed company database routing patterns.'),
@@ -340,7 +340,7 @@ LANGUAGE SQL
 AS
 $$
   CASE
-    WHEN UPPER(DATABASE_NAME) = 'ALFA_EDW_PROD' THEN 'ALFA_EDW_PROD'
+    WHEN UPPER(DATABASE_NAME) = 'ALFA_EDW_PRD' THEN 'ALFA_EDW_PRD'
     WHEN UPPER(DATABASE_NAME) = 'ALFA_EDW_MGM' THEN 'ALFA_EDW_MGM'
     WHEN UPPER(DATABASE_NAME) = 'ALFA_EDW_DEV' THEN 'ALFA_EDW_DEV'
     WHEN UPPER(DATABASE_NAME) = 'ALFA_EDW_SAN' THEN 'ALFA_EDW_SAN'
@@ -966,9 +966,9 @@ CREATE TABLE IF NOT EXISTS ALERT_DATA_QUALITY_CHECKS (
 MERGE INTO ALERT_DATA_QUALITY_CHECKS tgt
 USING (
   SELECT * FROM VALUES
-    ('DQ_ORDER_FRESHNESS', 'ALFA_EDW_PROD', 'CURATED', 'FACT_ORDER', 'LOAD_TS', 'FRESHNESS_SLA_HOURS', 24, '>', 'High', 'Data Owner', 'DATA_QUALITY', FALSE),
-    ('DQ_POLICY_NULL_RATE', 'ALFA_EDW_PROD', 'CURATED', 'DIM_POLICY', 'POLICY_ID', 'NULL_RATE_PCT', 0, '>', 'Critical', 'Data Owner', 'DATA_QUALITY', FALSE),
-    ('DQ_CLAIM_VOLUME_DROP', 'ALFA_EDW_PROD', 'CURATED', 'FACT_CLAIM', '*', 'ROW_COUNT_DROP_PCT', 35, '>', 'High', 'Data Owner', 'DATA_QUALITY', FALSE)
+    ('DQ_ORDER_FRESHNESS', 'ALFA_EDW_PRD', 'CURATED', 'FACT_ORDER', 'LOAD_TS', 'FRESHNESS_SLA_HOURS', 24, '>', 'High', 'Data Owner', 'DATA_QUALITY', FALSE),
+    ('DQ_POLICY_NULL_RATE', 'ALFA_EDW_PRD', 'CURATED', 'DIM_POLICY', 'POLICY_ID', 'NULL_RATE_PCT', 0, '>', 'Critical', 'Data Owner', 'DATA_QUALITY', FALSE),
+    ('DQ_CLAIM_VOLUME_DROP', 'ALFA_EDW_PRD', 'CURATED', 'FACT_CLAIM', '*', 'ROW_COUNT_DROP_PCT', 35, '>', 'High', 'Data Owner', 'DATA_QUALITY', FALSE)
 ) src(CHECK_KEY, DATABASE_NAME, SCHEMA_NAME, TABLE_NAME, COLUMN_NAME, CHECK_TYPE, THRESHOLD_VALUE, COMPARISON_OPERATOR, SEVERITY, OWNER, NOTIFICATION_CHANNEL, ENABLED)
 ON tgt.CHECK_KEY = src.CHECK_KEY
 WHEN MATCHED THEN UPDATE SET
@@ -6250,7 +6250,7 @@ BEGIN
         WHEN UPPER(COALESCE(DATABASE_NAME, '')) IN ('', 'NONE', 'NULL', 'NAN', 'NO_DATABASE_CONTEXT', 'NO DATABASE CONTEXT')
           OR UPPER(COALESCE(ENVIRONMENT, '')) IN ('', 'NONE', 'NULL', 'NAN', 'NO_DATABASE_CONTEXT', 'NO DATABASE CONTEXT')
           THEN 'No Database Context'
-        WHEN UPPER(DATABASE_NAME) = 'ALFA_EDW_PROD' OR UPPER(ENVIRONMENT) = 'ALFA_EDW_PROD' THEN 'ALFA_EDW_PROD'
+        WHEN UPPER(DATABASE_NAME) = 'ALFA_EDW_PRD' OR UPPER(ENVIRONMENT) = 'ALFA_EDW_PRD' THEN 'ALFA_EDW_PRD'
         WHEN UPPER(DATABASE_NAME) = 'ALFA_EDW_MGM' OR UPPER(ENVIRONMENT) = 'ALFA_EDW_MGM' THEN 'ALFA_EDW_MGM'
         WHEN UPPER(ENVIRONMENT) IN ('PROD', 'TRXS_ABC_METADATA_PRD', 'TRXS_EDW_PRD', 'TRXS_GW_DATA_PRD')
           OR UPPER(DATABASE_NAME) IN ('TRXS_ABC_METADATA_PRD', 'TRXS_EDW_PRD', 'TRXS_GW_DATA_PRD') THEN 'PROD'
@@ -6309,7 +6309,7 @@ BEGIN
     ROUND(COALESCE(c.ALLOCATED_CREDITS, 0) * :credit_price, 2) AS EST_COST_USD,
     CASE
       WHEN c.ENVIRONMENT_ROLLUP = 'No Database Context' THEN 'Account-wide / Shared'
-      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PROD', 'ALFA_EDW_MGM', 'DEV_ALL', 'Trexis', 'Other ALFA Non-Prod') THEN 'Allocated / Estimated'
+      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PRD', 'ALFA_EDW_MGM', 'DEV_ALL', 'Trexis', 'Other ALFA Non-Prod') THEN 'Allocated / Estimated'
       ELSE 'Shared / Needs Owner'
     END AS ALLOCATION_CONFIDENCE,
     CASE
@@ -6318,16 +6318,16 @@ BEGIN
         THEN 'Trexis database context allocated across metered warehouse-hour credits; owner tag telemetry is attached.'
       WHEN c.ENVIRONMENT_ROLLUP = 'Trexis' THEN 'Trexis database context allocated across metered warehouse-hour credits.'
       WHEN c.ENVIRONMENT_ROLLUP = 'Other ALFA Non-Prod' THEN 'ALFA database context exists, but the environment is outside the approved PROD/DEV family.'
-      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PROD', 'ALFA_EDW_MGM', 'DEV_ALL') AND COALESCE(wo.TAG_VALUE, dbo.TAG_VALUE) IS NOT NULL
+      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PRD', 'ALFA_EDW_MGM', 'DEV_ALL') AND COALESCE(wo.TAG_VALUE, dbo.TAG_VALUE) IS NOT NULL
         THEN 'Query database context allocated across metered warehouse-hour credits; owner tag telemetry is attached.'
-      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PROD', 'ALFA_EDW_MGM', 'DEV_ALL') THEN 'Query database context allocated across metered warehouse-hour credits.'
+      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PRD', 'ALFA_EDW_MGM', 'DEV_ALL') THEN 'Query database context allocated across metered warehouse-hour credits.'
       ELSE 'Shared warehouse/query context requires owner validation before billing.'
     END AS ALLOCATION_BASIS,
     CASE
       WHEN c.ENVIRONMENT_ROLLUP = 'No Database Context' THEN 'No'
-      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PROD', 'ALFA_EDW_MGM', 'DEV_ALL', 'Trexis')
+      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PRD', 'ALFA_EDW_MGM', 'DEV_ALL', 'Trexis')
         AND COALESCE(wo.TAG_VALUE, dbo.TAG_VALUE) IS NOT NULL THEN 'Ready'
-      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PROD', 'ALFA_EDW_MGM', 'DEV_ALL', 'Trexis') THEN 'Directional'
+      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PRD', 'ALFA_EDW_MGM', 'DEV_ALL', 'Trexis') THEN 'Directional'
       ELSE 'Review'
     END AS CHARGEBACK_READY,
     CASE

@@ -30,13 +30,13 @@ class DbaToolsQueryKillTests(unittest.TestCase):
             )
 
     def test_query_kill_list_sql_contract(self):
-        with patch.object(query_kill, "get_wh_filter_clause", return_value="AND warehouse_name = 'COMPUTE_WH'"):
+        with patch.object(query_kill, "get_wh_filter_clause", return_value="AND warehouse_name = 'WH_ALFA_OVERWATCH'"):
             sql = query_kill._query_kill_list_sql(300, "warehouse_size AS warehouse_size").upper()
 
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", sql)
         self.assertIn("'RUNNING','QUEUED','BLOCKED'", sql)
         self.assertIn("> 300", sql)
-        self.assertIn("AND WAREHOUSE_NAME = 'COMPUTE_WH'", sql)
+        self.assertIn("AND WAREHOUSE_NAME = 'WH_ALFA_OVERWATCH'", sql)
         self.assertIn("LIMIT 500", sql)
 
     def test_cancel_query_sql_uses_safe_literal(self):

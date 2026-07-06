@@ -1217,7 +1217,7 @@ BEGIN
         WHEN UPPER(COALESCE(DATABASE_NAME, '')) IN ('', 'NONE', 'NULL', 'NAN', 'NO_DATABASE_CONTEXT', 'NO DATABASE CONTEXT')
           OR UPPER(COALESCE(ENVIRONMENT, '')) IN ('', 'NONE', 'NULL', 'NAN', 'NO_DATABASE_CONTEXT', 'NO DATABASE CONTEXT')
           THEN 'No Database Context'
-        WHEN UPPER(DATABASE_NAME) = 'ALFA_EDW_PROD' OR UPPER(ENVIRONMENT) = 'ALFA_EDW_PROD' THEN 'ALFA_EDW_PROD'
+        WHEN UPPER(DATABASE_NAME) = 'ALFA_EDW_PRD' OR UPPER(ENVIRONMENT) = 'ALFA_EDW_PRD' THEN 'ALFA_EDW_PRD'
         WHEN UPPER(DATABASE_NAME) = 'ALFA_EDW_MGM' OR UPPER(ENVIRONMENT) = 'ALFA_EDW_MGM' THEN 'ALFA_EDW_MGM'
         WHEN UPPER(ENVIRONMENT) IN ('PROD', 'TRXS_ABC_METADATA_PRD', 'TRXS_EDW_PRD', 'TRXS_GW_DATA_PRD')
           OR UPPER(DATABASE_NAME) IN ('TRXS_ABC_METADATA_PRD', 'TRXS_EDW_PRD', 'TRXS_GW_DATA_PRD') THEN 'PROD'
@@ -1276,7 +1276,7 @@ BEGIN
     ROUND(COALESCE(c.ALLOCATED_CREDITS, 0) * :credit_price, 2) AS EST_COST_USD,
     CASE
       WHEN c.ENVIRONMENT_ROLLUP = 'No Database Context' THEN 'Account-wide / Shared'
-      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PROD', 'ALFA_EDW_MGM', 'DEV_ALL', 'Trexis', 'Other ALFA Non-Prod') THEN 'Allocated / Estimated'
+      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PRD', 'ALFA_EDW_MGM', 'DEV_ALL', 'Trexis', 'Other ALFA Non-Prod') THEN 'Allocated / Estimated'
       ELSE 'Shared / Needs Owner'
     END AS ALLOCATION_CONFIDENCE,
     CASE
@@ -1285,16 +1285,16 @@ BEGIN
         THEN 'Trexis database context allocated across metered warehouse-hour credits; owner tag telemetry is attached.'
       WHEN c.ENVIRONMENT_ROLLUP = 'Trexis' THEN 'Trexis database context allocated across metered warehouse-hour credits.'
       WHEN c.ENVIRONMENT_ROLLUP = 'Other ALFA Non-Prod' THEN 'ALFA database context exists, but the environment is outside the approved PROD/DEV family.'
-      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PROD', 'ALFA_EDW_MGM', 'DEV_ALL') AND COALESCE(wo.TAG_VALUE, dbo.TAG_VALUE) IS NOT NULL
+      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PRD', 'ALFA_EDW_MGM', 'DEV_ALL') AND COALESCE(wo.TAG_VALUE, dbo.TAG_VALUE) IS NOT NULL
         THEN 'Query database context allocated across metered warehouse-hour credits; owner tag telemetry is attached.'
-      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PROD', 'ALFA_EDW_MGM', 'DEV_ALL') THEN 'Query database context allocated across metered warehouse-hour credits.'
+      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PRD', 'ALFA_EDW_MGM', 'DEV_ALL') THEN 'Query database context allocated across metered warehouse-hour credits.'
       ELSE 'Shared warehouse/query context requires owner validation before billing.'
     END AS ALLOCATION_BASIS,
     CASE
       WHEN c.ENVIRONMENT_ROLLUP = 'No Database Context' THEN 'No'
-      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PROD', 'ALFA_EDW_MGM', 'DEV_ALL', 'Trexis')
+      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PRD', 'ALFA_EDW_MGM', 'DEV_ALL', 'Trexis')
         AND COALESCE(wo.TAG_VALUE, dbo.TAG_VALUE) IS NOT NULL THEN 'Ready'
-      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PROD', 'ALFA_EDW_MGM', 'DEV_ALL', 'Trexis') THEN 'Directional'
+      WHEN c.ENVIRONMENT_ROLLUP IN ('PROD', 'ALFA_EDW_PRD', 'ALFA_EDW_MGM', 'DEV_ALL', 'Trexis') THEN 'Directional'
       ELSE 'Review'
     END AS CHARGEBACK_READY,
     CASE

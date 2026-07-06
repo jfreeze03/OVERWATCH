@@ -66,14 +66,33 @@ from utils import (
 )
 
 
+def _confidence_from_forecast(df_f: pd.DataFrame) -> tuple[str, float, float]:
+    if df_f.empty or "DAILY_CREDITS" not in df_f.columns:
+        return "No mart rows", 0.0, 0.0
+    series = pd.to_numeric(df_f["DAILY_CREDITS"], errors="coerce").dropna()
+    if series.empty:
+        return "No numeric history", 0.0, 0.0
+    avg = safe_float(series.mean())
+    std = safe_float(series.std(ddof=0))
+    row_count = int(series.count())
+    volatility = abs(std / avg) if avg else 0.0
+    if row_count >= 21 and volatility <= 0.25:
+        confidence = "High"
+    elif row_count >= 7 and volatility <= 0.5:
+        confidence = "Medium"
+    else:
+        confidence = "Directional"
+    return confidence, max(0.0, avg - std), avg + std
+
+
 def render_cost_forecast(session, company: str, credit_price: float, max_wh_size_expr: str, bytes_scanned_sum_expr: str, query_tag_dimension_expr: str) -> None:
     st.subheader("Run-Rate Projection")
-    if st.button("Generate Run-Rate Projection", key="fc_load"):
+    if st.session_state.get("df_fc") is None:
         try:
             result = load_shared_warehouse_daily_credits(
                 30,
                 company,
-                force=True,
+                force=False,
                 section="Cost & Contract",
             )
             st.session_state["df_fc"] = result.data
@@ -86,10 +105,21 @@ def render_cost_forecast(session, company: str, credit_price: float, max_wh_size
         avg_daily = df_f["DAILY_CREDITS"].mean()
         proj_30   = avg_daily * 30
         proj_cost = credits_to_dollars(proj_30, credit_price)
+        confidence, lower_avg, upper_avg = _confidence_from_forecast(df_f)
+        latest_usage = ""
+        if "DAY" in df_f.columns:
+            latest = pd.to_datetime(df_f["DAY"], errors="coerce").max()
+            latest_usage = "" if pd.isna(latest) else latest.strftime("%Y-%m-%d")
         render_shell_snapshot((
             ("Avg Daily Credits", f"{avg_daily:.2f}"),
             ("Projected 30-day", format_credits(proj_30)),
             ("Projected 30-day Cost", f"${proj_cost:,.2f}"),
+            ("Lower Bound", format_credits(lower_avg * 30, credit_price)),
+            ("Upper Bound", format_credits(upper_avg * 30, credit_price)),
+            ("Confidence", confidence),
+            ("Method", "Deterministic run-rate"),
+            ("History Window", f"{len(df_f):,} daily row(s)"),
+            ("Latest Usage Date", latest_usage or "Current window"),
         ))
         defer_source_note(st.session_state.get("cc_forecast_source", freshness_note("WAREHOUSE_METERING_HISTORY")))
         render_chart_with_data_toggle(
@@ -116,17 +146,22 @@ def render_cost_forecast(session, company: str, credit_price: float, max_wh_size
         key="cc_annual_projection_days",
         format_func=lambda value: f"Last {value} observed service days",
     )
-    if st.button("Load Annual Service Projection", key="cc_annual_projection_load"):
+    annual_cache_key = f"cc_annual_service_projection_{annual_period}"
+    if (
+        st.session_state.get("df_cc_annual_projection") is None
+        or st.session_state.get("cc_annual_projection_period") != annual_period
+    ):
         try:
             df_annual = run_query(
                 _annual_service_projection_sql(),
-                ttl_key=f"cc_annual_service_projection_{annual_period}",
+                ttl_key=annual_cache_key,
                 tier="historical",
                 section="Cost & Contract",
             )
             st.session_state["df_cc_annual_projection"] = df_annual
+            st.session_state["cc_annual_projection_period"] = annual_period
             st.session_state["cc_annual_projection_source"] = (
-                "SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY, completed 24-hour window"
+                "Service metering history, completed 24-hour window"
             )
         except Exception as e:
             st.warning(f"Annual service projection unavailable: {format_snowflake_error(e)}")
@@ -148,7 +183,7 @@ def render_cost_forecast(session, company: str, credit_price: float, max_wh_size
             ))
             defer_source_note(
                 metric_confidence_label("projection"),
-                st.session_state.get("cc_annual_projection_source", "SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY"),
+                st.session_state.get("cc_annual_projection_source", "Service metering history"),
                 freshness_note("ACCOUNT_USAGE"),
                 "Account-wide; not company-scoped. Reconcile to Snowflake Admin/Cost Management before finance signoff.",
             )

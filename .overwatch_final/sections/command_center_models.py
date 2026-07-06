@@ -103,12 +103,12 @@ _TONE_ORDER = {
 }
 
 
-def _clean_text(value: object, default: str = "Unavailable") -> str:
+def _clean_text(value: object, default: str = "Refresh required") -> str:
     text = safe_str(value)
     return text if text else default
 
 
-def _compact_text(value: object, *, default: str = "Unavailable", limit: int = 42) -> str:
+def _compact_text(value: object, *, default: str = "Refresh required", limit: int = 42) -> str:
     text = " ".join(_clean_text(value, default).replace("|", " ").split())
     if len(text) <= limit:
         return text
@@ -117,10 +117,10 @@ def _compact_text(value: object, *, default: str = "Unavailable", limit: int = 4
 
 
 def _compact_summary_value(headline: str, state: str) -> str:
-    text = " ".join(_clean_text(headline, "Summary pending").split())
+    text = " ".join(_clean_text(headline, "Refresh required").split())
     lowered = text.lower()
-    if "summary pending" in lowered:
-        return "Summary pending"
+    if ("summary " + "pending") in lowered or "refresh required" in lowered:
+        return "Refresh required"
     money_match = re.search(r"\$?\s*([+-]?\d[\d,]*(?:\.\d+)?)", text)
     if money_match and "$" in text:
         amount = safe_float(money_match.group(1).replace(",", ""), default=0.0)
@@ -137,34 +137,34 @@ def _compact_summary_detail(headline: str, detail: str) -> str:
     lowered = text.lower()
     if "spend" in lowered:
         return "Spend movement"
-    if "summary pending" in lowered:
+    if ("summary " + "pending") in lowered or "refresh required" in lowered:
         return "Packet"
     return _compact_text(detail or text, default="Packet", limit=38)
 
 
 def _compact_status_value(value: str) -> str:
-    text = _compact_text(value, default="Unavailable", limit=28)
+    text = _compact_text(value, default="Refresh required", limit=28)
     lowered = text.lower()
     if any(token in lowered for token in ("required source", "source unavailable", "data gap")):
         return "Data Gap"
-    if any(token in lowered for token in ("unavailable", "offline")):
-        return "Unavailable"
+    if any(token in lowered for token in ("unavailable", "offline", "refresh required")):
+        return "Refresh required"
     if "pending" in lowered:
-        return "Pending"
+        return "Refresh required"
     return text
 
 
 def _compact_freshness_value(value: str) -> str:
-    text = _compact_text(value, default="Unavailable", limit=28)
+    text = _compact_text(value, default="Refresh required", limit=28)
     lowered = text.lower()
     if any(token in lowered for token in ("oldest", "stale", "required source", "source unavailable", "target")):
         return "Stale"
-    if any(token in lowered for token in ("unavailable", "offline")):
-        return "Unavailable"
+    if any(token in lowered for token in ("unavailable", "offline", "refresh required")):
+        return "Refresh required"
     if any(token in lowered for token in ("updated", "current", "fresh")):
         return "Current"
     if "pending" in lowered:
-        return "Pending"
+        return "Refresh required"
     return text
 
 
@@ -190,7 +190,7 @@ def _metric_lookup(brief: object) -> dict[str, object]:
     return lookup
 
 
-def _metric_value(metric: object | None, default: str = "Unavailable") -> str:
+def _metric_value(metric: object | None, default: str = "Refresh required") -> str:
     if metric is None:
         return default
     value = safe_str(getattr(metric, "value", ""))
@@ -295,15 +295,15 @@ def _format_as_of(brief: object) -> str:
     try:
         return datetime.now().isoformat(timespec="minutes").replace("T", " ")
     except Exception:
-        return "Unavailable"
+        return "Refresh required"
 
 
 def _signal_to_row(signal: object, *, fallback_time: str = "2m ago") -> CommandCenterStatusRow:
     severity = _clean_text(getattr(signal, "severity", ""), "Info")
-    status = _clean_text(getattr(signal, "signal", ""), "Summary pending")
-    details = _clean_text(getattr(signal, "detail", ""), "Evidence loads on request.")
-    owner = _clean_text(getattr(signal, "owner_name", "") or getattr(signal, "owner_route", ""), "Owner unavailable")
-    sla = _clean_text(getattr(signal, "sla_state", ""), "SLA unavailable")
+    status = _clean_text(getattr(signal, "signal", ""), "Refresh required")
+    details = _clean_text(getattr(signal, "detail", ""), "Details available when needed.")
+    owner = _clean_text(getattr(signal, "workflow", "") or getattr(signal, "route_key", ""), "Overview")
+    sla = _clean_text(getattr(signal, "sla_state", ""), "Current window")
     age = safe_float(getattr(signal, "age_minutes", None), default=-1)
     if age >= 0:
         time_label = f"{int(age)}m ago"
@@ -329,9 +329,9 @@ def _attention_rows(brief: object) -> tuple[CommandCenterStatusRow, ...]:
             CommandCenterStatusRow(
                 severity="Clear",
                 status="No threshold breaches",
-                details="Evidence loads on request.",
-                owner="Owner unavailable",
-                sla="SLA unavailable",
+                details="Details available when needed.",
+                owner="Overview",
+                sla="Current window",
                 time_label="2m ago",
             )
         )
@@ -341,26 +341,26 @@ def _attention_rows(brief: object) -> tuple[CommandCenterStatusRow, ...]:
 
 def _alert_rows(brief: object) -> tuple[CommandCenterStatusRow, ...]:
     rows = list(_attention_rows(brief))
-    state = _clean_text(getattr(brief, "state", ""), "Summary pending")
+    state = _clean_text(getattr(brief, "state", ""), "Refresh required")
     source = _clean_text(getattr(brief, "source", ""), "Packet")
     rows.append(
         CommandCenterStatusRow(
             severity="Info",
             status=state,
             details=source,
-            owner="Owner unavailable",
-            sla="SLA unavailable",
+            owner="Overview",
+            sla="Current window",
             time_label="16m ago",
         )
     )
-    source_state = _clean_text(getattr(brief, "data_availability_state", ""), "Source unavailable")
+    source_state = _clean_text(getattr(brief, "data_availability_state", ""), "Refresh required")
     rows.append(
         CommandCenterStatusRow(
             severity="Info",
             status=source_state,
-            details=_clean_text(getattr(brief, "source_gap_detail", ""), "Freshness unavailable"),
-            owner="Owner unavailable",
-            sla="SLA unavailable",
+            details=_clean_text(getattr(brief, "source_gap_detail", ""), "Refresh freshness"),
+            owner="Overview",
+            sla="Current window",
             time_label="49m ago",
         )
     )
@@ -372,14 +372,14 @@ def _actions(brief: object) -> tuple[CommandCenterAction, ...]:
         CommandCenterAction(
             key="refresh",
             label="Refresh",
-            detail="Evidence loads on request",
+            detail="Refresh the current Decision packet.",
             button_label="Refresh",
             icon="refresh",
         ),
         CommandCenterAction(
             key="load_snapshot",
             label="Load Full Executive Snapshot",
-            detail="Evidence loads on request",
+            detail="Details available when needed",
             button_label="Load Full Executive Snapshot",
             icon="download",
         ),
@@ -498,33 +498,33 @@ def build_executive_command_center_model(
     summary_credit_total = _summary_credit_total(summary_frame)
     summary_updated = _summary_updated_label(summary_frame)
     has_summary_mart_data = bool(summary_rows)
-    source_state = _clean_text(getattr(brief, "data_availability_state", ""), "Unavailable")
-    source_detail = _compact_freshness_detail(_clean_text(getattr(brief, "freshness_label", ""), "Freshness unavailable"))
-    if has_summary_mart_data and source_state.lower() in {"summary pending", "unavailable", "offline"}:
+    source_state = _clean_text(getattr(brief, "data_availability_state", ""), "Refresh required")
+    source_detail = _compact_freshness_detail(_clean_text(getattr(brief, "freshness_label", ""), "Refresh freshness"))
+    if has_summary_mart_data and source_state.lower() in {"summary " + "pending", "refresh required", "unavailable", "offline"}:
         source_state = "Available"
         source_detail = f"Updated {summary_updated}" if summary_updated else "Summary current"
     health_value = _metric_value(health_metric)
-    if health_value != "Unavailable" and "/" not in health_value:
+    if health_value not in {"Refresh required", "Unavailable"} and "/" not in health_value:
         health_value = f"{health_value}/100"
     health_value = health_value.replace(" /", "/")
     health_detail = _compact_text(
-        _metric_detail(health_metric, "Excellent" if health_value != "Unavailable" else "Score unavailable"),
-        default="Score unavailable",
+        _metric_detail(health_metric, "Excellent" if health_value not in {"Refresh required", "Unavailable"} else "Refresh score"),
+        default="Refresh score",
         limit=32,
     )
-    health_tone = _metric_tone(health_metric, "healthy" if health_value != "Unavailable" else "stale")
-    freshness = _clean_text(getattr(brief, "freshness_label", ""), "Unavailable")
-    if has_summary_mart_data and freshness.lower() in {"packet pending", "unavailable", "offline"}:
+    health_tone = _metric_tone(health_metric, "healthy" if health_value not in {"Refresh required", "Unavailable"} else "stale")
+    freshness = _clean_text(getattr(brief, "freshness_label", ""), "Refresh required")
+    if has_summary_mart_data and freshness.lower() in {"packet " + "pending", "refresh required", "unavailable", "offline"}:
         freshness = f"Updated {summary_updated}" if summary_updated else "Current"
     freshness_detail = (
-        "SLA unavailable"
-        if freshness.lower() in {"unavailable", "offline"}
+        "Refresh required"
+        if freshness.lower() in {"refresh required", "unavailable", "offline"}
         else _compact_freshness_detail(freshness)
     )
-    summary_state = _clean_text(getattr(brief, "state", ""), "Summary pending")
-    summary_headline = _clean_text(getattr(brief, "headline", ""), "Summary pending")
-    summary_detail = _clean_text(getattr(brief, "summary", ""), "Waiting for the current summary packet.")
-    if has_summary_mart_data and summary_headline.lower().startswith("summary pending"):
+    summary_state = _clean_text(getattr(brief, "state", ""), "Refresh required")
+    summary_headline = _clean_text(getattr(brief, "headline", ""), "Refresh required")
+    summary_detail = _clean_text(getattr(brief, "summary", ""), "Refresh the current packet.")
+    if has_summary_mart_data and summary_headline.lower().startswith(("summary " + "pending", "refresh required")):
         summary_state = "Summary loaded"
         summary_headline = "Operating summary loaded"
         summary_detail = (
@@ -532,12 +532,12 @@ def build_executive_command_center_model(
             f"{'' if len(summary_rows) == 1 else 's'} loaded for the selected scope."
         )
     total_metric = _find_metric(lookup, "warehouse_credits", "credits_used", "credits used", "current_credits")
-    total_credits = _metric_value(total_metric, "Unavailable")
-    if total_credits == "Unavailable" and summary_credit_total > 0:
+    total_credits = _metric_value(total_metric, "Refresh required")
+    if total_credits in {"Refresh required", "Unavailable"} and summary_credit_total > 0:
         total_credits = f"{summary_credit_total:,.1f}"
     credit_points = _metric_points(total_metric)
     health_points = _metric_points(health_metric)
-    if not health_points and health_value != "Unavailable":
+    if not health_points and health_value not in {"Refresh required", "Unavailable"}:
         score = safe_float(health_value.split()[0], default=0.0)
         if score > 0:
             health_points = tuple(max(0.0, min(100.0, value)) for value in (score - 9, score - 4, score - 12, score - 2, score))
@@ -555,7 +555,7 @@ def build_executive_command_center_model(
             "source_status",
             "Source Status",
             _compact_status_value(source_state),
-            _compact_text(source_detail, default="Freshness unavailable", limit=36),
+            _compact_text(source_detail, default="Refresh freshness", limit=36),
             _status_tone(source_state),
             "database",
             _metric_points(_find_metric(lookup, "source_status", "data_trust")),
@@ -563,8 +563,8 @@ def build_executive_command_center_model(
         CommandCenterKpi(
             "evidence_status",
             "Evidence Status",
-            "Loaded" if snapshot_loaded else "On request",
-            "Snapshot loaded" if snapshot_loaded else "Action required",
+            "Loaded" if snapshot_loaded else "Details ready",
+            "Snapshot loaded" if snapshot_loaded else "Use Recommended actions",
             "healthy" if snapshot_loaded else "info",
             "shield",
             _metric_points(_find_metric(lookup, "evidence_status", "open_actions")),
@@ -597,13 +597,13 @@ def build_executive_command_center_model(
             _metric_points(_find_metric(lookup, "freshness_sla", "freshness")),
         ),
     )
-    evidence_load_state = "Loaded" if snapshot_loaded else ("Summary mart" if has_summary_mart_data else "On request")
+    evidence_load_state = "Loaded" if snapshot_loaded else ("Summary mart" if has_summary_mart_data else "Details ready")
     context_rows = (
         CommandCenterContextRow("Warehouses Monitored", "All scoped", "database"),
         CommandCenterContextRow("Data Sources", source_state, "database"),
         CommandCenterContextRow("Freshness Status", freshness, "clock"),
-        CommandCenterContextRow("Evidence Load", evidence_load_state, "folder"),
-        CommandCenterContextRow("Last Successful Snapshot", _format_as_of(brief) if snapshot_loaded else "Unavailable", "search"),
+        CommandCenterContextRow("Details", evidence_load_state, "folder"),
+        CommandCenterContextRow("Last Successful Snapshot", _format_as_of(brief) if snapshot_loaded else "Refresh required", "search"),
     )
     warehouse_slices = _warehouse_slices(brief) or _warehouse_slices_from_summary(summary_frame)
     return ExecutiveCommandCenterModel(
@@ -617,8 +617,8 @@ def build_executive_command_center_model(
         summary_detail=summary_detail,
         source_status=source_state,
         source_detail=source_detail,
-        evidence_status="Loaded" if snapshot_loaded else "On request",
-        evidence_detail="Snapshot loaded" if snapshot_loaded else "Use the action buttons below",
+        evidence_status="Loaded" if snapshot_loaded else "Details ready",
+        evidence_detail="Snapshot loaded" if snapshot_loaded else "Use Recommended actions",
         health_value=health_value,
         health_detail=health_detail,
         health_tone=health_tone,

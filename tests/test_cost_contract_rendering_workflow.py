@@ -320,7 +320,7 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
             "cost_contract_cockpit": pd.DataFrame([{
                 "CURRENT_CREDITS": 120.0,
                 "PRIOR_CREDITS": 100.0,
-                "TOP_INCREASE_WAREHOUSE": "COMPUTE_WH",
+                "TOP_INCREASE_WAREHOUSE": "WH_ALFA_OVERWATCH",
                 "TOP_INCREASE_CREDITS": 12.0,
             }]),
             "cost_contract_cockpit_meta": {"company": "ALFA", "days": 7},
@@ -346,7 +346,7 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
             patch.object(
                 cost_contract_overview_floor,
                 "load_cost_evidence",
-                return_value={"rows": pd.DataFrame([{"WAREHOUSE_NAME": "COMPUTE_WH"}]), "metrics": (("Rows", "1"),), "row_count": 1},
+                return_value={"rows": pd.DataFrame([{"WAREHOUSE_NAME": "WH_ALFA_OVERWATCH"}]), "metrics": (("Rows", "1"),), "row_count": 1},
             ),
             patch.object(cost_contract_overview_floor, "render_decision_evidence_panel"),
             patch.object(cost_contract_overview_floor, "render_data_freshness"),
@@ -385,7 +385,7 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
             "cost_contract_cockpit": pd.DataFrame([{
                 "CURRENT_CREDITS": 140.0,
                 "PRIOR_CREDITS": 100.0,
-                "TOP_INCREASE_WAREHOUSE": "COMPUTE_WH",
+                "TOP_INCREASE_WAREHOUSE": "WH_ALFA_OVERWATCH",
                 "TOP_INCREASE_CREDITS": 15.0,
             }]),
             "cost_contract_cockpit_meta": {"company": "ALFA", "days": 7},

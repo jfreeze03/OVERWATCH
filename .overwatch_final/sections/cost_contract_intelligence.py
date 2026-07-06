@@ -137,13 +137,13 @@ def _build_cost_source_health_board(
     state_series = board["STATE"].fillna("").astype(str)
     unavailable = int(state_series.eq("Unavailable").sum())
     load_needed = int(state_series.eq("Load Needed").sum())
-    review = int(state_series.isin(["On Demand", "No Rows"]).sum())
+    review = int(state_series.isin(["Explicit action", "No Rows"]).sum())
     ready = int(state_series.eq("Ready").sum())
     score = max(0, min(100, 100 - unavailable * 18 - load_needed * 12 - review * 4))
     board["_STATE_RANK"] = state_series.map({
         "Unavailable": 0,
         "Load Needed": 1,
-        "On Demand": 2,
+        "Explicit action": 2,
         "No Rows": 3,
         "Ready": 4,
     }).fillna(9)
@@ -742,7 +742,7 @@ def _build_cost_spike_root_cause_board(
     chargeback = _state_frame(state, "df_chargeback")
     current_credits = safe_float(_first_frame_value(cockpit, "CURRENT_CREDITS", 0))
     prior_credits = safe_float(_first_frame_value(cockpit, "PRIOR_CREDITS", 0))
-    top_wh = str(_first_frame_value(cockpit, "TOP_INCREASE_WAREHOUSE", "On demand") or "On demand")
+    top_wh = str(_first_frame_value(cockpit, "TOP_INCREASE_WAREHOUSE", "Details available when needed") or "Details available when needed")
     top_delta = safe_float(_first_frame_value(cockpit, "TOP_INCREASE_CREDITS", 0))
     delta_pct = ((current_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0.0
     avg_7d = safe_float(_first_frame_value(run_rate, "AVG_DAILY_7D", 0))
@@ -820,7 +820,7 @@ def _build_cost_spike_root_cause_board(
     add(
         "Medium" if company_driver["entity"] else "Watch",
         "Company / environment attribution",
-        company_driver["entity"] or "On demand",
+        company_driver["entity"] or "Details available when needed",
         "Chargeback direction",
         (
             f"Top {company_driver['dimension']} is {company_driver['entity']} at ${company_driver['value_usd']:,.0f} across {company_driver['rows']:,} row(s)."
@@ -839,7 +839,7 @@ def _build_cost_spike_root_cause_board(
     add(
         "Medium" if db_driver["entity"] else "Watch",
         "Database / DEV rollup",
-        db_driver["entity"] or "On demand",
+        db_driver["entity"] or "Details available when needed",
         "Database-attributed cost candidate",
         (
             f"Top {db_driver['dimension']} is {db_driver['entity']} at ${db_driver['value_usd']:,.0f} across {db_driver['rows']:,} row(s)."
@@ -858,7 +858,7 @@ def _build_cost_spike_root_cause_board(
     add(
         "Medium" if human_driver["entity"] else "Watch",
         "Role / user / department",
-        human_driver["entity"] or "On demand",
+        human_driver["entity"] or "Details available when needed",
         "Human ownership candidate",
         (
             f"Top {human_driver['dimension']} is {human_driver['entity']} at ${human_driver['value_usd']:,.0f} across {human_driver['rows']:,} row(s)."
@@ -1013,7 +1013,7 @@ def _build_change_cost_correlation_board(
             "High" if high_rows and spike_signal else "Medium" if high_rows else "Info",
             "High-risk change near cost movement",
             matched_entity,
-            f"Cost movement active={spike_signal}; top warehouse {top_wh or 'On demand'}.",
+            f"Cost movement active={spike_signal}; top warehouse {top_wh or 'Details available when needed'}.",
             f"{high_rows:,} Critical/High change exception(s) loaded.",
             "High-severity object/access/policy changes near cost movement require a bill explanation, not just a cost chart.",
             "Record change ticket, query_id, actor, object, and blast-radius telemetry on the cost incident.",

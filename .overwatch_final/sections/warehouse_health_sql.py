@@ -201,7 +201,7 @@ def _overwatch_dedicated_warehouse_setup_sql() -> str:
     """Return advisory setup SQL for a future dedicated OVERWATCH warehouse."""
     return """-- Future dedicated OVERWATCH warehouse pattern.
 -- Review naming, role grants, and resource monitor policy before execution.
-CREATE WAREHOUSE IF NOT EXISTS COMPUTE_WH
+CREATE WAREHOUSE IF NOT EXISTS WH_ALFA_OVERWATCH
   WAREHOUSE_SIZE = XSMALL
   AUTO_SUSPEND = 60
   AUTO_RESUME = TRUE
@@ -209,7 +209,7 @@ CREATE WAREHOUSE IF NOT EXISTS COMPUTE_WH
   COMMENT = 'Dedicated OVERWATCH Snowflake DBA monitoring warehouse';
 
 -- Optional guardrail after resource monitor policy is approved.
--- ALTER WAREHOUSE COMPUTE_WH SET RESOURCE_MONITOR = COMPUTE_WH_RM;
+-- ALTER WAREHOUSE WH_ALFA_OVERWATCH SET RESOURCE_MONITOR = WH_ALFA_OVERWATCH_RM;
 """
 
 

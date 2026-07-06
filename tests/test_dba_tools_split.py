@@ -176,7 +176,7 @@ class DbaToolsSplitTests(unittest.TestCase):
         )
 
         plan = wh_settings._build_warehouse_setting_plan(
-            "COMPUTE_WH",
+            "WH_ALFA_OVERWATCH",
             pd.Series({
                 "size": "Small",
                 "auto_suspend": 600,
@@ -194,15 +194,15 @@ class DbaToolsSplitTests(unittest.TestCase):
                 "MAX_CONCURRENCY_LEVEL": 16,
             },
         )
-        self.assertIn('ALTER WAREHOUSE "COMPUTE_WH" SET', plan["alter_sql"])
+        self.assertIn('ALTER WAREHOUSE "WH_ALFA_OVERWATCH" SET', plan["alter_sql"])
         self.assertNotIn("WAREHOUSE_SIZE", plan["alter_sql"])
         self.assertIn("AUTO_SUSPEND = 0", plan["alter_sql"])
         self.assertIn("AUTO_RESUME = FALSE", plan["alter_sql"])
         self.assertIn("MAX_CLUSTER_COUNT = 2", plan["alter_sql"])
         self.assertIn("ENABLE_QUERY_ACCELERATION = TRUE", plan["alter_sql"])
         self.assertIn("AUTO_SUSPEND = 600", plan["rollback_sql"])
-        self.assertIn('SHOW GRANTS ON WAREHOUSE "COMPUTE_WH"', plan["preflight_sql"])
-        self.assertEqual(plan["confirmation_text"], "ALTER COMPUTE_WH")
+        self.assertIn('SHOW GRANTS ON WAREHOUSE "WH_ALFA_OVERWATCH"', plan["preflight_sql"])
+        self.assertEqual(plan["confirmation_text"], "ALTER WH_ALFA_OVERWATCH")
         self.assertEqual(plan["skipped_df"].iloc[0]["PARAMETER"], "MAX_CONCURRENCY_LEVEL")
         self.assertIn("REVIEW_GATE", plan["changes_df"].columns)
         self.assertIn("rollback SQL", plan["control_context"])

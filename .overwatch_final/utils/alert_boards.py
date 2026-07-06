@@ -56,11 +56,11 @@ def build_alert_command_center_summary(
             "recurring": pd.DataFrame(columns=["CATEGORY", "SIGNAL", "ENTITY", "ALERTS", "SEVERITY", "OWNER", "RECOMMENDED_ACTION"]),
             "freshness": pd.DataFrame([{
                 "SOURCE": "Loaded alert data",
-                "LAST_CHECKED": "On demand",
+                "LAST_CHECKED": "Details available when needed",
                 "FRESHNESS_STATE": "Load required",
                 "NOTE": "Use explicit load to avoid hidden ACCOUNT_USAGE scans.",
             }]),
-            "last_checked": "On demand",
+            "last_checked": "Details available when needed",
             "severity_score": 0,
             "mttd_minutes": None,
             "mttr_hours": None,

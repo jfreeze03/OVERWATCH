@@ -514,7 +514,7 @@ def render_explain_this_bill(session, company: str, credit_price: float, max_wh_
         defer_source_note(
             f"{metric_confidence_label('allocated')} | Shared warehouses mean exact WAREHOUSE_METERING_HISTORY "
             "cannot split PROD and DEV by itself. This view allocates metered credits to query database context, "
-            "then rolls ALFA_EDW_PROD separately from ALFA_EDW_DEV/SAN/PHX/SEA/SIT."
+            "then rolls ALFA_EDW_PRD separately from ALFA_EDW_DEV/SAN/PHX/SEA/SIT."
         )
         if environment_drivers is not None and not environment_drivers.empty:
             env_display = _annotate_allocation_quality(environment_drivers)

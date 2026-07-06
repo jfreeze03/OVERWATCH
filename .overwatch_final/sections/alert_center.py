@@ -311,7 +311,7 @@ def _summary_count_label(summary: dict, *keys: str) -> tuple[str, int | None]:
             return f"{count:,}", count
         except (TypeError, ValueError):
             return str(value), None
-    return "Summary unavailable", None
+    return "Loading current summary", None
 
 
 def _alert_center_cached_summary_for_scope(
@@ -361,9 +361,9 @@ def _alert_center_first_paint_summary(
                 "freshness": str(cached_summary.get("freshness") or cached_summary.get("loaded_at") or "Cached summary"),
             }
         return dict(
-            critical_high="Summary unavailable",
-            overdue="Summary unavailable",
-            open_queue="Summary unavailable",
+            critical_high="Loading current summary",
+            overdue="Loading current summary",
+            open_queue="Loading current summary",
             top_lane="Selected view",
             freshness="Summary mart unavailable",
         )
@@ -408,7 +408,7 @@ def _render_alert_center_first_paint_shell(
     required_sources: set[str],
     data: dict | None = None,
     cached_summary: dict | None = None,
-    state: str = "Load on demand",
+    state: str = "Explicit action",
     note: str = "",
 ) -> None:
     """Render a useful Alert Center shell while detailed rows remain behind Load."""
@@ -774,7 +774,7 @@ def render() -> None:
         _alert_center_loaded_meta(data, source_view) if current_data else {},
         source=f"{source_view} inputs",
         target_minutes=60,
-        delayed_note="Alert Center reads bounded alert/action sources on demand; source-history inputs can lag.",
+        delayed_note="Alert Center reads bounded alert/action sources after explicit actions; source-history inputs can lag.",
     )
     if active_view != "Alert Settings / Admin":
         render_alert_candidate_panel()
@@ -789,7 +789,7 @@ def render() -> None:
             required_sources=required_sources,
             cached_summary=cached_summary,
             state="Ready",
-            note="Alert Inbox opens from packet and cached summary context; row-level evidence loads on request.",
+            note="Alert Inbox opens from packet and cached summary context; row-level evidence opens from explicit actions.",
         )
         if should_render_daily_diagnostics("Alert Center", source_view, "UNINITIALIZED"):
             _render_advanced_alert_diagnostics(company, environment)

@@ -22,14 +22,14 @@ class CostContractOverviewTests(unittest.TestCase):
 
         attention = _cost_splash_status({
             "delta_pct": 25,
-            "top_warehouse": "COMPUTE_WH",
+            "top_warehouse": "WH_ALFA_OVERWATCH",
             "top_warehouse_delta_spend": 125.0,
         })
         improving = _cost_splash_status({"delta_pct": -12})
         stable = _cost_splash_status({"delta_pct": 3, "top_warehouse": "LOAD_WH"})
 
         self.assertEqual(attention[0], "Attention")
-        self.assertIn("COMPUTE_WH", attention[2])
+        self.assertIn("WH_ALFA_OVERWATCH", attention[2])
         self.assertEqual(improving[0], "Improving")
         self.assertEqual(stable[0], "Stable")
 
@@ -47,7 +47,7 @@ class CostContractOverviewTests(unittest.TestCase):
         )
 
         self.assertEqual(len(frame), 4)
-        self.assertTrue(frame["SIGNAL"].eq("On demand").all())
+        self.assertTrue(frame["SIGNAL"].eq("Details available when needed").all())
         self.assertEqual(frame["ROUTE"].tolist(), [
             "Cost Explorer > Warehouse",
             "Burn Rate & Forecast",

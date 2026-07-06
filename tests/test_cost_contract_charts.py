@@ -253,7 +253,7 @@ class CostContractChartTests(unittest.TestCase):
             {
                 "START_TIME": ["2026-06-21 01:00:00", "2026-06-22 02:00:00", "2026-06-22 03:00:00"],
                 "WAREHOUSE_ID": [1, 0, 2],
-                "WAREHOUSE_NAME": ["COMPUTE_WH", "PSEUDO", "LOAD_WH"],
+                "WAREHOUSE_NAME": ["WH_ALFA_OVERWATCH", "PSEUDO", "LOAD_WH"],
                 "CREDITS_USED_COMPUTE": ["2", "100", "3"],
                 "CREDITS_USED_CLOUD_SERVICES": ["0.5", "10", "1"],
             }
@@ -263,7 +263,7 @@ class CostContractChartTests(unittest.TestCase):
         weekly = cost_contract_charts.build_weekly_warehouse_cost_rows(warehouse_rows, 3.68)
         hourly = cost_contract_charts.build_hourly_usage_pattern_rows(warehouse_rows, 3.68)
 
-        self.assertEqual(top["WAREHOUSE_NAME"].tolist(), ["LOAD_WH", "COMPUTE_WH"])
+        self.assertEqual(top["WAREHOUSE_NAME"].tolist(), ["LOAD_WH", "WH_ALFA_OVERWATCH"])
         self.assertEqual(top["WAREHOUSE_CREDITS"].tolist(), [4.0, 2.5])
         self.assertEqual(round(float(weekly["WAREHOUSE_COST_USD"].sum()), 2), 23.92)
         self.assertIn("HOUR", hourly.columns)

@@ -11,6 +11,7 @@ import time
 import pandas as pd
 import streamlit as st
 
+from utils.data_state import DataState, data_state_label, data_state_message, detail_available_text
 from utils.performance import record_ui_query_event
 from sections.decision_workspace_fixtures import build_fixture_brief
 from sections.decision_workspace_state import decision_fixture_enabled, snowflake_entry_available
@@ -574,23 +575,24 @@ def _fallback_brief(
     loaded_at = _now_label()
     safe_scope = f"{company} / {environment}"
     closest_packet = ""
+    state_label = data_state_label(DataState.REFRESH_REQUIRED)
     brief = SectionCommandBrief(
         section=contract.section,
         company=str(company),
         environment=str(environment),
         window_label=f"{int(window_days)} days",
-        state="Summary pending",
-        headline="Summary pending",
-        summary=f"Waiting for the current {safe_scope} summary packet.",
+        state=state_label,
+        headline=state_label,
+        summary=f"{data_state_message(DataState.REFRESH_REQUIRED)} Scope: {safe_scope}.",
         source="Decision packet",
-        freshness_label="Packet pending",
+        freshness_label=state_label,
         loaded_at=loaded_at,
         metrics=(),
         top_signal=SectionCommandSignal(
             severity="Watch",
-            signal="Summary packet pending",
+            signal=state_label,
             entity=contract.section,
-            detail="Initialize summaries or open Setup Health.",
+            detail=detail_available_text(),
             route_section=contract.section,
             route_workflow=contract.default_view,
         ),
@@ -613,15 +615,15 @@ def _fallback_brief(
         available_source_count=0,
         missing_source_count=len(contract.required_sources),
         source_coverage_pct=0.0,
-        data_availability_state="Summary pending",
+        data_availability_state=state_label,
         stale_source_count=0,
-        source_gap_detail="Summary packet pending",
+        source_gap_detail=state_label,
         cache_expires_at=_expiry_label(NEGATIVE_CACHE_SECONDS),
         app_query_loaded_at=loaded_at,
         command_brief_query_count=0,
         command_brief_fallback_used=True,
         raw_payload={
-            "workspace_mode": "PENDING",
+            "workspace_mode": "REFRESH_REQUIRED",
             "missing_packet_scope": f"{company}/{environment}/{int(window_days)}",
             "closest_packet_summary": closest_packet,
         },
@@ -658,10 +660,10 @@ def _offline_brief(
     )
     return replace(
         brief,
-        state="Offline",
-        headline="Summary pending.",
-        summary="Connection unavailable. Retry after the source is available or open Setup Health.",
-        freshness_label="Offline",
+        state=data_state_label(DataState.CONNECTION_UNAVAILABLE),
+        headline=data_state_label(DataState.CONNECTION_UNAVAILABLE),
+        summary=data_state_message(DataState.CONNECTION_UNAVAILABLE),
+        freshness_label=data_state_label(DataState.CONNECTION_UNAVAILABLE),
         raw_payload={**dict(brief.raw_payload or {}), "workspace_mode": "OFFLINE", "offline": True},
     )
 

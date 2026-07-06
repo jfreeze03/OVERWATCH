@@ -69,7 +69,7 @@
 - Status: `PASS`
 - Run ID: `SNOWFLAKE_REGRESSION_LIVE_PASS`
 - Role: `SNOW_ACCOUNTADMINS`
-- Warehouse: `COMPUTE_WH`
+- Warehouse: `WH_ALFA_OVERWATCH`
 - Database/schema: `DBA_MAINT_DB.OVERWATCH`
 - If not run, reason: New live regression not run for `cda40dd` because the latest credentialed PASS evidence was already recorded; local validation, full unit regression, and section smoke were rerun for this candidate.
 

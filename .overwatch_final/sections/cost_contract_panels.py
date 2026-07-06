@@ -37,7 +37,7 @@ def _render_cost_source_health(
     st.markdown("**Cost Data Health**")
     render_shell_snapshot((
         ("Ready Inputs", f"{summary['ready']:,}"),
-        ("Review / On Demand", f"{summary['review']:,}"),
+        ("Review / Explicit", f"{summary['review']:,}"),
         ("Unavailable", f"{summary['unavailable']:,}"),
     ))
     render_priority_dataframe(

@@ -326,7 +326,7 @@ def _default_platform_summary() -> dict:
         "open_actions": 0,
         "high_actions": 0,
         "migration_blockers": 0,
-        "top_cost_driver": "On demand",
+        "top_cost_driver": "Details available when needed",
         "cortex_spend_usd": 0.0,
         "cortex_trend": "Pending",
         "cortex_forecast_usd": 0.0,
@@ -505,12 +505,12 @@ def _obs_metric_loaded(board: pd.DataFrame, metric: str) -> bool:
 
 def _obs_money_label(board: pd.DataFrame, metric: str, *, column: str = "VALUE_USD", signed: bool = False) -> str:
     if not _obs_metric_loaded(board, metric):
-        return "On demand"
+        return "Details available when needed"
     return _money(_obs_value(board, metric, column=column), signed=signed)
 
 def _obs_count_label(board: pd.DataFrame, metric: str) -> str:
     if not _obs_metric_loaded(board, metric):
-        return "On demand"
+        return "Details available when needed"
     return f"{safe_int(_obs_value(board, metric)):,}"
 
 def _state_payload(state: dict | None = None):
@@ -1001,8 +1001,8 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
     rows = [
         {
             "LANE": "Platform health",
-            "STATE": _platform_score_state(platform_health) if _obs_metric_loaded(board, "Platform Health") else "On demand",
-            "VALUE": _platform_score_state(platform_health) if _obs_metric_loaded(board, "Platform Health") else "On demand",
+            "STATE": _platform_score_state(platform_health) if _obs_metric_loaded(board, "Platform Health") else "Details available when needed",
+            "VALUE": _platform_score_state(platform_health) if _obs_metric_loaded(board, "Platform Health") else "Details available when needed",
             "PRESSURE_SCORE": max(0.0, 100.0 - safe_float(platform_health)) if _obs_metric_loaded(board, "Platform Health") else 0.0,
             "WHY_IT_MATTERS": "Rolls cost, risk, workload, and telemetry quality into one summary-level pressure signal.",
             "OWNER_ROUTE": "Executive Landing",
@@ -1011,7 +1011,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
         {
             "LANE": "Cost movement",
             "STATE": "Rising" if spend_delta > 0 else "Flat / down",
-            "VALUE": _money(spend_delta, signed=True) if _obs_metric_loaded(board, "Spend Delta") else "On demand",
+            "VALUE": _money(spend_delta, signed=True) if _obs_metric_loaded(board, "Spend Delta") else "Details available when needed",
             "PRESSURE_SCORE": capped(max(spend_delta, 0.0), max(current_spend * 0.20, 500.0)),
             "WHY_IT_MATTERS": "Leadership asks first why the bill moved and whether the increase has an owner.",
             "OWNER_ROUTE": "Cost & Contract",
@@ -1020,7 +1020,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
         {
             "LANE": "Cortex spend",
             "STATE": "Spend active" if cortex_spend > 0 else "No spend",
-            "VALUE": _money(cortex_spend) if _obs_metric_loaded(board, "Cortex Spend") else "On demand",
+            "VALUE": _money(cortex_spend) if _obs_metric_loaded(board, "Cortex Spend") else "Details available when needed",
             "PRESSURE_SCORE": capped(cortex_spend, 500.0),
             "WHY_IT_MATTERS": "AI spend can grow without warehouse-style owner habits or quota guardrails.",
             "OWNER_ROUTE": "Cost & Contract",
@@ -1029,7 +1029,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
         {
             "LANE": "Queue pressure",
             "STATE": "Queued" if queue_seconds > 0 else "Clear",
-            "VALUE": _format_seconds(queue_seconds) if _obs_metric_loaded(board, "Queue Time") else "On demand",
+            "VALUE": _format_seconds(queue_seconds) if _obs_metric_loaded(board, "Queue Time") else "Details available when needed",
             "PRESSURE_SCORE": capped(queue_seconds, 3600.0),
             "WHY_IT_MATTERS": "Queue time turns into missed SLAs, frustrated users, and sometimes wasteful resize decisions.",
             "OWNER_ROUTE": "DBA Control Room",
@@ -1038,7 +1038,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
         {
             "LANE": "Spillage",
             "STATE": "Spilling" if spill_gb > 0 else "Clear",
-            "VALUE": _format_gb(spill_gb) if _obs_metric_loaded(board, "Remote Spill") else "On demand",
+            "VALUE": _format_gb(spill_gb) if _obs_metric_loaded(board, "Remote Spill") else "Details available when needed",
             "PRESSURE_SCORE": capped(spill_gb, 100.0),
             "WHY_IT_MATTERS": "Remote spill is a strong signal for poor pruning, oversized joins, and warehouse pressure.",
             "OWNER_ROUTE": "Workload Operations",
@@ -1065,7 +1065,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
         {
             "LANE": "Storage footprint",
             "STATE": "Track" if storage_tb > 0 else "No data",
-            "VALUE": f"{safe_float(storage_tb):,.2f} TB" if _obs_metric_loaded(board, "Storage") else "On demand",
+            "VALUE": f"{safe_float(storage_tb):,.2f} TB" if _obs_metric_loaded(board, "Storage") else "Details available when needed",
             "PRESSURE_SCORE": capped(storage_tb, 50.0),
             "WHY_IT_MATTERS": "Storage, failsafe, and stages become contract noise when growth lacks lifecycle controls.",
             "OWNER_ROUTE": "Cost & Contract",
@@ -1100,8 +1100,8 @@ def _executive_pressure_placeholder_rows() -> pd.DataFrame:
         [
             {
                 "LANE": "Platform health",
-                "STATE": "On demand",
-                "VALUE": "On demand",
+                "STATE": "Details available when needed",
+                "VALUE": "Details available when needed",
                 "PRESSURE_SCORE": 0.0,
                 "WHY_IT_MATTERS": "Platform health needs cost, workload, alert, and telemetry facts before it is decision-grade.",
                 "OWNER_ROUTE": "Executive Landing",
@@ -1109,8 +1109,8 @@ def _executive_pressure_placeholder_rows() -> pd.DataFrame:
             },
             {
                 "LANE": "Cost movement",
-                "STATE": "On demand",
-                "VALUE": "On demand",
+                "STATE": "Details available when needed",
+                "VALUE": "Details available when needed",
                 "PRESSURE_SCORE": 0.0,
                 "WHY_IT_MATTERS": "Spend movement is the first leadership question and must come from metering facts.",
                 "OWNER_ROUTE": "Cost & Contract",
@@ -1118,8 +1118,8 @@ def _executive_pressure_placeholder_rows() -> pd.DataFrame:
             },
             {
                 "LANE": "Cortex spend",
-                "STATE": "On demand",
-                "VALUE": "On demand",
+                "STATE": "Details available when needed",
+                "VALUE": "Details available when needed",
                 "PRESSURE_SCORE": 0.0,
                 "WHY_IT_MATTERS": "AI spend needs explicit owner and quota visibility.",
                 "OWNER_ROUTE": "Cost & Contract",
@@ -1127,8 +1127,8 @@ def _executive_pressure_placeholder_rows() -> pd.DataFrame:
             },
             {
                 "LANE": "Runtime and queue",
-                "STATE": "On demand",
-                "VALUE": "On demand",
+                "STATE": "Details available when needed",
+                "VALUE": "Details available when needed",
                 "PRESSURE_SCORE": 0.0,
                 "WHY_IT_MATTERS": "Runtime, queue, and spill show whether the platform is hurting users.",
                 "OWNER_ROUTE": "Workload Operations",
@@ -1136,8 +1136,8 @@ def _executive_pressure_placeholder_rows() -> pd.DataFrame:
             },
             {
                 "LANE": "Reliability",
-                "STATE": "On demand",
-                "VALUE": "On demand",
+                "STATE": "Details available when needed",
+                "VALUE": "Details available when needed",
                 "PRESSURE_SCORE": 0.0,
                 "WHY_IT_MATTERS": "Failed queries, failed tasks, and missed runs are the fastest path to incident risk.",
                 "OWNER_ROUTE": "DBA Control Room",
@@ -1145,8 +1145,8 @@ def _executive_pressure_placeholder_rows() -> pd.DataFrame:
             },
             {
                 "LANE": "Alerts and actions",
-                "STATE": "On demand",
-                "VALUE": "On demand",
+                "STATE": "Details available when needed",
+                "VALUE": "Details available when needed",
                 "PRESSURE_SCORE": 0.0,
                 "WHY_IT_MATTERS": "Open critical/high alerts and unowned action queue rows drive the morning command queue.",
                 "OWNER_ROUTE": "Alert Center",
@@ -1162,49 +1162,49 @@ def _executive_summary_lanes(board: pd.DataFrame, *, days: int, credit_price: fl
         return [
             {
                 "label": "Credits used / dollars",
-                "value": "On demand",
+                "value": "Details available when needed",
                 "state": "Mart",
                 "detail": "Load MART_EXECUTIVE_OBSERVABILITY for official/metered spend.",
             },
             {
                 "label": "Cortex dollars",
-                "value": "On demand",
+                "value": "Details available when needed",
                 "state": "AI",
                 "detail": "Uses Cortex fact rows where account telemetry is available.",
             },
             {
                 "label": "Monthly run rate",
-                "value": "On demand",
+                "value": "Details available when needed",
                 "state": "Forecast",
                 "detail": "Projected from the selected summary window after facts load.",
             },
             {
                 "label": "Queries / avg runtime",
-                "value": "On demand",
+                "value": "Details available when needed",
                 "state": "Workload",
                 "detail": "Query count and runtime rollups come from hourly facts.",
             },
             {
                 "label": "P95 runtime / queue",
-                "value": "On demand",
+                "value": "Details available when needed",
                 "state": "SLA",
                 "detail": "Queue and p95 runtime tell leadership whether users feel pain.",
             },
             {
                 "label": "Remote spillage",
-                "value": "On demand",
+                "value": "Details available when needed",
                 "state": "SQL shape",
                 "detail": "Highlights memory pressure, join shape, and pruning problems.",
             },
             {
                 "label": "Alerts / failed tasks",
-                "value": "On demand",
+                "value": "Details available when needed",
                 "state": "Reliability",
                 "detail": "Critical/high alerts and failed task facts drive the DBA queue.",
             },
             {
                 "label": "Warehouse pressure",
-                "value": "On demand",
+                "value": "Details available when needed",
                 "state": "Capacity",
                 "detail": "Summarizes queue plus spill before anyone resizes compute.",
             },
@@ -1242,7 +1242,7 @@ def _executive_summary_lanes(board: pd.DataFrame, *, days: int, credit_price: fl
         },
         {
             "label": "Monthly run rate",
-            "value": _money(month_end_forecast) if _obs_metric_loaded(board, "Credits Used") else "On demand",
+            "value": _money(month_end_forecast) if _obs_metric_loaded(board, "Credits Used") else "Details available when needed",
             "state": "Forecast",
             "detail": f"Projected from {int(days)} day(s); confirm against complete-day metering.",
         },
@@ -1334,7 +1334,7 @@ def _executive_command_summary_rows(board: pd.DataFrame, advisor_rows: pd.DataFr
     rows.append({
         "PRIORITY": safe_int(procedure_row.get("PRIORITY"), 3) if procedure_row is not None else 7,
         "AREA": "Stored procedure advisor",
-        "STATE": str(procedure_row.get("STATE") or "Review") if procedure_row is not None else "On demand",
+        "STATE": str(procedure_row.get("STATE") or "Review") if procedure_row is not None else "Details available when needed",
         "CURRENT_SIGNAL": (
             str(procedure_row.get("ADVISOR_SIGNAL") or procedure_row.get("VALUE") or "Procedure analysis loaded.")
             if procedure_row is not None
@@ -1352,7 +1352,7 @@ def _executive_command_summary_rows(board: pd.DataFrame, advisor_rows: pd.DataFr
     rows.append({
         "PRIORITY": safe_int(warehouse_row.get("PRIORITY"), 4) if warehouse_row is not None else 8,
         "AREA": "Warehouse advisor",
-        "STATE": str(warehouse_row.get("STATE") or "Review") if warehouse_row is not None else "On demand",
+        "STATE": str(warehouse_row.get("STATE") or "Review") if warehouse_row is not None else "Details available when needed",
         "CURRENT_SIGNAL": (
             str(warehouse_row.get("ADVISOR_SIGNAL") or warehouse_row.get("VALUE") or "Warehouse advisor loaded.")
             if warehouse_row is not None

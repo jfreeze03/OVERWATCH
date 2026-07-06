@@ -98,7 +98,7 @@ def connection_kwargs(args: argparse.Namespace) -> dict[str, Any]:
         "password": _env("SNOWFLAKE_PASSWORD", "SF_PASSWORD") or secrets.get("password"),
         "authenticator": _env("SNOWFLAKE_AUTHENTICATOR", "SF_AUTHENTICATOR") or secrets.get("authenticator"),
         "role": args.role or _env("SNOWFLAKE_ROLE", "SF_ROLE") or secrets.get("role") or "SNOW_SYSADMINS",
-        "warehouse": args.warehouse or _env("SNOWFLAKE_WAREHOUSE", "SF_WAREHOUSE") or secrets.get("warehouse") or "COMPUTE_WH",
+        "warehouse": args.warehouse or _env("SNOWFLAKE_WAREHOUSE", "SF_WAREHOUSE") or secrets.get("warehouse") or "WH_ALFA_OVERWATCH",
         "database": args.database or _env("SNOWFLAKE_DATABASE", "SF_DATABASE") or secrets.get("database") or "DBA_MAINT_DB",
         "schema": args.schema or _env("SNOWFLAKE_SCHEMA", "SF_SCHEMA") or secrets.get("schema") or "OVERWATCH",
         "login_timeout": args.login_timeout,

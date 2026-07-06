@@ -299,9 +299,9 @@ def _security_action_brief(summary, exceptions, meta: dict, company: str, enviro
                 "detail": "Loaded telemetry does not match the active company, environment, filters, or lookback.",
             }
         return {
-            "state": "Summary unavailable",
+            "state": "Loading current summary",
             "headline": "Security command brief is the entry summary.",
-            "detail": "Entry reads compact summary marts when available; load security evidence for current proof counts.",
+            "detail": "Entry reads compact summary marts when available; open security details for current proof counts.",
         }
 
     row = summary.iloc[0]
@@ -352,7 +352,7 @@ def _security_operating_snapshot(summary, meta: dict, company: str, environment:
             "loaded": False,
             "scope": str(company or "All"),
             "window": f"{safe_int(days, 30):d}d",
-            "evidence": "Summary unavailable",
+            "evidence": "Loading current summary",
             "focus": "Access",
         }
     row = summary.iloc[0]
@@ -370,7 +370,7 @@ def _render_security_operating_snapshot(snapshot: dict) -> None:
         render_shell_kpi_row((
             ("Scope", str(snapshot.get("scope") or "All")),
             ("Window", str(snapshot.get("window") or "30d")),
-            ("Telemetry", str(snapshot.get("evidence") or "Summary unavailable")),
+            ("Telemetry", str(snapshot.get("evidence") or "Loading current summary")),
         ))
         return
     render_shell_kpi_row((
@@ -399,10 +399,10 @@ def _render_security_overview_entry(summary, exceptions, meta: dict, company: st
         action_rows = _security_exception_strip_rows(summary, exceptions, meta, company, environment, days)
     else:
         render_shell_kpi_row((
-            ("Failed Logins", "Summary unavailable"),
-            ("Risky Grants", "Summary unavailable"),
-            ("Privilege Changes", "Summary unavailable"),
-            ("Shared DBs", "Summary unavailable"),
+            ("Failed Logins", "Loading current summary"),
+            ("Risky Grants", "Loading current summary"),
+            ("Privilege Changes", "Loading current summary"),
+            ("Shared DBs", "Loading current summary"),
         ))
         action_rows = [
             {
@@ -444,25 +444,25 @@ def _security_command_lanes(snapshot: dict) -> list[dict[str, str]]:
         return [
             {
                 "label": "Failed logins",
-                "value": "Summary unavailable",
+                "value": "Loading current summary",
                 "state": "Identity",
                 "detail": "Fast summary checks login spikes, unusual sources, and failed auth before live proof.",
             },
             {
                 "label": "MFA gaps",
-                "value": "Summary unavailable",
+                "value": "Loading current summary",
                 "state": "Access",
                 "detail": "Review active users without exposed MFA signal.",
             },
             {
                 "label": "Grant changes",
-                "value": "Summary unavailable",
+                "value": "Loading current summary",
                 "state": "Privilege",
                 "detail": "Admin grants, ownership, and future grants route here.",
             },
             {
                 "label": "Shared data",
-                "value": "Summary unavailable",
+                "value": "Loading current summary",
                 "state": "Exposure",
                 "detail": "Shares, external stages, and broad grants stay visible for review.",
             },
@@ -736,7 +736,7 @@ def _render_security_exceptions_gate(company: str, environment: str, days: int) 
                         proof_sql = st.session_state.get("security_posture_proof_sql") or {}
                         proof_sql["exceptions"] = exceptions_sql
                         st.session_state["security_posture_proof_sql"] = proof_sql
-                        st.info(f"Security summary unavailable from the fast summary; used bounded live account history. {format_snowflake_error(exc)}")
+                        st.info(f"Security summary is loading from the fast summary; used bounded live account history. {format_snowflake_error(exc)}")
                     except Exception as live_exc:
                         st.session_state.pop("security_posture_exceptions", None)
                         st.session_state["security_posture_exception_error"] = format_snowflake_error(live_exc)
@@ -828,7 +828,7 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
 
     summary_error = str(st.session_state.get("security_posture_summary_error", "") or "")
     if summary_error and not security_current:
-        defer_source_note(f"Fast security summary unavailable: {summary_error}")
+        defer_source_note(f"Fast security summary loading: {summary_error}")
 
     refresh_security_summary = bool(st.session_state.pop("security_posture_load_evidence", False))
     if refresh_security_summary:

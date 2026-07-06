@@ -73,7 +73,7 @@ def _render_cost_movement(summary: dict, *, company: str, environment: str, days
         ("Spend", _money(current_spend)),
         ("Movement", _format_delta_credits(summary, credit_price=credit_price)),
         ("30d Run Rate", _money(run_rate)),
-        ("Top Driver", str(summary.get("top_cost_driver") or "On demand")),
+        ("Top Driver", str(summary.get("top_cost_driver") or "Details available when needed")),
     ))
     cost_driver = _obs_rows(board, "COST_DRIVER").copy()
     if isinstance(cost_driver, pd.DataFrame) and not cost_driver.empty:

@@ -352,7 +352,7 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
     avg_7d_credits = safe_float(run_rate_row.get("AVG_DAILY_7D", 0))
     projected_30d_spend = credits_to_dollars(projected_30d_credits, credit_price)
     avg_7d_spend = credits_to_dollars(avg_7d_credits, credit_price)
-    run_rate_state = str(run_rate_row.get("RUN_RATE_STATE") or "On demand")
+    run_rate_state = str(run_rate_row.get("RUN_RATE_STATE") or "Details available when needed")
     if not projected_30d_spend and spend:
         projected_30d_spend = safe_float(spend) / max(int(days), 1) * 30
         avg_7d_spend = safe_float(spend) / max(int(days), 1)
@@ -386,7 +386,7 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
         "projected_30d_spend": projected_30d_spend,
         "avg_7d_spend": avg_7d_spend,
         "run_rate_state": run_rate_state,
-        "yoy_state": str(run_rate_row.get("YOY_STATE") or "On demand"),
+        "yoy_state": str(run_rate_row.get("YOY_STATE") or "Details available when needed"),
         "yoy_7d_pct": _nullable_float(run_rate_row, "YOY_7D_PCT") if _looks_like_frame(run_rate) and not run_rate.empty else None,
     }
 
@@ -397,49 +397,49 @@ def _cost_command_lanes(splash: dict, *, credit_price: float, days: int) -> list
         return [
             {
                 "label": "Credits / dollars",
-                "value": "On demand",
+                "value": "Details available when needed",
                 "state": "Metering",
                 "detail": "Refresh Cost loads official service spend or warehouse metering.",
             },
             {
                 "label": "Spend movement",
-                "value": "On demand",
+                "value": "Details available when needed",
                 "state": "Delta",
                 "detail": "Compares selected window to the prior window before tuning.",
             },
             {
                 "label": "30d run rate",
-                "value": "On demand",
+                "value": "Details available when needed",
                 "state": "Forecast",
                 "detail": "Projected burn appears after cost facts load.",
             },
             {
                 "label": "Cortex dollars",
-                "value": "On demand",
+                "value": "Details available when needed",
                 "state": "AI",
                 "detail": "AI usage uses the configured Cortex credit rate and fact rows.",
             },
             {
                 "label": "Top warehouse",
-                "value": "On demand",
+                "value": "Details available when needed",
                 "state": "Driver",
                 "detail": "Warehouse movement is ranked after metering telemetry loads.",
             },
             {
                 "label": "Cloud services",
-                "value": "On demand",
+                "value": "Details available when needed",
                 "state": "Ratio",
                 "detail": "Official service lens separates compute and cloud-services cost.",
             },
             {
                 "label": "Action queue",
-                "value": "On demand",
+                "value": "Details available when needed",
                 "state": "Savings",
                 "detail": "Measured fixes and measured value load from the queue.",
             },
             {
                 "label": "Measurement basis",
-                "value": "On demand",
+                "value": "Details available when needed",
                 "state": "Trust",
                 "detail": "Exact totals and allocated estimates stay labeled separately.",
             },

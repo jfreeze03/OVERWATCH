@@ -80,7 +80,7 @@ class AlertNativeCatalogTests(unittest.TestCase):
             "ALERT_KEY": "COST_TEST",
             "ALERT_OBJECT_NAME": "OVERWATCH_ALERT_TEST",
             "TARGET_ROUTE": "Cost & Contract",
-            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
             "SCHEDULE_TEXT": "60 MINUTE",
             "GENERATED_CREATE_SQL": "CREATE OR REPLACE ALERT OVERWATCH_ALERT_TEST ...",
             "GENERATED_DROP_SQL": "DROP ALERT IF EXISTS OVERWATCH_ALERT_TEST;",

@@ -1261,7 +1261,7 @@ class SharedMetricsTests(unittest.TestCase):
         self.assertIn("'NO DATABASE CONTEXT' AS ENVIRONMENT", sql_upper)
         self.assertIn("PRIVILEGED_ROLE_GRANTS", sql_upper)
         self.assertIn("OBJECT_PRIVILEGE_GRANTS", sql_upper)
-        self.assertIn("ALFA_EDW_PROD", sql_upper)
+        self.assertIn("ALFA_EDW_PRD", sql_upper)
         self.assertNotIn("GTU.TABLE_CATALOG", sql_upper)
 
     def test_grants_to_users_prefers_mart(self):

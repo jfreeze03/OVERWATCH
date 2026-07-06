@@ -674,7 +674,7 @@ def _render_ai_evidence_snapshot(evidence: dict) -> None:
             ("Telemetry", "Paste SQL"),
             ("Query ID", "Optional"),
             ("Operator Stats", "Optional"),
-            ("Cortex", "On demand"),
+            ("Cortex", "Details available when needed"),
         ))
         return
     render_shell_snapshot((

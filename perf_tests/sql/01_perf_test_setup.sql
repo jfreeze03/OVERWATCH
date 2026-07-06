@@ -4,11 +4,11 @@
 --   * Creates only PERF_TEST_* objects.
 --   * Full 5TB physical data generation is blocked unless explicitly enabled
 --     in the full-scale script.
---   * Use COMPUTE_WH by default because it is the app execution warehouse.
+--   * Use WH_ALFA_OVERWATCH by default because it is the app execution warehouse.
 
 USE DATABASE DBA_MAINT_DB;
 USE SCHEMA OVERWATCH;
-USE WAREHOUSE COMPUTE_WH;
+USE WAREHOUSE WH_ALFA_OVERWATCH;
 
 CREATE TABLE IF NOT EXISTS PERF_TEST_RUN_CONTROL (
     CONTROL_NAME        VARCHAR(100) PRIMARY KEY,
@@ -24,7 +24,7 @@ USING (
         ('DEFAULT_MODE', 'LIGHTWEIGHT_METADATA', 'STRING', 'Default mode creates metadata-scale proof plus bounded synthetic rows.'),
         ('MEDIUM_ROW_CAP', '5000000', 'NUMBER', 'Maximum generated rows for medium test mode without separate approval.'),
         ('FULL_5TB_ALLOWED', 'FALSE', 'BOOLEAN', 'Must be TRUE before running the physical 5TB script.'),
-        ('APP_WAREHOUSE', 'COMPUTE_WH', 'STRING', 'Warehouse that runs OVERWATCH Streamlit app code.'),
+        ('APP_WAREHOUSE', 'WH_ALFA_OVERWATCH', 'STRING', 'Warehouse that runs OVERWATCH Streamlit app code.'),
         ('MAX_ALLOWED_WAREHOUSE_SIZE', 'MEDIUM', 'STRING', 'Do not run performance generation on larger warehouses without DBA approval.'),
         ('REQUIRE_AUTO_SUSPEND_SECONDS', '600', 'NUMBER', 'Warehouse should auto-suspend at or below this value for tests.')
 ) src(CONTROL_NAME, CONTROL_VALUE, CONTROL_TYPE, NOTES)
@@ -76,7 +76,7 @@ MERGE INTO PERF_TEST_RISK_REGISTER tgt
 USING (
     SELECT * FROM VALUES
         ('PERF_COST_001', 'Cost', 'High', 'Full-scale physical data can create storage and compute cost if executed accidentally.', 'Full 5TB script is blocked by default and separated from lightweight generation.', 'DBA / FinOps'),
-        ('PERF_WH_001', 'Warehouse', 'High', 'Load tests can resume or keep COMPUTE_WH running longer than expected.', 'Validate warehouse size and auto-suspend before generation; prefer short bounded tests.', 'DBA'),
+        ('PERF_WH_001', 'Warehouse', 'High', 'Load tests can resume or keep WH_ALFA_OVERWATCH running longer than expected.', 'Validate warehouse size and auto-suspend before generation; prefer short bounded tests.', 'DBA'),
         ('PERF_CACHE_001', 'Result Cache', 'Medium', 'Repeated benchmark runs can look faster because Snowflake result cache is warm.', 'Run cold/warm phases separately and record QUERY_TAG/PERF_RUN_ID.', 'DBA Performance'),
         ('PERF_APP_001', 'Streamlit', 'Medium', 'Warehouse-runtime Streamlit starts a personal instance per viewer, which can increase load time.', 'Measure concurrent first-load latency and compare with warm reload latency.', 'DBA Platform')
 ) src(RISK_ID, RISK_AREA, RISK_LEVEL, RISK_DESCRIPTION, MITIGATION, OWNER)
@@ -104,7 +104,7 @@ DECLARE
     wh_state VARCHAR DEFAULT '';
     wh_auto_suspend NUMBER DEFAULT NULL;
 BEGIN
-    SHOW WAREHOUSES LIKE 'COMPUTE_WH';
+    SHOW WAREHOUSES LIKE 'WH_ALFA_OVERWATCH';
 
     SELECT
         COALESCE("size", ''),
@@ -119,14 +119,14 @@ BEGIN
     END IF;
 
     IF (UPPER(:wh_size) NOT IN ('X-SMALL', 'XSMALL', 'SMALL', 'MEDIUM')) THEN
-        RETURN 'BLOCKED: COMPUTE_WH is larger than MEDIUM. Current size=' || :wh_size;
+        RETURN 'BLOCKED: WH_ALFA_OVERWATCH is larger than MEDIUM. Current size=' || :wh_size;
     END IF;
 
     IF (:wh_auto_suspend IS NULL OR :wh_auto_suspend > 600) THEN
-        RETURN 'BLOCKED: COMPUTE_WH AUTO_SUSPEND must be <= 600 seconds for tests. Current=' || COALESCE(TO_VARCHAR(:wh_auto_suspend), 'NULL');
+        RETURN 'BLOCKED: WH_ALFA_OVERWATCH AUTO_SUSPEND must be <= 600 seconds for tests. Current=' || COALESCE(TO_VARCHAR(:wh_auto_suspend), 'NULL');
     END IF;
 
-    RETURN 'OK: COMPUTE_WH state=' || :wh_state || ', size=' || :wh_size || ', auto_suspend=' || TO_VARCHAR(:wh_auto_suspend);
+    RETURN 'OK: WH_ALFA_OVERWATCH state=' || :wh_state || ', size=' || :wh_size || ', auto_suspend=' || TO_VARCHAR(:wh_auto_suspend);
 END;
 $$;
 

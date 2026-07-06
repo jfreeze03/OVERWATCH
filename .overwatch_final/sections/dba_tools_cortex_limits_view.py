@@ -254,5 +254,5 @@ def render_cortex_ai_limits_tool(session, company: str) -> None:
             ("Approved AI role", "Required"),
             ("PUBLIC access", "Review"),
             ("Quota enforcement", "Dry-run first"),
-            ("Parameter review", "On demand"),
+            ("Parameter review", "Details available when needed"),
         ))

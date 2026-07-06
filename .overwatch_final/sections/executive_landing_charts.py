@@ -287,32 +287,32 @@ def _render_executive_observability_board(
             source="Executive summary facts",
             target_minutes=60,
             refresh_method="Scheduled data refresh",
-            live_fallback="On demand",
+            live_fallback="Details available when needed",
         )
         st.markdown("**Snowflake Observability Wall**")
         render_shell_kpi_row((
-            ("Spend", "On demand"),
-            ("Delta", "On demand"),
-            ("Cortex", "On demand"),
-            ("30d Forecast", "On demand"),
+            ("Spend", "Details available when needed"),
+            ("Delta", "Details available when needed"),
+            ("Cortex", "Details available when needed"),
+            ("30d Forecast", "Details available when needed"),
         ))
         render_shell_kpi_row((
-            ("Queries", "On demand"),
-            ("Avg Runtime", "On demand"),
-            ("P95 Runtime", "On demand"),
-            ("Remote Spill", "On demand"),
+            ("Queries", "Details available when needed"),
+            ("Avg Runtime", "Details available when needed"),
+            ("P95 Runtime", "Details available when needed"),
+            ("Remote Spill", "Details available when needed"),
         ))
         render_shell_kpi_row((
-            ("Critical / High", "On demand"),
-            ("Failed Queries", "On demand"),
-            ("Failed Tasks", "On demand"),
-            ("Open Actions", "On demand"),
+            ("Critical / High", "Details available when needed"),
+            ("Failed Queries", "Details available when needed"),
+            ("Failed Tasks", "Details available when needed"),
+            ("Open Actions", "Details available when needed"),
         ))
         render_shell_kpi_row((
-            ("Queue Time", "On demand"),
-            ("Avg/day", "On demand"),
-            ("Storage", "On demand"),
-            ("Freshness", "On demand"),
+            ("Queue Time", "Details available when needed"),
+            ("Avg/day", "Details available when needed"),
+            ("Storage", "Details available when needed"),
+            ("Freshness", "Details available when needed"),
         ))
         _render_executive_command_summary(pd.DataFrame(), advisor_rows, days=int(days))
         _render_executive_pressure_board(_executive_pressure_placeholder_rows(), advisor_rows=advisor_rows)
@@ -370,7 +370,7 @@ def _render_executive_observability_board(
         else (
             f"{int(days)}-day view: cost, Cortex, query runtime, queue pressure, spill, task health, and storage. "
             f"{loaded_advisor_count:,} loaded advisor lane(s) are included from current session state. "
-            "Alerts and action-queue counts remain On demand unless their secure app tables are available to this role. "
+            "Alerts and action-queue counts remain Details available when needed unless their secure app tables are available to this role. "
             "Detailed telemetry stays in the specialist sections."
         )
     )
@@ -387,7 +387,7 @@ def _render_executive_observability_board(
         source="Executive summary facts",
         target_minutes=60,
         refresh_method="Scheduled data refresh",
-        live_fallback="On demand",
+        live_fallback="Details available when needed",
     )
     st.markdown("**Snowflake Observability Wall**")
     render_shell_kpi_row((
@@ -398,9 +398,9 @@ def _render_executive_observability_board(
     ))
     render_shell_kpi_row((
         ("Queries", _obs_count_label(board, "Total Queries")),
-        ("Avg Runtime", _format_seconds(avg_runtime) if _obs_metric_loaded(board, "Avg Runtime") else "On demand"),
-        ("P95 Runtime", _format_seconds(p95_runtime) if _obs_metric_loaded(board, "P95 Runtime") else "On demand"),
-        ("Remote Spill", _format_gb(spill_gb) if _obs_metric_loaded(board, "Remote Spill") else "On demand"),
+        ("Avg Runtime", _format_seconds(avg_runtime) if _obs_metric_loaded(board, "Avg Runtime") else "Details available when needed"),
+        ("P95 Runtime", _format_seconds(p95_runtime) if _obs_metric_loaded(board, "P95 Runtime") else "Details available when needed"),
+        ("Remote Spill", _format_gb(spill_gb) if _obs_metric_loaded(board, "Remote Spill") else "Details available when needed"),
     ))
     render_shell_kpi_row((
         ("Critical / High", _obs_count_label(board, "Critical High Alerts")),
@@ -409,10 +409,10 @@ def _render_executive_observability_board(
         ("Open Actions", _obs_count_label(board, "Open Actions")),
     ))
     render_shell_kpi_row((
-        ("Queue Time", _format_seconds(queue_seconds) if _obs_metric_loaded(board, "Queue Time") else "On demand"),
-        ("30d Forecast", _money(month_end_forecast) if _obs_metric_loaded(board, "Credits Used") else "On demand"),
-        ("Avg/day", _money(avg_daily_spend) if _obs_metric_loaded(board, "Credits Used") else "On demand"),
-        ("Storage", f"{safe_float(storage_tb):,.2f} TB / {_money(storage_cost)}" if _obs_metric_loaded(board, "Storage") else "On demand"),
+        ("Queue Time", _format_seconds(queue_seconds) if _obs_metric_loaded(board, "Queue Time") else "Details available when needed"),
+        ("30d Forecast", _money(month_end_forecast) if _obs_metric_loaded(board, "Credits Used") else "Details available when needed"),
+        ("Avg/day", _money(avg_daily_spend) if _obs_metric_loaded(board, "Credits Used") else "Details available when needed"),
+        ("Storage", f"{safe_float(storage_tb):,.2f} TB / {_money(storage_cost)}" if _obs_metric_loaded(board, "Storage") else "Details available when needed"),
     ))
     _render_executive_command_summary(board, advisor_rows, days=int(days))
     _render_executive_pressure_board(board, advisor_rows=advisor_rows)
@@ -542,7 +542,7 @@ def _render_executive_operating_snapshot(
             ("Scope", company),
             ("Window", f"{int(days)}d"),
             ("Rate", f"${safe_float(credit_price):,.2f}"),
-            ("Telemetry", "On demand"),
+            ("Telemetry", "Details available when needed"),
         )
     else:
         metrics = (

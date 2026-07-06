@@ -356,16 +356,16 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(compact_environment_label("DEV_ALL"), "All dev")
         self.assertEqual(compact_environment_label("ALFA_EDW_DEV"), "ALFA_EDW_DEV")
         self.assertEqual(scope_label("Trexis", "DEV_ALL"), "Trexis / All dev")
-        self.assertEqual(evidence_label({}, keys), "On demand")
-        self.assertEqual(evidence_label({"loaded_frame": None}, keys), "On demand")
+        self.assertEqual(evidence_label({}, keys), "Details available when needed")
+        self.assertEqual(evidence_label({"loaded_frame": None}, keys), "Details available when needed")
         self.assertEqual(evidence_label({"loaded_error": ""}, keys), "Loaded")
         self.assertEqual(evidence_label({"loaded_frame": object()}, keys), "Loaded")
         self.assertEqual(action_state_label({}, keys), "Ready")
         self.assertEqual(action_state_label({"loaded_frame": object()}, keys), "Loaded")
-        self.assertEqual(evidence_caption({}, keys, "Load on demand."), "Load on demand.")
+        self.assertEqual(evidence_caption({}, keys, "Explicit action."), "Explicit action.")
         self.assertIn(
             "continue from the saved status",
-            evidence_caption({"loaded_frame": object()}, keys, "Load on demand."),
+            evidence_caption({"loaded_frame": object()}, keys, "Explicit action."),
         )
 
     def test_sidebar_navigation_requests_section_detail_state(self):
@@ -810,7 +810,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Open Advanced Cost Tools", full_workspace_text)
         self.assertEqual(cost_contract_contracts.ADVANCED_COST_TOOL_MODULES["Storage & Retention"], "sections.storage_monitor")
         self.assertIn('"Storage & Retention": "sections.storage_monitor"', contract_text)
-        self.assertIn('"Load Cost Evidence"', cost_contract_surface)
+        self.assertIn('"Open Cost Drivers"', cost_contract_surface)
         self.assertIn("render_section_command_brief", full_workspace_text)
         first_paint_contracts_text = (APP_ROOT / "sections" / "first_paint_contracts.py").read_text(encoding="utf-8")
         self.assertIn("Entry may read compact cost summary marts", first_paint_contracts_text)
@@ -1092,7 +1092,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         manifest = (APP_ROOT / "snowflake.yml").read_text(encoding="utf-8")
         root_manifest = (ROOT / "snowflake.yml").read_text(encoding="utf-8")
         self.assertIn("definition_version: 2", manifest)
-        self.assertIn("query_warehouse: COMPUTE_WH", manifest)
+        self.assertIn("query_warehouse: WH_ALFA_OVERWATCH", manifest)
         self.assertNotIn("execute_as:", manifest)
         self.assertIn("main_file: app.py", manifest)
         self.assertIn("- app.py", manifest)
@@ -2437,11 +2437,11 @@ class NavigationIntegrityTests(unittest.TestCase):
             view="Security Overview",
             state="Ready",
             headline="Security is ready",
-            detail="Evidence loads on demand.",
+            detail="Evidence loads after explicit action.",
             metrics=(("Window", "30 days"),),
             snapshot=(("Scope", "ALFA / PROD"),),
             expected_lanes=("Logins", "Grants"),
-            load_cta="Load Security Evidence",
+            load_cta="Open Security Details",
             no_query_note="Entry may read compact summary marts.",
         )
         with patch.object(shell_helpers, "render_first_paint_summary_shell") as render_shell, patch.object(
@@ -2457,7 +2457,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn(("Window", "30 days"), kwargs["metrics"])
         self.assertIn(("Scope", "ALFA / PROD"), kwargs["snapshot"])
         self.assertIn(("Expected lanes", "Logins, Grants"), kwargs["snapshot"])
-        self.assertIn(("Next safe action", "Load Security Evidence"), kwargs["snapshot"])
+        self.assertIn(("Next safe action", "Open Security Details"), kwargs["snapshot"])
         caption.assert_called_once_with("Entry may read compact summary marts.")
 
     def test_workflow_helpers_keep_landing_pages_compact(self):
@@ -2616,8 +2616,8 @@ class NavigationIntegrityTests(unittest.TestCase):
             "Decision Workspace",
             "Load Morning Cockpit",
             "Load Active Alerts",
-            "Load Cost Evidence",
-            "Load Security Evidence",
+            "Open Cost Drivers",
+            "Open Security Details",
             "Operator Case Markdown",
         ):
             with self.subTest(token=token):

@@ -2119,7 +2119,7 @@ def _render_live_incident() -> None:
     source_errors = st.session_state.get("contention_live_source_errors") or {}
 
     render_shell_snapshot((
-        ("Captured", str(meta.get("captured_at") or "On demand")),
+        ("Captured", str(meta.get("captured_at") or "Details available when needed")),
         ("Locks", f"{len(locks):,}"),
         ("Queries", f"{len(live_queries):,}"),
         ("Actions", f"{len(decision):,}"),

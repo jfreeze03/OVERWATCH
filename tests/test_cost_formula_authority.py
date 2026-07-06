@@ -54,7 +54,7 @@ class CostFormulaAuthorityTests(unittest.TestCase):
         frame = pd.DataFrame(
             {
                 "WAREHOUSE_ID": [1, 0, 2, None],
-                "WAREHOUSE_NAME": ["COMPUTE_WH", "PSEUDO", "", "NO_ID"],
+                "WAREHOUSE_NAME": ["WH_ALFA_OVERWATCH", "PSEUDO", "", "NO_ID"],
                 "CREDITS_USED_COMPUTE": ["2.0", "100", "50", "70"],
                 "CREDITS_USED_CLOUD_SERVICES": ["0.5", "10", "5", "7"],
             }

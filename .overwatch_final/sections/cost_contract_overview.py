@@ -103,5 +103,5 @@ def _cost_executive_decision_stack(summary: dict, action_summary: dict) -> pd.Da
     ]
     frame = pd.DataFrame(rows)
     if spend <= 0 and projected <= 0 and cortex <= 0 and not open_actions:
-        frame["SIGNAL"] = "On demand"
+        frame["SIGNAL"] = "Details available when needed"
     return frame

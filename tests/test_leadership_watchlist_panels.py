@@ -30,7 +30,7 @@ class LeadershipWatchlistPanelTests(unittest.TestCase):
                 {
                     "USAGE_DATE": "2026-07-05",
                     "SERVICE_TYPE": "WAREHOUSE",
-                    "WAREHOUSE_NAME": "COMPUTE_WH",
+                    "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
                     "CREDITS_USED": 12.0,
                     "ESTIMATED_COST_USD": 26.4,
                     "UPDATED_AT": "2026-07-05 12:00:00",
@@ -41,7 +41,7 @@ class LeadershipWatchlistPanelTests(unittest.TestCase):
             [
                 {
                     "CONTRIBUTOR_TYPE": "WAREHOUSE",
-                    "CONTRIBUTOR_NAME": "COMPUTE_WH",
+                    "CONTRIBUTOR_NAME": "WH_ALFA_OVERWATCH",
                     "CURRENT_24H_CREDITS": 12,
                     "PRIOR_24H_CREDITS": 8,
                     "CREDIT_DELTA": 4,
@@ -136,7 +136,7 @@ class LeadershipWatchlistPanelTests(unittest.TestCase):
                     "FAILED_QUERY_COUNT": 6,
                     "TOTAL_QUERY_COUNT": 100,
                     "FAILURE_RATE": 0.06,
-                    "WAREHOUSE_NAME": "COMPUTE_WH",
+                    "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
                 }
             ]
         )

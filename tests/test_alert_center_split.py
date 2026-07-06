@@ -317,8 +317,8 @@ class AlertCenterSplitTests(unittest.TestCase):
         html.assert_called_once()
         spec = render_shell.call_args.args[0]
         self.assertEqual(spec.section, "Alert Center")
-        self.assertEqual(spec.state, "Load on demand")
-        self.assertIn(("Critical / High", "Summary unavailable"), spec.metrics)
+        self.assertEqual(spec.state, "Explicit action")
+        self.assertIn(("Critical / High", "Loading current summary"), spec.metrics)
         self.assertIn(("Window", "7 days / 200 rows"), spec.snapshot)
         self.assertEqual(spec.view, "Active Alerts")
         self.assertEqual(spec.load_cta, "Load Active Alerts")
@@ -351,9 +351,9 @@ class AlertCenterSplitTests(unittest.TestCase):
     def test_alert_center_first_paint_summary_cold_state_is_unavailable(self):
         summary = alert_center._alert_center_first_paint_summary(None, "Active Alerts")
 
-        self.assertEqual(summary["critical_high"], "Summary unavailable")
-        self.assertEqual(summary["overdue"], "Summary unavailable")
-        self.assertEqual(summary["open_queue"], "Summary unavailable")
+        self.assertEqual(summary["critical_high"], "Loading current summary")
+        self.assertEqual(summary["overdue"], "Loading current summary")
+        self.assertEqual(summary["open_queue"], "Loading current summary")
         self.assertEqual(summary["top_lane"], "Selected view")
         self.assertEqual(summary["freshness"], "Summary mart unavailable")
 

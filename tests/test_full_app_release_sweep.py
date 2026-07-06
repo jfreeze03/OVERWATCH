@@ -41,7 +41,7 @@ def _command_brief_html(section: str) -> str:
     return (
         f"<section class='ow-decision-workspace-marker'>"
         f"<div class='ow-kit-command-brief'><h1>{section}</h1>"
-        "<p>Packet-backed first paint. Evidence loads on request.</p></div></section>"
+        "<p>Packet-backed first paint. Details available when needed.</p></div></section>"
     )
 
 
@@ -120,7 +120,7 @@ def _passing_payload(root: Path) -> dict:
             "rendered": True,
             "text": "Setup Health",
         },
-        {**_producer_fields("Packet Missing", "Fallback"), "rendered": True, "text": "Summary pending"},
+        {**_producer_fields("Packet Missing", "Fallback"), "rendered": True, "text": "Refresh required"},
         {**_producer_fields("Packet Closest Fallback", "Fallback"), "rendered": True, "text": "Latest available"},
         {**_producer_fields("Snowflake Unavailable", "Fallback"), "rendered": True, "text": "Snowflake unavailable"},
         {**_producer_fields("Permission Denied", "Fallback"), "rendered": True, "text": "Permission needed"},

@@ -155,7 +155,7 @@ def _load_task_ops_scope(
     st.session_state[f"{ttl_prefix}_sources"] = {
         "inventory": inventory_source,
         "history": history_source,
-        "query_detail": query_detail_source if not query_details.empty else "On demand",
+        "query_detail": query_detail_source if not query_details.empty else "Details available when needed",
         "critical_path": critical_path_source,
     }
     return summary, exceptions, latest, inventory, critical_paths, recovery_sla, not query_details.empty

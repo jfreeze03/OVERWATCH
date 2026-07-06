@@ -29,7 +29,7 @@ operations: detect, route, act, refresh telemetry, and keep an audit trail.
 | Command Center | DBA Control Room | Morning triage, top priority brief, open work, live status, and action queue routing. |
 | Command Center | Alert Center | Alert rules, alert history, delivery preparation, digest telemetry, and alert health. |
 | Command Center | Account Health | Account-level exception checklist, service health, source freshness, and DBA next actions. |
-| Financial Control | Cost & Contract | Cost overview, warehouse/user/role attribution, Cortex spend, contract pacing, savings telemetry, and RCA narrative. |
+| Financial Control | Cost Intelligence | Cost overview, warehouse/user/role attribution, Cortex spend, contract pacing, savings telemetry, and RCA narrative. |
 | Operations | Workload Operations | Live query/task/procedure status, task graph health, stored procedure analysis, performance indicators, and errors. |
 | Operations | Warehouse Health | Warehouse pressure, queue/spill/latency telemetry, setting review, resize/suspend/resume guardrails, and post-change checks. |
 | Security | Security Posture | MFA, login posture, role/grant posture, dormant/high-risk access, sharing exposure, and security telemetry. |
@@ -37,6 +37,28 @@ operations: detect, route, act, refresh telemetry, and keep an audit trail.
 
 Legacy bookmarks and saved views may still redirect to the current sections, but
 production documentation and navigation should use only the names above.
+
+## Metric Catalog
+
+Product-facing metric labels, definitions, thresholds, and recommended actions
+are governed by `.overwatch_final/metrics/metric_registry.py` and reviewed in
+`docs/METRIC_CATALOG_REVIEW.md`. The catalog standardizes queue terminology as
+`Queries Waiting`, source-health terminology as `Source Freshness`, and action
+terminology as `Open Work Items`. Owner-routing coverage and unassigned-owner
+counts are not daily KPIs; they remain route/action context only.
+
+## Mart-Backed First Paint
+
+The six primary sections render from compact Decision packet marts on first
+paint. A rendered section must show the actual data state instead of a generic
+placeholder: current data, stale data, no rows for the selected scope, refresh
+required, setup required, connection unavailable, or query failed. The shared
+state model lives in `.overwatch_final/utils/data_state.py`, and the mart
+readiness check is `snowflake/validation/validate_mart_first_paint_readiness.sql`.
+
+Core KPIs should render packet values when rows exist. Row-level evidence,
+Cost drivers, Security details, Query Investigation, exports, and live proof
+remain explicit-action workflows.
 
 ## Admin Role Access
 
@@ -96,7 +118,7 @@ into production or development.
 
 The Snowflake setup file creates the OVERWATCH database, schema, tables,
 procedures, tasks, and dedicated app warehouse. The Streamlit app runs on
-`COMPUTE_WH`. The current mart task graph runs on `COMPUTE_WH`.
+`WH_ALFA_OVERWATCH`. The current mart task graph runs on `WH_ALFA_OVERWATCH`.
 
 Core mart facts include:
 

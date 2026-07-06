@@ -36,7 +36,7 @@ class CostContractAdvisorPanelTests(unittest.TestCase):
             "SEVERITY": "High",
             "CLOSURE_STATE": "Open cost action",
             "CATEGORY": "Cost",
-            "ENTITY_NAME": "COMPUTE_WH",
+            "ENTITY_NAME": "WH_ALFA_OVERWATCH",
             "OWNER": "DBA",
         }])
 
@@ -64,7 +64,7 @@ class CostContractAdvisorPanelTests(unittest.TestCase):
         from sections import cost_contract_advisor_panels
 
         options = pd.DataFrame([{
-            "DETAIL_LABEL": "High | Review right-size or suspend policy | COMPUTE_WH",
+            "DETAIL_LABEL": "High | Review right-size or suspend policy | WH_ALFA_OVERWATCH",
             "SEVERITY": "High",
             "ACTION_TYPE": "Review right-size or suspend policy",
             "WORKFLOW_ROUTE": "Cost by Warehouse",

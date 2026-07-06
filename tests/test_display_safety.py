@@ -53,7 +53,7 @@ class DisplaySafetyTests(unittest.TestCase):
     def test_clean_display_text_preserves_business_operator_labels(self):
         from utils.display_safety import clean_display_text
 
-        self.assertEqual(clean_display_text("Load Security Evidence"), "Load Security Evidence")
+        self.assertEqual(clean_display_text("Open Security Details"), "Open Security Details")
         self.assertEqual(clean_display_text("Owner"), "Owner")
         self.assertEqual(clean_display_text("Owner route"), "Owner route")
 
@@ -79,6 +79,15 @@ class DisplaySafetyTests(unittest.TestCase):
         cleaned = clean_display_text("Approval proof required before rollout.")
         self.assertNotIn("proof", cleaned.lower())
         self.assertIn("telemetry", cleaned.lower())
+
+    def test_clean_display_text_hides_daily_source_health_diagnostics(self):
+        from utils.display_safety import clean_display_text
+
+        raw = (
+            "Required Decision Brief source unavailable | Oldest required source age 552 minutes; "
+            "target 60 minutes | Requested: ALFA / ALL / 7 days"
+        )
+        self.assertEqual(clean_display_text(raw), "Loading freshness")
 
 
 if __name__ == "__main__":

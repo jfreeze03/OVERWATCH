@@ -284,7 +284,7 @@ def _metric_availability_state(metric: object, semantic: MetricSemantic | None, 
     if state:
         return state
     if semantic is not None:
-        return "Billing reconciliation pending" if semantic.source_family == "account_billing" else "Summary unavailable"
+        return "Billing reconciliation pending" if semantic.source_family == "account_billing" else "Loading current summary"
     return "Available"
 
 
@@ -493,7 +493,7 @@ def _fallback_view(brief: object, source_mode: str, *, evidence_action: object |
         return None
     scope = f"{getattr(brief, 'company', '')} / {getattr(brief, 'environment', '')} / {getattr(brief, 'window_label', '')}"
     offline = source_mode == "offline"
-    title = "Summary pending"
+    title = "Refresh required"
     message = (
         "Connection unavailable. Retry after the source is available or open Setup Health."
         if offline
@@ -503,7 +503,7 @@ def _fallback_view(brief: object, source_mode: str, *, evidence_action: object |
         mode=source_mode,
         title=title,
         message=message,
-        recovery_label="Initialize summaries",
+        recovery_label="Refresh summary",
         technical_summary=_source_technical_summary(brief),
         can_initialize=not offline,
         can_show_evidence=evidence_action is not None,

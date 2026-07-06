@@ -28,7 +28,7 @@ from sections.task_management_sql import *
 
 def render_task_execute_task(session) -> None:
     st.subheader("Execute Task On-Demand")
-    st.caption("Select and run a task on demand. Ensure dependencies are met before running.")
+    st.caption("Select and run a task when needed. Ensure dependencies are met before running.")
     st.caption("Admin action audit logging is optional and owned by the DBA team.")
     exec_context = _current_execution_context(session)
     st.caption(

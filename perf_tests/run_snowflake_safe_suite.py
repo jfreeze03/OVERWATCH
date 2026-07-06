@@ -48,7 +48,7 @@ def connection_kwargs(args: argparse.Namespace) -> dict:
         "user": env_value("SNOWFLAKE_USER", "SF_USER"),
         "password": env_value("SNOWFLAKE_PASSWORD", "SF_PASSWORD"),
         "role": env_value("SNOWFLAKE_ROLE", "SF_ROLE"),
-        "warehouse": args.warehouse or env_value("SNOWFLAKE_WAREHOUSE", "SF_WAREHOUSE") or "COMPUTE_WH",
+        "warehouse": args.warehouse or env_value("SNOWFLAKE_WAREHOUSE", "SF_WAREHOUSE") or "WH_ALFA_OVERWATCH",
         "database": args.database or env_value("SNOWFLAKE_DATABASE", "SF_DATABASE") or "DBA_MAINT_DB",
         "schema": args.schema or env_value("SNOWFLAKE_SCHEMA", "SF_SCHEMA") or "OVERWATCH",
         "client_session_keep_alive": False,

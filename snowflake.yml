@@ -18,7 +18,7 @@ entities:
     title: "OVERWATCH - Snowflake DBA Monitor"
     comment: "DBA monitoring app for ALFA Insurance"
 
-    query_warehouse: COMPUTE_WH
+    query_warehouse: WH_ALFA_OVERWATCH
     compute_pool: SYSTEM_COMPUTE_POOL_CPU
     runtime_name: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11
     main_file: app.py

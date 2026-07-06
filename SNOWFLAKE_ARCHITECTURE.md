@@ -11,9 +11,9 @@ uses the mart first and requests live metadata only where immediacy matters.
 | Layer | Object or path | Purpose |
 |---|---|---|
 | Streamlit app | `.overwatch_final/app.py` | User interface, navigation, filters, section routing. |
-| App runtime warehouse | `COMPUTE_WH` | Approved current Streamlit execution warehouse until a dedicated OVERWATCH warehouse is approved. |
-| App resource monitor | `COMPUTE_WH_RM` | Runtime cost guardrail. |
-| Mart task warehouse | `COMPUTE_WH` | Approved current scheduled mart refresh warehouse. |
+| App runtime warehouse | `WH_ALFA_OVERWATCH` | Approved current Streamlit execution warehouse until a dedicated OVERWATCH warehouse is approved. |
+| App resource monitor | `WH_ALFA_OVERWATCH_RM` | Runtime cost guardrail. |
+| Mart task warehouse | `WH_ALFA_OVERWATCH` | Approved current scheduled mart refresh warehouse. |
 | Snowflake setup | `snowflake/OVERWATCH_MART_SETUP.sql` | Creates database, schema, tables, procedures, tasks, and seed rows. |
 | Local tests | `tests/` | Formula, navigation, admin, scope, and regression coverage. |
 | Performance tests | `perf_tests/` | HTTP, live concurrency, and section smoke checks. |
@@ -31,6 +31,19 @@ Snowflake account views
 Live Snowflake views are still used for real-time needs, especially current
 query, task, warehouse, and security posture checks. Any live view should be
 labeled or designed with its freshness limits in mind.
+
+## First-Paint Readiness States
+
+App entry reads compact marts, not broad Account Usage scans. Each primary
+section classifies its first-paint packet as loaded current, loaded stale, no
+rows for selected scope, setup required, refresh required, connection
+unavailable, or query failed. `snowflake/validation/validate_mart_first_paint_readiness.sql`
+reports the source object, row count, latest snapshot, freshness, target
+freshness, and mapped state for every primary section source.
+
+Missing current rows should point operators to refresh/setup validation.
+Missing objects should point to setup. Empty scoped results should show a
+clean no-rows state without hiding the rest of navigation.
 
 ## Core Sources
 
@@ -132,6 +145,15 @@ Sections should load in this order:
 
 Heavy tables, schema compare, source-health inventories, and deep diagnostic
 panels should stay behind explicit load buttons.
+
+## Metric Catalog
+
+`.overwatch_final/metrics/metric_registry.py` is the app-side catalog for
+product metric labels, plain-English calculations, thresholds, tooltips, and
+owning workflows. It does not store raw SQL bodies or create Snowflake objects.
+The Snowflake command-brief metric rows use the same product labels so packet
+refresh does not reintroduce deleted owner-routing metrics or older queue
+wording.
 
 ## Production Change Rules
 

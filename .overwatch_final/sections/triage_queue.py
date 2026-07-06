@@ -129,17 +129,17 @@ def build_mission_control_items(
             severity="High" if risk_count >= 20 else "Elevated" if risk_count else "Ready",
             signal=f"{failed_logins:,} failed logins; {mfa_gaps:,} MFA gaps; {grants:,} recent grants",
             evidence="Loaded security summary is available in session.",
-            next_action="Open Failed Logins / Risky Grants or load security evidence.",
+            next_action="Open Failed Logins / Risky Grants or open security details.",
             freshness=str(security_meta.get("loaded_at") or "Loaded security session"),
         ))
 
     if not items:
         items.append(_queue_item(
             section="Mission Control",
-            severity="On demand",
+            severity="Details available when needed",
             signal=f"No loaded cross-section evidence for {company} / {environment}",
             evidence="The shell is intentionally query-free on first paint.",
-            next_action="Start with Load Active Alerts, load cost evidence, or load security evidence.",
+            next_action="Start with Load Active Alerts, Open Cost Drivers, or Open Security Details.",
             freshness="Not loaded",
         ))
 

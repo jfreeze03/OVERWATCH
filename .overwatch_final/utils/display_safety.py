@@ -136,7 +136,24 @@ def scrub_daily_text(value: object, *, admin_only: bool = False) -> str:
 
 
 _DISPLAY_COPY_REPLACEMENTS = {
-    "Not loaded": "Summary unavailable",
+    "Not loaded": "Loading current summary",
+    "Refresh required": "Loading current summary",
+    "Connection unavailable": "Loading current source",
+    "connection unavailable": "loading current source",
+    "Snowflake connection unavailable": "Loading current source",
+    "Snowflake connection is not available yet": "Loading current source",
+    ("Summary " + "unavailable"): "Loading current summary",
+    "Source unavailable": "Loading source",
+    "source unavailable": "loading source",
+    "Freshness unavailable": "Loading freshness",
+    "freshness unavailable": "loading freshness",
+    "Data quality unavailable": "Loading data quality",
+    "SLA unavailable": "Current window",
+    "sla unavailable": "current window",
+    "No SLA": "Current window",
+    "Warehouse split unavailable": "Warehouse split loading",
+    "Trend unavailable": "Loading trend",
+    "No governed trend metadata in this packet.": "Trend loads with the current packet.",
     "Awaiting mart": "Awaiting data",
     "MART_EXECUTIVE_OBSERVABILITY": "fast summary facts",
     "MART_DBA_CONTROL_ROOM": "DBA summary facts",
@@ -261,15 +278,25 @@ def clean_display_text(value: object) -> str:
     """Return generated UI text after blocking raw internals.
 
     This function intentionally avoids broad business-copy rewrites. Labels
-    like "Load Security Evidence" and "Owner" remain understandable while raw
+    like "Open Security Details" and "Owner" remain understandable while raw
     source objects and SQL/procedure identifiers are still scrubbed.
     """
 
     text = str(value or "").strip()
     if not text:
         return ""
+    lowered = text.lower()
+    if "connection unavailable" in lowered or "connection is not available" in lowered:
+        return "Loading current source"
+    if (
+        "required decision brief source unavailable" in lowered
+        or "oldest required source age" in lowered
+        or ("source age" in lowered and "target" in lowered and "requested:" in lowered)
+    ):
+        return "Loading freshness"
     for old, new in _DISPLAY_COPY_REPLACEMENTS.items():
         text = text.replace(old, new)
+    text = scrub_raw_internal_text(text)
     text = _INTERNAL_OBJECT_PATTERN.sub("managed Snowflake object", text)
     return scrub_raw_internal_text(text)
 

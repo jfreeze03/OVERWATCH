@@ -147,7 +147,7 @@ class CostContractAdvisorTests(unittest.TestCase):
         summary, board = _build_cost_advisor_board(
             efficiency_summary=None,
             warehouse_efficiency=pd.DataFrame({
-                "WAREHOUSE_NAME": ["COMPUTE_WH"],
+                "WAREHOUSE_NAME": ["WH_ALFA_OVERWATCH"],
                 "COST_USD": [280.0],
                 "QUEUE_SECONDS": [1250.0],
                 "REMOTE_SPILL_GB": [14.5],

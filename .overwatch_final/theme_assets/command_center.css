@@ -814,7 +814,7 @@
     min-width: 0;
     padding-top: 0.15rem;
 }
-.ow-cc-link-action {
+.ow-cc-context-note {
     margin-top: 0.7rem;
     color: var(--accent);
     font-size: 0.75rem;
@@ -1185,7 +1185,7 @@
     stroke: rgba(126,220,255,0.22);
     stroke-width: 2;
 }
-.ow-lw-drill {
+.ow-lw-context {
     color: var(--accent);
     font-size: 0.72rem;
     font-weight: 760;

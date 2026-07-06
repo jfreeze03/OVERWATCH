@@ -40,7 +40,7 @@ class CostContractSplitTests(unittest.TestCase):
         self.assertIn("FACT_COST_INCIDENT_TIMELINE", sql)
         self.assertIn("SP_OVERWATCH_REFRESH_COST_MONITORING", sql)
         self.assertIn("OVERWATCH_COST_MONITORING_REFRESH", sql)
-        self.assertIn("WAREHOUSE = COMPUTE_WH", sql)
+        self.assertIn("WAREHOUSE = WH_ALFA_OVERWATCH", sql)
 
     def test_price_helpers_preserve_session_state_fallbacks(self):
         from sections import cost_contract_helpers

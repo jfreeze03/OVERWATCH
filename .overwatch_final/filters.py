@@ -252,7 +252,7 @@ def render_global_environment_control(active_company: str, *, label_visibility: 
             "Trexis PROD uses _PRD databases; All DEV/SIT uses _DEV and _SIT."
             if str(active_company).upper() == "TREXIS"
             else (
-                "Splits ALFA_EDW_PROD from DEV/SAN/PHX/SEA/SIT. "
+                "Splits ALFA_EDW_PRD from DEV/SAN/PHX/SEA/SIT. "
                 "Cost split is allocated by query database when warehouses are shared."
             )
         ),

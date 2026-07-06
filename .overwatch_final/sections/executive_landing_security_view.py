@@ -72,7 +72,7 @@ def _render_security_risk(summary: dict, *, snapshot: dict | None, days: int) ->
         )
     render_shell_snapshot((
         ("Critical / High", f"{safe_int(summary.get('critical_high_alerts')):,}"),
-        ("Security Alerts", f"{len(security_alerts):,}" if not security_alerts.empty else "On demand"),
+        ("Security Alerts", f"{len(security_alerts):,}" if not security_alerts.empty else "Details available when needed"),
         ("Review Route", "Security Monitoring"),
         ("Action", "Investigate owner gaps"),
     ))

@@ -30,7 +30,7 @@ class AccountUsageQueryFacadeTests(unittest.TestCase):
                 "ALL",
                 "2026-06-28",
                 "2026-07-05",
-                warehouse="COMPUTE_WH",
+                warehouse="WH_ALFA_OVERWATCH",
                 limit=999,
             )
 
@@ -38,7 +38,7 @@ class AccountUsageQueryFacadeTests(unittest.TestCase):
         call = captured[0]
         sql = str(call["sql"])
         self.assertIn("FROM V_QUERY_DAILY_SUMMARY", sql)
-        self.assertIn("TOP_WAREHOUSE_NAME = 'COMPUTE_WH'", sql)
+        self.assertIn("TOP_WAREHOUSE_NAME = 'WH_ALFA_OVERWATCH'", sql)
         self.assertIn("LIMIT 200", sql)
         self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE", sql)
         self.assertNotIn("SELECT *", sql.upper())

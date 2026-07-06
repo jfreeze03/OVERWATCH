@@ -1483,7 +1483,7 @@ class RuntimeValidationHarness:
                 df = pd.DataFrame([{
                     "QUERY_ID": "01abc",
                     "USER_NAME": "APP_USER",
-                    "WAREHOUSE_NAME": "COMPUTE_WH",
+                    "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
                     "EXECUTION_STATUS": "SUCCESS",
                     "START_TIME": "2026-06-27T12:00:00",
                     "ELAPSED_SEC": 1.2,

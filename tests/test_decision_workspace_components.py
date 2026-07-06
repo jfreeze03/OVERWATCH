@@ -23,7 +23,7 @@ class DecisionWorkspaceComponentsTests(unittest.TestCase):
             metric_cells=(
                 SimpleNamespace(label="Total Spend", value="$12.4K", detail="MART_COST_DAILY"),
                 SimpleNamespace(label="Cortex AI Spend", value="$430", detail="FACT_CORTEX_DAILY", tone="cortex"),
-                SimpleNamespace(label="Open Actions", value="3", detail="Evidence loads on request"),
+                SimpleNamespace(label="Open Actions", value="3", detail="Details available when needed"),
             ),
             findings=(
                 SimpleNamespace(
@@ -35,7 +35,7 @@ class DecisionWorkspaceComponentsTests(unittest.TestCase):
                     sla="Due soon",
                 ),
             ),
-            actions=(SimpleNamespace(label="Load Cost Evidence", cta="Load Cost Evidence"),),
+            actions=(SimpleNamespace(label="Open Cost Drivers", cta="Open Cost Drivers"),),
             trust=SimpleNamespace(
                 mode_label="Packet",
                 freshness_label="Updated 8m ago",
@@ -76,7 +76,7 @@ class DecisionWorkspaceComponentsTests(unittest.TestCase):
 
         html = render_evidence_empty_state(detail="Rows load from MART_ALERT_EVIDENCE_RECENT after click.")
 
-        self.assertIn("Evidence loads on request", html)
+        self.assertIn("Details available when needed", html)
         self.assertIn("Evidence cache", html)
         self.assertNotIn("MART_ALERT_EVIDENCE_RECENT", html)
 
@@ -116,7 +116,7 @@ class DecisionWorkspaceComponentsTests(unittest.TestCase):
         self.assertIn("Spend movement", html)
         self.assertIn("Run-rate only", html)
         self.assertIn("Period: 7d", html)
-        self.assertIn("Trend unavailable", html)
+        self.assertIn("Loading trend", html)
         self.assertIn("Zero policy: explicit zero only", html)
         self.assertIn("partial source history", html)
 
@@ -125,8 +125,8 @@ class DecisionWorkspaceComponentsTests(unittest.TestCase):
 
         html = render_change_panel(SimpleNamespace(trends=()))
 
-        self.assertIn("Trend unavailable", html)
-        self.assertIn("No governed trend metadata", html)
+        self.assertIn("Loading trend", html)
+        self.assertIn("Trend loads with the current packet", html)
 
     def test_command_view_model_treats_nan_packet_values_as_unavailable(self):
         from sections.decision_workspace_view_model import build_decision_workspace_view_model

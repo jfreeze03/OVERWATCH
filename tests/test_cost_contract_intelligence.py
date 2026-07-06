@@ -33,7 +33,7 @@ class CostContractIntelligenceTests(unittest.TestCase):
         self.assertEqual(_source_state(pd.DataFrame([{"A": 1}]), ""), "Ready")
         self.assertEqual(_source_state(pd.DataFrame(), "permission denied"), "Unavailable")
         self.assertEqual(_source_state(pd.DataFrame(), "", empty_state="Load Needed"), "Load Needed")
-        self.assertEqual(_source_state(pd.DataFrame(), "", empty_state="On Demand"), "On Demand")
+        self.assertEqual(_source_state(pd.DataFrame(), "", empty_state="Explicit action"), "Explicit action")
         self.assertEqual(_source_state(pd.DataFrame(), ""), "No Rows")
 
         summary, board = _build_cost_source_health_board(
@@ -104,7 +104,7 @@ class CostContractIntelligenceTests(unittest.TestCase):
         cockpit = pd.DataFrame([{
             "CURRENT_CREDITS": 100.0,
             "PRIOR_CREDITS": 80.0,
-            "TOP_INCREASE_WAREHOUSE": "COMPUTE_WH",
+            "TOP_INCREASE_WAREHOUSE": "WH_ALFA_OVERWATCH",
             "TOP_INCREASE_CREDITS": 12.5,
         }])
         run_rate = pd.DataFrame([{

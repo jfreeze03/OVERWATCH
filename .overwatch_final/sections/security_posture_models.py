@@ -101,7 +101,7 @@ def _security_source_next_action(state: str, source: str) -> str:
         return "Reload after changing company, environment, lookback, or triage filters."
     if state == "Unavailable":
         return "Deploy or refresh the summary/grants before relying on this surface."
-    if state == "On demand":
+    if state == "Details available when needed":
         return "Refresh only when this workflow is part of the current security investigation."
     if state == "No Rows":
         return "Confirm the selected scope has recent security events, review rows, or summary rows."
@@ -189,7 +189,7 @@ def _security_source_health_rows(
         if error:
             status = "Unavailable"
         elif not loaded:
-            status = "On demand"
+            status = "Details available when needed"
         elif not _security_meta_matches(state.get(item["meta_key"]), expected_meta):
             status = "Stale"
         elif frame.empty:
@@ -204,7 +204,7 @@ def _security_source_health_rows(
                 "Stale": 1,
                 "Loaded": 2,
                 "No Rows": 3,
-                "On demand": 4,
+                "Details available when needed": 4,
             }.get(status, 9),
             "SOURCE": source,
             "CONFIDENCE": _security_source_confidence(source, item["confidence"]),

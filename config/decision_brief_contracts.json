@@ -8,7 +8,7 @@
       "default_window_days": 7,
       "target_freshness_minutes": 60,
       "source_table": "MART_SECTION_COMMAND_BRIEF",
-      "detail_cta": "Refresh Summary",
+      "detail_cta": "Refresh Dashboard Data",
       "top_signal_label": "Top executive decision",
       "top_signal_detail": "Review cost, operational, and security signals before loading the full snapshot.",
       "unavailable_headline": "Executive command brief needs the summary mart.",
@@ -171,7 +171,7 @@
         },
         {
           "key": "open_actions",
-          "label": "Open Actions",
+          "label": "Open Work Items",
           "primary": true,
           "primary_order": 4,
           "format": "integer",
@@ -237,7 +237,7 @@
         },
         {
           "key": "data_trust",
-          "label": "Data Trust",
+          "label": "Source Freshness",
           "primary": false,
           "primary_order": null,
           "format": "percentage",
@@ -393,7 +393,7 @@
         },
         {
           "key": "queue_pressure",
-          "label": "Queue Pressure",
+          "label": "Queries Waiting",
           "primary": true,
           "primary_order": 3,
           "format": "duration",
@@ -448,7 +448,7 @@
         },
         {
           "key": "overdue_actions",
-          "label": "Overdue Actions",
+          "label": "Overdue Work Items",
           "primary": false,
           "primary_order": null,
           "format": "integer",
@@ -459,7 +459,7 @@
         },
         {
           "key": "hottest_warehouse",
-          "label": "Hottest Warehouse",
+          "label": "Top Warehouse by Cost",
           "primary": false,
           "primary_order": null,
           "format": "text",
@@ -470,7 +470,7 @@
         },
         {
           "key": "top_dba_risk",
-          "label": "Top DBA Risk",
+          "label": "Top Operational Signal",
           "primary": false,
           "primary_order": null,
           "format": "text",
@@ -645,19 +645,8 @@
           "availability_policy": "optional"
         },
         {
-          "key": "unassigned_alerts",
-          "label": "Unassigned Alerts",
-          "primary": false,
-          "primary_order": null,
-          "format": "integer",
-          "unit": "alerts",
-          "directionality": "higher_is_worse",
-          "source_key": "alert_events",
-          "availability_policy": "optional"
-        },
-        {
           "key": "open_action_queue",
-          "label": "Open Action Queue",
+          "label": "Open Work Items",
           "primary": false,
           "primary_order": null,
           "format": "integer",
@@ -703,7 +692,7 @@
       "default_window_days": 7,
       "target_freshness_minutes": 60,
       "source_table": "MART_SECTION_COMMAND_BRIEF",
-      "detail_cta": "Load Cost Evidence",
+      "detail_cta": "Open Cost Drivers",
       "top_signal_label": "Top cost signal",
       "top_signal_detail": "Review the largest movement or Cortex risk before loading detailed cost explorer rows.",
       "unavailable_headline": "Cost command brief needs cost summary telemetry.",
@@ -880,7 +869,7 @@
         },
         {
           "key": "open_cost_actions",
-          "label": "Open Cost Actions",
+          "label": "Open Cost Work Items",
           "primary": false,
           "primary_order": null,
           "format": "integer",
@@ -926,7 +915,7 @@
       "default_window_days": 7,
       "target_freshness_minutes": 30,
       "source_table": "MART_SECTION_COMMAND_BRIEF",
-      "detail_cta": "Open the right tool",
+      "detail_cta": "Open specialist workflow",
       "top_signal_label": "Top workload action",
       "top_signal_detail": "Open the owning investigation workflow, then load detail only for the selected incident.",
       "unavailable_headline": "Workload command brief needs workload summary telemetry.",
@@ -1005,8 +994,8 @@
           "availability_policy": "required"
         },
         {
-          "key": "queue_blocked_pressure",
-          "label": "Queue / Blocked Pressure",
+          "key": "queries_waiting",
+          "label": "Queries Waiting",
           "primary": true,
           "primary_order": 3,
           "format": "duration",
@@ -1014,6 +1003,17 @@
           "directionality": "higher_is_worse",
           "source_key": "query_hourly",
           "availability_policy": "required"
+        },
+        {
+          "key": "blocked_time",
+          "label": "Blocked Time",
+          "primary": false,
+          "primary_order": null,
+          "format": "duration",
+          "unit": "seconds",
+          "directionality": "higher_is_worse",
+          "source_key": "query_hourly",
+          "availability_policy": "optional"
         },
         {
           "key": "sla_risk",
@@ -1050,7 +1050,7 @@
         },
         {
           "key": "hottest_warehouse",
-          "label": "Hottest Warehouse",
+          "label": "Top Warehouse by Queued Time",
           "primary": false,
           "primary_order": null,
           "format": "text",
@@ -1129,7 +1129,7 @@
       "default_window_days": 30,
       "target_freshness_minutes": 60,
       "source_table": "MART_SECTION_COMMAND_BRIEF",
-      "detail_cta": "Load Security Evidence",
+      "detail_cta": "Open Security Details",
       "top_signal_label": "Top security action",
       "top_signal_detail": "Review the most exposed identity, grant, sharing, or access-change signal before loading proof tables.",
       "unavailable_headline": "Security command brief needs security summary telemetry.",
@@ -1170,14 +1170,6 @@
         {
           "source_key": "security_alerts",
           "source_object": "ALERT_EVENTS",
-          "required": true,
-          "tier": "core",
-          "target_freshness_minutes": 60,
-          "confidence": "allocated"
-        },
-        {
-          "source_key": "owner_coverage",
-          "source_object": "MART_OPERATIONAL_OWNER_COVERAGE",
           "required": true,
           "tier": "core",
           "target_freshness_minutes": 60,
@@ -1282,17 +1274,6 @@
           "availability_policy": "optional"
         },
         {
-          "key": "unassigned_findings",
-          "label": "Unassigned Findings",
-          "primary": false,
-          "primary_order": null,
-          "format": "integer",
-          "unit": "findings",
-          "directionality": "higher_is_worse",
-          "source_key": "owner_coverage",
-          "availability_policy": "optional"
-        },
-        {
           "key": "overdue_security_actions",
           "label": "Overdue Security Actions",
           "primary": false,
@@ -1301,17 +1282,6 @@
           "unit": "actions",
           "directionality": "higher_is_worse",
           "source_key": "security_operability",
-          "availability_policy": "optional"
-        },
-        {
-          "key": "owner_coverage",
-          "label": "Owner Coverage",
-          "primary": false,
-          "primary_order": null,
-          "format": "percentage",
-          "unit": "percent",
-          "directionality": "lower_is_worse",
-          "source_key": "owner_coverage",
           "availability_policy": "optional"
         }
       ],

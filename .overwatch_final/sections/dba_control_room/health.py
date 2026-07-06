@@ -171,7 +171,7 @@ def _dba_control_source_health_rows(
         elif err is not None and not err.empty:
             state_label = "Unavailable"
         elif not loaded:
-            state_label = "On demand"
+            state_label = "Details available when needed"
         elif not _dba_control_meta_matches(loaded_meta, expected_meta):
             state_label = "Stale"
         elif value.empty:
@@ -199,7 +199,7 @@ def _dba_control_source_health_rows(
                 "Loaded": 2,
                 "No Rows": 3,
                 "Deferred": 4,
-                "On demand": 5,
+                "Details available when needed": 5,
             }.get(state_label, 9),
             "MODE": mode,
             "ROWS": 0 if value is None or not hasattr(value, "empty") or value.empty else len(value),
@@ -410,7 +410,7 @@ def _build_auto_release_readiness_gate(
         else:
             rows.append({
                 "GATE": "Release status",
-                "STATE": "On demand",
+                "STATE": "Details available when needed",
                 "SEVERITY": "Low",
                 "EVIDENCE": "Release status telemetry is available after Control Room refresh.",
                 "NEXT_ACTION": "Refresh DBA Control Room triage before approving a release.",
@@ -534,7 +534,7 @@ def _build_auto_release_readiness_gate(
         })
 
     gate = pd.DataFrame(rows)
-    state_rank = {"Blocked": 0, "Review": 1, "On demand": 2, "Ready": 4}
+    state_rank = {"Blocked": 0, "Review": 1, "Details available when needed": 2, "Ready": 4}
     severity_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 4}
     gate["STATE_RANK"] = gate["STATE"].map(state_rank).fillna(9)
     gate["SEVERITY_RANK"] = gate["SEVERITY"].map(severity_rank).fillna(9)
@@ -543,8 +543,8 @@ def _build_auto_release_readiness_gate(
         "blocked": int(gate["STATE"].eq("Blocked").sum()),
         "review": int(gate["STATE"].eq("Review").sum()),
         "ready": int(gate["STATE"].eq("Ready").sum()),
-        "not_loaded": int(gate["STATE"].eq("On demand").sum()),
-        "score": max(0, min(100, 100 - int(gate["STATE"].eq("Blocked").sum()) * 30 - int(gate["STATE"].eq("Review").sum()) * 12 - int(gate["STATE"].eq("On demand").sum()) * 6)),
+        "not_loaded": int(gate["STATE"].eq("Details available when needed").sum()),
+        "score": max(0, min(100, 100 - int(gate["STATE"].eq("Blocked").sum()) * 30 - int(gate["STATE"].eq("Review").sum()) * 12 - int(gate["STATE"].eq("Details available when needed").sum()) * 6)),
     }
     return summary, gate.drop(columns=["STATE_RANK", "SEVERITY_RANK"], errors="ignore")
 
@@ -636,7 +636,7 @@ def _build_evidence_freshness_gate(source_health: pd.DataFrame | None) -> tuple[
     rows: list[dict] = []
     for _, item in view.iterrows():
         surface = str(item.get("SURFACE") or "")
-        state = str(item.get("STATE") or "On demand")
+        state = str(item.get("STATE") or "Details available when needed")
         mode = str(item.get("MODE") or "")
         rows_count = safe_int(item.get("ROWS"))
         message = str(item.get("MESSAGE") or "")
@@ -682,7 +682,7 @@ def _build_evidence_freshness_gate(source_health: pd.DataFrame | None) -> tuple[
             rank = 8
             action = next_action or "Telemetry is current for the active scope."
         else:
-            gate_state = "On demand"
+            gate_state = "Details available when needed"
             severity = "Low"
             release_impact = "No"
             rank = 9
@@ -731,7 +731,7 @@ def _control_room_snapshot_to_data(snapshot: pd.DataFrame) -> dict:
     """Convert the lightweight summary snapshot into the data shape used by the page.
 
     The summary snapshot is intentionally small: it supports the watch floor and
-    morning triage metrics, while deep telemetry tables still load on demand.
+    morning triage metrics, while deep telemetry tables still load after explicit actions.
     """
     if snapshot is None or snapshot.empty:
         return {}
@@ -812,7 +812,7 @@ def _dba_source_health_deployment_gate(source_health: pd.DataFrame | None) -> di
     states = source_health["STATE"].fillna("").astype(str)
     unavailable = int(states.isin(["Unavailable"]).sum())
     stale = int(states.isin(["Stale"]).sum())
-    not_loaded = int(states.isin(["On demand"]).sum())
+    not_loaded = int(states.isin(["Details available when needed"]).sum())
     if unavailable:
         return {
             "score": 86,

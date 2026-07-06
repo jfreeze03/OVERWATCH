@@ -106,10 +106,10 @@ class DeploymentContractTests(unittest.TestCase):
 
         self.assertEqual(snowflake["ENTRYPOINT"], ".overwatch_final/app.py")
         self.assertEqual(snowflake["MANIFEST"], ".overwatch_final/snowflake.yml")
-        self.assertEqual(snowflake["WAREHOUSE"], "COMPUTE_WH")
+        self.assertEqual(snowflake["WAREHOUSE"], "WH_ALFA_OVERWATCH")
         self.assertEqual(snowflake["EXECUTE_AS"], "owner_default_no_manifest_key")
         self.assertIn("streamlit_app.py", snowflake["DO_NOT_USE"])
-        self.assertNotIn("COMPUTE_WH", snowflake["DO_NOT_USE"])
+        self.assertNotIn("WH_ALFA_OVERWATCH", snowflake["DO_NOT_USE"])
 
         self.assertEqual(community["ENTRYPOINT"], "streamlit_app.py")
         self.assertEqual(community["MANIFEST"], ".streamlit/config.toml")
@@ -186,7 +186,7 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertEqual(streamlit_app["identifier"]["database"], "DBA_MAINT_DB")
         self.assertEqual(streamlit_app["identifier"]["schema"], "OVERWATCH")
         self.assertEqual(streamlit_app["identifier"]["name"], "OVERWATCH")
-        self.assertEqual(streamlit_app["query_warehouse"], "COMPUTE_WH")
+        self.assertEqual(streamlit_app["query_warehouse"], "WH_ALFA_OVERWATCH")
         self.assertNotIn("execute_as", streamlit_app)
         self.assertEqual(streamlit_app["main_file"], "app.py")
         self.assertIsInstance(streamlit_app["artifacts"], list)
@@ -203,7 +203,7 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertEqual(streamlit_app["identifier"]["database"], "DBA_MAINT_DB")
         self.assertEqual(streamlit_app["identifier"]["schema"], "OVERWATCH")
         self.assertEqual(streamlit_app["identifier"]["name"], "OVERWATCH")
-        self.assertEqual(streamlit_app["query_warehouse"], "COMPUTE_WH")
+        self.assertEqual(streamlit_app["query_warehouse"], "WH_ALFA_OVERWATCH")
         self.assertEqual(streamlit_app["compute_pool"], "SYSTEM_COMPUTE_POOL_CPU")
         self.assertEqual(streamlit_app["runtime_name"], "SYSTEM$ST_CONTAINER_RUNTIME_PY3_11")
         self.assertNotIn("execute_as", streamlit_app)
@@ -277,7 +277,7 @@ class DeploymentContractTests(unittest.TestCase):
                 )
                 self.assertIsNotNone(task)
                 task_body = task.group(1)
-                self.assertIn("WAREHOUSE = COMPUTE_WH", task_body)
+                self.assertIn("WAREHOUSE = WH_ALFA_OVERWATCH", task_body)
                 self.assertRegex(task_body, rf"\bCALL\s+{proc_name}\s*\(")
 
         anomaly_task = re.search(

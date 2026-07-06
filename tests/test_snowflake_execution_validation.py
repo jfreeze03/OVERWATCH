@@ -509,7 +509,7 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
             "os.environ",
             {
                 "OVERWATCH_SNOWFLAKE_VALIDATION_DATABASE": "snowflake://acct/user",
-                "OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE": "COMPUTE_WH",
+                "OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE": "WH_ALFA_OVERWATCH",
             },
             clear=False,
         ):

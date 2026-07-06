@@ -60,7 +60,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         self.assertIn("WH_TRXS%", COMPANY_CONFIG["ALFA"]["wh_exclude_patterns"])
         self.assertTrue(company_value_allowed("WH_ALFA_ADHOC", "warehouse", "ALFA"))
         self.assertTrue(company_value_allowed("BI_COMPUTE_WH", "warehouse", "ALFA"))
-        self.assertTrue(company_value_allowed("COMPUTE_WH", "warehouse", "ALFA"))
+        self.assertTrue(company_value_allowed("WH_ALFA_OVERWATCH", "warehouse", "ALFA"))
         self.assertFalse(company_value_allowed("WH_TRXS_REPORTING", "warehouse", "ALFA"))
         self.assertTrue(company_value_allowed("WH_RANDOM_VENDOR", "warehouse", "ALFA"))
         self.assertFalse(company_value_allowed("WH_TRXS_LOAD", "warehouse", "ALFA"))
@@ -204,11 +204,11 @@ class CompanyScopeAndCostTests(unittest.TestCase):
             ).upper()
 
             self.assertIn("WH_TRXS_LOAD", scoped)
-            self.assertIn("ALFA_EDW_PROD", scoped)
+            self.assertIn("ALFA_EDW_PRD", scoped)
             self.assertIn("Q.USER_NAME ILIKE '%ETL%'", scoped)
             self.assertIn("Q.SCHEMA_NAME ILIKE '%PUBLIC%'", scoped)
             self.assertNotIn("WH_TRXS_LOAD", ui_only)
-            self.assertNotIn("ALFA_EDW_PROD", ui_only)
+            self.assertNotIn("ALFA_EDW_PRD", ui_only)
             self.assertIn("Q.USER_NAME ILIKE '%ETL%'", ui_only)
             self.assertIn("Q.SCHEMA_NAME ILIKE '%PUBLIC%'", ui_only)
             self.assertEqual(get_global_schema_filter_clause("q.schema_name").upper(), "AND Q.SCHEMA_NAME ILIKE '%PUBLIC%'")
@@ -233,7 +233,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
             ).upper()
 
             self.assertIn("Q.DATABASE_NAME IS NULL", clause)
-            self.assertIn("ALFA_EDW_PROD", clause)
+            self.assertIn("ALFA_EDW_PRD", clause)
         finally:
             st.session_state.clear()
             st.session_state.update(previous)
@@ -246,12 +246,12 @@ class CompanyScopeAndCostTests(unittest.TestCase):
             st.session_state["global_environment"] = "PROD"
 
             clause = get_db_filter_clause("database_name", company="ALFA").upper()
-            self.assertIn("ALFA_EDW_PROD", clause)
-            self.assertTrue(environment_value_allowed("ALFA_EDW_PROD", company="ALFA"))
+            self.assertIn("ALFA_EDW_PRD", clause)
+            self.assertTrue(environment_value_allowed("ALFA_EDW_PRD", company="ALFA"))
             self.assertFalse(environment_value_allowed("ALFA_EDW_DEV", company="ALFA"))
 
             trexis_clause = get_db_filter_clause("database_name", company="Trexis").upper()
-            self.assertNotIn("ALFA_EDW_PROD", trexis_clause)
+            self.assertNotIn("ALFA_EDW_PRD", trexis_clause)
             self.assertIn("TRXS_EDW_PRD", trexis_clause)
             trexis_prod_env_clause = get_environment_filter_clause("database_name", company="Trexis").upper()
             self.assertIn("TRXS_EDW_PRD", trexis_prod_env_clause)
@@ -284,7 +284,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
     def test_cost_allocation_quality_rolls_up_alfa_prod_and_dev(self):
         rows = pd.DataFrame(
             [
-                {"COMPANY": "ALFA", "ENVIRONMENT": "PROD", "DATABASE_NAME": "ALFA_EDW_PROD"},
+                {"COMPANY": "ALFA", "ENVIRONMENT": "PROD", "DATABASE_NAME": "ALFA_EDW_PRD"},
                 {"COMPANY": "ALFA", "ENVIRONMENT": "ALFA_EDW_DEV", "DATABASE_NAME": "ALFA_EDW_DEV"},
                 {"COMPANY": "ALFA", "ENVIRONMENT": "ALFA_EDW_SAN", "DATABASE_NAME": "ALFA_EDW_SAN"},
                 {"COMPANY": "Trexis", "ENVIRONMENT": "PROD", "DATABASE_NAME": "TRXS_EDW_PRD"},
@@ -304,7 +304,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
                 {
                     "COMPANY": "ALFA",
                     "ENVIRONMENT": "PROD",
-                    "DATABASE_NAME": "ALFA_EDW_PROD",
+                    "DATABASE_NAME": "ALFA_EDW_PRD",
                     "COST_OWNER": "FINANCE_ANALYTICS",
                     "OWNER_SOURCE": "DATABASE_TAG:COST_OWNER",
                     "OWNER_EVIDENCE": "Database owner tag COST_OWNER=FINANCE_ANALYTICS.",
@@ -459,7 +459,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
 
             objects = pd.DataFrame(
                 {
-                    "DATABASE_NAME": ["ALFA_EDW_DEV_BI", "TRXS_EDW_PRD", "ALFA_EDW_PROD"],
+                    "DATABASE_NAME": ["ALFA_EDW_DEV_BI", "TRXS_EDW_PRD", "ALFA_EDW_PRD"],
                     "WAREHOUSE_NAME": ["BI_COMPUTE_WH", "WH_TRXS_LOAD", "WH_TRXS_REPORTING"],
                 }
             )

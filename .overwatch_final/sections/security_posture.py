@@ -98,8 +98,8 @@ def _render_security_first_paint_shell(active_view: str, company: str, environme
         detail_action=make_evidence_action(
             "Security Monitoring",
             active_view,
-            label="Load Security Evidence",
-            help_text="Load security evidence rows for the current scope.",
+            label="Open Security Details",
+            help_text="Open security detail rows for the current scope.",
             state_key="security_posture_load_evidence",
             settings_renderer=_render_security_evidence_settings,
         )

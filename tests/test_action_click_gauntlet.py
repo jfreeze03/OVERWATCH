@@ -201,7 +201,7 @@ class ActionClickGauntletTests(unittest.TestCase):
                         "workflow": "Security Overview",
                         "action_like_elements": [
                             {
-                                "label": "Load Security Evidence",
+                                "label": "Open Security Details",
                                 "stable_key": "security_monitoring_security_overview_load_security_evidence",
                                 "action_area": "evidence_action",
                             }
@@ -212,7 +212,7 @@ class ActionClickGauntletTests(unittest.TestCase):
                     {
                         "section": "Alert Center",
                         "workflow": "Active Alerts",
-                        "label": "Load Security Evidence",
+                        "label": "Open Security Details",
                         "stable_key": "security_monitoring_security_overview_load_security_evidence",
                         "action_area": "evidence_action",
                         "clicked": True,

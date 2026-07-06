@@ -40,7 +40,7 @@ class Production95ContractsTests(unittest.TestCase):
         query = SafeQuery("SELECT * FROM T WHERE X = :x", source="unit").with_param("x", 7)
         self.assertEqual(query.params["x"], 7)
         self.assertEqual(query.source, "unit")
-        self.assertEqual(bind_identifier("alfa_edw_prod"), "ALFA_EDW_PROD")
+        self.assertEqual(bind_identifier("alfa_edw_prod"), "ALFA_EDW_PRD")
         self.assertEqual(bind_fqn("db", "schema", "table"), "DB.SCHEMA.TABLE")
         with self.assertRaises(ValueError):
             bind_identifier("db;drop")
@@ -55,7 +55,7 @@ class Production95ContractsTests(unittest.TestCase):
             "CREATE ROLE IF NOT EXISTS SNOW_ACCOUNTADMINS",
             "CREATE ROLE IF NOT EXISTS SNOW_SYSADMINS",
             "GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE SNOW_ACCOUNTADMINS",
-            "CREATE WAREHOUSE IF NOT EXISTS COMPUTE_WH",
+            "CREATE WAREHOUSE IF NOT EXISTS WH_ALFA_OVERWATCH",
             "CREATE TABLE IF NOT EXISTS ALERT_EVENTS",
             "CREATE TABLE IF NOT EXISTS OVERWATCH_RECON_CONFIG",
             "CREATE OR REPLACE TASK OVERWATCH_COST_MONITORING_REFRESH",

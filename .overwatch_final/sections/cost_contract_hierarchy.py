@@ -91,14 +91,14 @@ COST_LOCAL_MENU = (
 )
 
 
-def format_money(value: object, *, default: str = "On demand") -> str:
+def format_money(value: object, *, default: str = "Details available when needed") -> str:
     number = safe_float(value)
     if not number:
         return default
     return f"${number:,.0f}" if abs(number) >= 1000 else f"${number:,.2f}"
 
 
-def format_pct(value: object, *, default: str = "On demand") -> str:
+def format_pct(value: object, *, default: str = "Details available when needed") -> str:
     number = safe_float(value)
     if not number:
         return default
@@ -116,28 +116,28 @@ def build_cost_hero_metrics(company: str) -> tuple[dict[str, str], ...]:
     summary = _cost_splash_summary(splash, credit_price, days)
     has_data = bool(summary.get("has_data"))
     cortex_signal = build_cortex_signal(summary, days=days, total_spend_usd=summary.get("spend"))
-    top_driver = str(summary.get("top_warehouse") or "On demand")
+    top_driver = str(summary.get("top_warehouse") or "Details available when needed")
     if not has_data:
-        top_driver = "On demand"
+        top_driver = "Details available when needed"
     return (
         {
             "label": "Total Spend",
-            "value": format_money(summary.get("spend")) if has_data else "On demand",
+            "value": format_money(summary.get("spend")) if has_data else "Details available when needed",
             "detail": "Refresh Cost loads the official cost story.",
         },
         {
             "label": "Spend Movement",
-            "value": format_pct(summary.get("delta_pct")) if has_data else "On demand",
+            "value": format_pct(summary.get("delta_pct")) if has_data else "Details available when needed",
             "detail": "Selected window vs prior window.",
         },
         {
             "label": "Forecast / Run-rate",
-            "value": format_money(summary.get("projected_30d_spend")) if has_data else "On demand",
+            "value": format_money(summary.get("projected_30d_spend")) if has_data else "Details available when needed",
             "detail": str(summary.get("run_rate_state") or "Projected after load."),
         },
         {
             "label": "Cortex AI Spend",
-            "value": str(cortex_signal.get("spend_label") or "Cortex summary pending"),
+            "value": str(cortex_signal.get("spend_label") or "Cortex summary loading"),
             "detail": str(cortex_signal.get("percent_of_total") or "Percent loads with cost facts."),
             "tone": "cortex",
         },
@@ -149,7 +149,7 @@ def build_cost_hero_metrics(company: str) -> tuple[dict[str, str], ...]:
         },
         {
             "label": "Contract / Budget Risk",
-            "value": "On demand" if not has_data else str(summary.get("yoy_state") or "Loaded"),
+            "value": "Details available when needed" if not has_data else str(summary.get("yoy_state") or "Loaded"),
             "detail": "Budget proof stays behind explicit detail loads.",
         },
         {
@@ -159,7 +159,7 @@ def build_cost_hero_metrics(company: str) -> tuple[dict[str, str], ...]:
         },
         {
             "label": "Open Savings Actions",
-            "value": "On demand",
+            "value": "Details available when needed",
             "detail": "Recommendations remain review-only and explicit.",
         },
     )

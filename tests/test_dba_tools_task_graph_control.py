@@ -95,7 +95,7 @@ class DbaToolsTaskGraphControlTests(unittest.TestCase):
         )
 
     def test_task_running_queries_sql_contract(self):
-        with patch.object(task_graph, "get_wh_filter_clause", return_value="AND warehouse_name = 'COMPUTE_WH'"):
+        with patch.object(task_graph, "get_wh_filter_clause", return_value="AND warehouse_name = 'WH_ALFA_OVERWATCH'"):
             with patch.object(task_graph, "get_user_company_filter_clause", return_value="AND user_name LIKE 'ALFA%'"):
                 sql = task_graph._task_running_queries_sql(
                     "ALFA",
@@ -106,7 +106,7 @@ class DbaToolsTaskGraphControlTests(unittest.TestCase):
 
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", sql)
         self.assertIn("QUERY_CONTEXT", sql)
-        self.assertIn("AND WAREHOUSE_NAME = 'COMPUTE_WH'", sql)
+        self.assertIn("AND WAREHOUSE_NAME = 'WH_ALFA_OVERWATCH'", sql)
         self.assertIn("AND USER_NAME LIKE 'ALFA%'", sql)
         self.assertIn("QUERY_TAG IS NOT NULL", sql)
         self.assertIn("LIMIT 200", sql)

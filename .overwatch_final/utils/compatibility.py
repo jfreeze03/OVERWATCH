@@ -702,7 +702,7 @@ def build_cost_formula_audit() -> pd.DataFrame:
         (
             "Cortex detailed sources",
             "Cortex REST API, Snowflake Intelligence, Agents, Functions, Analyst, Search, Document AI, Fine-Tuning, and Cortex Code usage histories.",
-            "Cortex Monitor probes Cortex service history views on demand and renders detail when the current role can see the required columns.",
+            "Cortex Monitor probes Cortex service history views after explicit action and renders detail when the current role can see the required columns.",
             "Mixed",
             "Coverage expanded",
             "Detailed coverage depends on Snowflake feature enablement and ACCOUNT_USAGE grants for each service history view.",

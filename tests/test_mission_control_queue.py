@@ -33,7 +33,7 @@ class MissionControlQueueTests(unittest.TestCase):
             "cost_contract_cockpit": pd.DataFrame([{
                 "CURRENT_CREDITS": 150.0,
                 "PRIOR_CREDITS": 100.0,
-                "TOP_INCREASE_WAREHOUSE": "COMPUTE_WH",
+                "TOP_INCREASE_WAREHOUSE": "WH_ALFA_OVERWATCH",
             }]),
             "cost_contract_cockpit_meta": {"loaded_at": "2026-06-24T12:05:00"},
             "security_posture_summary": pd.DataFrame([{

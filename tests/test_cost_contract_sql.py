@@ -70,7 +70,7 @@ class CostContractSqlTests(unittest.TestCase):
         from sections.cost_contract_sql import _build_resource_monitor_guardrail_sql
 
         sql = _build_resource_monitor_guardrail_sql(
-            "COMPUTE_WH",
+            "WH_ALFA_OVERWATCH",
             credit_quota=250,
             monitor_name="OVERWATCH_TEST_MONITOR",
         ).upper()
@@ -78,7 +78,7 @@ class CostContractSqlTests(unittest.TestCase):
         self.assertIn("REVIEW-ONLY RESOURCE MONITOR GUARDRAIL", sql)
         self.assertIn("CREATE RESOURCE MONITOR IF NOT EXISTS OVERWATCH_TEST_MONITOR", sql)
         self.assertIn("WITH CREDIT_QUOTA = 250.00", sql)
-        self.assertIn("ALTER WAREHOUSE IF EXISTS COMPUTE_WH", sql)
+        self.assertIn("ALTER WAREHOUSE IF EXISTS WH_ALFA_OVERWATCH", sql)
         self.assertIn("SET RESOURCE_MONITOR = OVERWATCH_TEST_MONITOR", sql)
         self.assertIn("SHOW RESOURCE MONITORS", sql)
 

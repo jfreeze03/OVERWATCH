@@ -31,8 +31,8 @@ For each section, confirm the first-paint shell shows text-first status, the vis
   - Decision Workspace
   - Load Morning Cockpit
   - Load Active Alerts
-  - Load Cost Evidence
-  - Load Security Evidence
+  - Open Cost Drivers
+  - Open Security Details
 
 ## Advanced Scope
 
@@ -59,16 +59,16 @@ When credentials and context are available, test explicit load actions:
 - Decision Workspace
 - Load Morning Cockpit
 - Load Active Alerts
-- Load Cost Evidence
-- Load Security Evidence
+- Open Cost Drivers
+- Open Security Details
 
 Confirm no duplicate widget-key error appears.
 
 ## Operator Case File
 
 - Load Active Alerts, then Add to Case.
-- Load Cost Evidence, then Add to Case.
-- Load Security Evidence, then Add to Case.
+- Open Cost Drivers, then Add to Case.
+- Open Security Details, then Add to Case.
 - Open the Case Drawer.
 - Export Operator Case Markdown.
 

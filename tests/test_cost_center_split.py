@@ -83,7 +83,7 @@ class CostCenterSplitTests(unittest.TestCase):
 
     def test_environment_rollup_for_cost_preserves_scope_contract(self):
         cases = [
-            ({"DATABASE_NAME": "ALFA_EDW_PROD", "ENVIRONMENT": "PROD"}, "PROD"),
+            ({"DATABASE_NAME": "ALFA_EDW_PRD", "ENVIRONMENT": "PROD"}, "PROD"),
             ({"DATABASE_NAME": "ALFA_EDW_DEV", "ENVIRONMENT": "DEV"}, "DEV_ALL"),
             ({"DATABASE_NAME": "ALFA_EDW_SAN", "ENVIRONMENT": "SAN"}, "DEV_ALL"),
             ({"DATABASE_NAME": "TRXS_CLAIMS_PROD", "ENVIRONMENT": "PROD"}, "PROD"),
@@ -104,7 +104,7 @@ class CostCenterSplitTests(unittest.TestCase):
         self.assertEqual(no_context["SCOPE_REVIEW"], "Missing database context")
 
         ready = cost_center._cost_allocation_quality({
-            "DATABASE_NAME": "ALFA_EDW_PROD",
+            "DATABASE_NAME": "ALFA_EDW_PRD",
             "ENVIRONMENT": "PROD",
             "OWNER_SOURCE": "WAREHOUSE_TAG",
             "COST_OWNER": "Finance",
@@ -112,7 +112,7 @@ class CostCenterSplitTests(unittest.TestCase):
         self.assertEqual(ready["ENVIRONMENT_ROLLUP"], "PROD")
         self.assertEqual(ready["CHARGEBACK_READY"], "Ready")
 
-        directional = cost_center._cost_allocation_quality({"DATABASE_NAME": "ALFA_EDW_PROD", "ENVIRONMENT": "PROD"})
+        directional = cost_center._cost_allocation_quality({"DATABASE_NAME": "ALFA_EDW_PRD", "ENVIRONMENT": "PROD"})
         self.assertEqual(directional["CHARGEBACK_READY"], "Directional")
 
         review = cost_center._cost_allocation_quality({"DATABASE_NAME": "ALFA_EDW_QA", "ENVIRONMENT": "QA"})
@@ -120,7 +120,7 @@ class CostCenterSplitTests(unittest.TestCase):
         self.assertEqual(review["SCOPE_REVIEW"], "Unmapped ALFA environment")
 
         annotated = cost_center._annotate_allocation_quality(pd.DataFrame([{
-            "DATABASE_NAME": "ALFA_EDW_PROD",
+            "DATABASE_NAME": "ALFA_EDW_PRD",
             "USER_NAME": "ANALYST",
             "TOTAL_CREDITS": 5,
         }]))
@@ -329,7 +329,7 @@ class CostCenterSplitTests(unittest.TestCase):
                 "cc_admin_recon_error",
                 "cost_reconciliation.csv",
             ],
-            "cost_center_forecast_view.py": ["fc_load", "df_fc", "cc_forecast_source"],
+            "cost_center_forecast_view.py": ["df_fc", "cc_forecast_source", "cc_annual_projection_period"],
             "cost_center_attribution_view.py": ["cc_attr_days", "cc_attr_mode", "cc_attr_load", "df_cc_attr"],
             "cost_center_chargeback_view.py": ["cc_cb_days", "cc_cb_load", "cc_chargeback_queue"],
         }

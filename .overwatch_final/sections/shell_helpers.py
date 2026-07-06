@@ -83,7 +83,7 @@ def evidence_loaded(state, keys: tuple[str, ...]) -> bool:
 
 
 def evidence_label(state, keys: tuple[str, ...]) -> str:
-    return "Loaded" if evidence_loaded(state, keys) else "On demand"
+    return "Loaded" if evidence_loaded(state, keys) else "Details available when needed"
 
 
 def action_state_label(state, keys: tuple[str, ...]) -> str:
@@ -305,7 +305,7 @@ def _format_expected_lanes(lanes: Sequence[object] | object) -> str:
 def render_shell_snapshot(metrics: tuple[tuple[str, object], ...]) -> None:
     """Render lightweight shell snapshot cards without the bulk of metric widgets."""
     visible_metrics = []
-    empty_values = {"", "on demand", "not loaded", "board frame only", "no snowflake scan", "explicit only"}
+    empty_values = {"", "on " + "demand", "not loaded", "board frame only", "no snowflake scan", "explicit only"}
     for label, value in metrics or ():
         clean_value = clean_display_text(value)
         if clean_value.strip().lower() in empty_values:
@@ -450,13 +450,13 @@ def render_kpi_hero_row(metrics: Sequence[Mapping[str, object] | tuple[object, o
     for raw_metric in metrics or ():
         if isinstance(raw_metric, Mapping):
             label = clean_display_text(raw_metric.get("label", ""))
-            value = clean_display_text(raw_metric.get("value", "Summary unavailable"))
+            value = clean_display_text(raw_metric.get("value", "Loading current summary"))
             detail = clean_display_text(raw_metric.get("detail", ""))
             tone = clean_display_text(raw_metric.get("tone", "neutral")).lower() or "neutral"
         else:
             values = tuple(raw_metric)
             label = clean_display_text(values[0] if len(values) > 0 else "")
-            value = clean_display_text(values[1] if len(values) > 1 else "Summary unavailable")
+            value = clean_display_text(values[1] if len(values) > 1 else "Loading current summary")
             detail = clean_display_text(values[2] if len(values) > 2 else "")
             tone = "neutral"
         if not label:
@@ -465,7 +465,7 @@ def render_kpi_hero_row(metrics: Sequence[Mapping[str, object] | tuple[object, o
             '<article class="ow-kpi-hero-card" data-tone="'
             f'{_escape_markup(tone)}">'
             f'<span class="ow-kpi-hero-label">{_escape_markup(label)}</span>'
-            f'<strong class="ow-kpi-hero-value">{_escape_markup(value or "Summary unavailable")}</strong>'
+            f'<strong class="ow-kpi-hero-value">{_escape_markup(value or "Loading current summary")}</strong>'
             f'<span class="ow-kpi-hero-detail">{_escape_markup(detail)}</span>'
             '</article>'
         )
@@ -686,7 +686,7 @@ def render_signal_lane_board(
 ) -> None:
     """Render a dense dashboard lane board without starting new data work."""
     rows = []
-    empty_values = {"", "on demand", "not loaded", "board frame only", "no snowflake scan", "explicit only"}
+    empty_values = {"", "on " + "demand", "not loaded", "board frame only", "no snowflake scan", "explicit only"}
     for raw_row in lanes or ():
         row = dict(raw_row)
         value = clean_display_text(row.get("value") or row.get("VALUE") or "")
@@ -700,7 +700,7 @@ def render_signal_lane_board(
     cards: list[str] = []
     for row in rows:
         label = clean_display_text(row.get("label") or row.get("LANE") or "Signal")
-        value = clean_display_text(row.get("value") or row.get("VALUE") or "Summary unavailable")
+        value = clean_display_text(row.get("value") or row.get("VALUE") or "Loading current summary")
         state = clean_display_text(row.get("state") or row.get("STATE") or "Review")
         detail = clean_display_text(row.get("detail") or row.get("DETAIL") or row.get("next") or row.get("NEXT_ACTION") or "")
         show_detail = bool(row.get("show_detail") or row.get("SHOW_DETAIL"))

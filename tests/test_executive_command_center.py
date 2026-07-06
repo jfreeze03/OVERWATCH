@@ -82,7 +82,7 @@ class ExecutiveCommandCenterTests(unittest.TestCase):
         ])
         self.assertEqual(model.health_value, "98/100")
         self.assertEqual(model.summary_headline, "Account health is steady")
-        self.assertEqual(model.evidence_status, "On request")
+        self.assertEqual(model.evidence_status, "Details ready")
         self.assertEqual(model.total_credits_text, "12,842")
         self.assertLessEqual(max(len(card.value) for card in model.kpis), 28)
 
@@ -95,7 +95,7 @@ class ExecutiveCommandCenterTests(unittest.TestCase):
             _brief(
                 raw_payload={
                     "warehouse_slices": [
-                        {"warehouse_name": "COMPUTE_WH", "credits_used": 120.25, "pct_of_total": 55.5},
+                        {"warehouse_name": "WH_ALFA_OVERWATCH", "credits_used": 120.25, "pct_of_total": 55.5},
                         {"warehouse_name": "ETL_WH", "credits_used": 80.0, "pct_of_total": 37.0},
                     ]
                 }
@@ -104,7 +104,7 @@ class ExecutiveCommandCenterTests(unittest.TestCase):
             environment="ALL",
             days=7,
         )
-        self.assertEqual([row.warehouse for row in model.warehouse_slices], ["COMPUTE_WH", "ETL_WH"])
+        self.assertEqual([row.warehouse for row in model.warehouse_slices], ["WH_ALFA_OVERWATCH", "ETL_WH"])
         self.assertEqual(model.warehouse_slices[0].credits_text, "120.2")
         self.assertEqual(model.warehouse_slices[0].pct_text, "55.5%")
 
@@ -112,7 +112,7 @@ class ExecutiveCommandCenterTests(unittest.TestCase):
         summary_frame = pd.DataFrame(
             [
                 {
-                    "WAREHOUSE_NAME": "COMPUTE_WH",
+                    "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
                     "CREDITS_USED": 10.0,
                     "UPDATED_AT": "2026-07-05T11:19:00",
                 },
@@ -126,10 +126,10 @@ class ExecutiveCommandCenterTests(unittest.TestCase):
 
         model = build_executive_command_center_model(
             _brief(
-                state="Summary pending",
-                headline="Summary pending",
+                state="Refresh required",
+                headline="Refresh required",
                 summary="Waiting for the current summary packet.",
-                freshness_label="Packet pending",
+                freshness_label="Current summary unavailable",
                 data_availability_state="Unavailable",
                 metrics=(),
                 raw_payload={},
@@ -144,7 +144,7 @@ class ExecutiveCommandCenterTests(unittest.TestCase):
         self.assertEqual(model.summary_headline, "Operating summary loaded")
         self.assertEqual(model.source_status, "Available")
         self.assertEqual(model.total_credits_text, "15.0")
-        self.assertEqual([row.warehouse for row in model.warehouse_slices], ["COMPUTE_WH", "ETL_WH"])
+        self.assertEqual([row.warehouse for row in model.warehouse_slices], ["WH_ALFA_OVERWATCH", "ETL_WH"])
 
     def test_long_packet_headline_is_not_used_as_compact_kpi_value(self):
         model = build_executive_command_center_model(

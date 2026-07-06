@@ -171,7 +171,7 @@ def build_cortex_signal(
     return {
         "loaded": loaded,
         "spend_usd": spend,
-        "spend_label": _money(spend) if loaded or spend else "Cortex summary pending",
+        "spend_label": _money(spend) if loaded or spend else "Cortex summary loading",
         "trend": trend,
         "forecast_usd": forecast,
         "forecast_label": _money(forecast) if forecast else "Pending",
@@ -207,7 +207,7 @@ def render_cortex_signal_panel(
     if not bool(signal.get("loaded")):
         render_shell_snapshot(
             (
-                ("Cortex summary", "Cortex summary pending."),
+                ("Cortex summary", "Cortex summary loading."),
                 ("Billing", "Billing reconciliation pending."),
                 ("Details", "Detailed allocations load on request."),
             )
@@ -221,7 +221,7 @@ def render_cortex_signal_panel(
         return
     render_shell_kpi_row(
         (
-            ("Cortex AI Spend", str(signal.get("spend_label") or "Cortex summary pending")),
+            ("Cortex AI Spend", str(signal.get("spend_label") or "Cortex summary loading")),
             ("Cortex AI Cost Trend", str(signal.get("trend") or "Pending")),
             ("Cortex Forecast", str(signal.get("forecast_label") or "Pending")),
             ("Cortex Predictive Alerts", str(signal.get("predictive_alert_label") or "Pending")),

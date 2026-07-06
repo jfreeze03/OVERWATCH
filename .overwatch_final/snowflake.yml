@@ -1,9 +1,9 @@
-# -----------------------------------------------------------------------------
+﻿# -----------------------------------------------------------------------------
 # OVERWATCH - Streamlit-in-Snowflake (SiS) Deployment Manifest
 # Account:   ALFA Insurance
 # App:       DBA_MAINT_DB.OVERWATCH.OVERWATCH
 # Roles:     SNOW_ACCOUNTADMINS, SNOW_SYSADMINS
-# Warehouse: COMPUTE_WH
+# Warehouse: WH_ALFA_OVERWATCH
 #
 # Deployment:
 #   snow streamlit deploy --replace
@@ -32,7 +32,7 @@
 #     GRANT MONITOR ON ACCOUNT TO ROLE <role>;
 #
 #     -- Required to run the Streamlit app and its Snowflake queries
-#     GRANT USAGE ON WAREHOUSE COMPUTE_WH TO ROLE <role>;
+#     GRANT USAGE ON WAREHOUSE WH_ALFA_OVERWATCH TO ROLE <role>;
 #
 #   Without IMPORTED PRIVILEGES on SNOWFLAKE, every ACCOUNT_USAGE query returns
 #   a permissions error and the section shows an empty state. This is the single
@@ -52,7 +52,7 @@ entities:
 
     # Warehouse used by SiS for Python execution. SQL queries run here unless
     # the session executes USE WAREHOUSE first.
-    query_warehouse: COMPUTE_WH
+    query_warehouse: WH_ALFA_OVERWATCH
     main_file: app.py
     artifacts:
       - app.py

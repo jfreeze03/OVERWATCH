@@ -118,7 +118,7 @@ def _source_next_action(state: str, source: str) -> str:
         return "Reload after changing company, environment, lookback, or triage filters."
     if state == "Unavailable":
         return "Deploy or refresh the summary/grants before relying on this surface."
-    if state == "On demand":
+    if state == "Details available when needed":
         return "Refresh only when this workflow is part of the current DBA investigation."
     if state == "No Rows":
         return "Confirm the selected scope has recent warehouse activity or summary rows."
@@ -232,7 +232,7 @@ def _warehouse_source_health_rows(
         if error:
             status = "Unavailable"
         elif not loaded:
-            status = "On demand"
+            status = "Details available when needed"
         elif not _warehouse_meta_matches(state.get(item["meta_key"]), expected_meta):
             status = "Stale"
         elif frame.empty:
@@ -244,7 +244,7 @@ def _warehouse_source_health_rows(
             "Stale": 1,
             "Loaded": 2,
             "No Rows": 3,
-            "On demand": 4,
+            "Details available when needed": 4,
         }.get(status, 9)
         rows.append({
             "SURFACE": item["surface"],

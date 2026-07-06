@@ -76,9 +76,9 @@ def _render_cost_first_paint_shell(company: str, days: int, splash: dict, credit
         detail="Use Refresh Cost for the current cost story; forecasts, reconciliation, and driver rows stay behind explicit actions.",
         metrics=(
             ("Window", f"{int(days)} days"),
-            ("Spend story", "Loaded" if loaded else "Summary unavailable"),
-            ("Top driver", "Loaded" if loaded else "On demand"),
-            ("Forecast/chart", "Loaded" if loaded else "On demand"),
+            ("Spend story", "Loaded" if loaded else "Loading current summary"),
+            ("Top driver", "Loaded" if loaded else "Details available when needed"),
+            ("Forecast/chart", "Loaded" if loaded else "Details available when needed"),
         ),
         snapshot=(
             ("Scope", f"{company} / {environment}"),

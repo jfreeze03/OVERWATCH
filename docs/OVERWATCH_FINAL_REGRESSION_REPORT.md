@@ -28,7 +28,7 @@ This hardening pass focused on route/label correctness, compatibility-safe workf
 - Account: `LOKAXGM-WU94316`
 - User: `CHRISJOHNSON1985007`
 - Role: `ACCOUNTADMIN`
-- Warehouse: `COMPUTE_WH`
+- Warehouse: `WH_ALFA_OVERWATCH`
 - Database/schema: `DBA_MAINT_DB.OVERWATCH`
 - Authenticator: `externalbrowser`
 

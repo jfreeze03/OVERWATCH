@@ -11,13 +11,13 @@ The deployment source of truth is intentionally split by runtime:
 
 | Runtime | Entry point | Manifest | Warehouse / execution |
 |---|---|---|---|
-| Streamlit in Snowflake, Snowsight/Git deploy | mapped `app.py` from `.overwatch_final/app.py` | `snowflake.yml` | `SYSTEM_COMPUTE_POOL_CPU`, `COMPUTE_WH`, `CALLER` |
-| Streamlit in Snowflake, package-root CLI deploy | `.overwatch_final/app.py` | `.overwatch_final/snowflake.yml` | `COMPUTE_WH`, `CALLER` |
+| Streamlit in Snowflake, Snowsight/Git deploy | mapped `app.py` from `.overwatch_final/app.py` | `snowflake.yml` | `SYSTEM_COMPUTE_POOL_CPU`, `WH_ALFA_OVERWATCH`, `CALLER` |
+| Streamlit in Snowflake, package-root CLI deploy | `.overwatch_final/app.py` | `.overwatch_final/snowflake.yml` | `WH_ALFA_OVERWATCH`, `CALLER` |
 | Streamlit Community Cloud | `streamlit_app.py` | `.streamlit/config.toml` | user-provided Snowflake connection |
 | Snowflake setup objects | `snowflake/mart_setup/` ordered files (canonical human path; `snowflake/OVERWATCH_MART_SETUP.sql` is the byte-equivalent single-file artifact) | `utils.deployment` schema contract | setup role, mart task warehouses |
 
 Do not deploy Streamlit in Snowflake from `streamlit_app.py`, and do not move
-the app runtime back to `COMPUTE_WH`.
+the app runtime back to `WH_ALFA_OVERWATCH`.
 
 ## Community Cloud
 
@@ -57,14 +57,14 @@ Expected values:
 | Project definition | `definition_version: 2` |
 | Main file | `app.py` |
 | Snowsight compute pool | `SYSTEM_COMPUTE_POOL_CPU` |
-| Query warehouse | `COMPUTE_WH` |
+| Query warehouse | `WH_ALFA_OVERWATCH` |
 | Snowsight manifest | `snowflake.yml` |
 | Package-root CLI manifest | `.overwatch_final/snowflake.yml` |
 | App package source | `.overwatch_final` |
 
-`COMPUTE_WH` is the approved current app runtime warehouse until a dedicated
+`WH_ALFA_OVERWATCH` is the approved current app runtime warehouse until a dedicated
 OVERWATCH warehouse is approved. The current mart task graph also runs on
-`COMPUTE_WH`.
+`WH_ALFA_OVERWATCH`.
 
 If Snowsight reports `Missing MAIN_FILE`, use the root `snowflake.yml` in the
 Deploy app dialog or recreate the Streamlit object from the repository root.
@@ -89,8 +89,8 @@ directly instead.
 The setup creates:
 
 - OVERWATCH app database/schema objects
-- `COMPUTE_WH`
-- `COMPUTE_WH_RM`
+- `WH_ALFA_OVERWATCH`
+- `WH_ALFA_OVERWATCH_RM`
 - mart facts and views
 - owner, alert, action, audit, automation, and external feed tables
 - refresh procedures
@@ -110,7 +110,7 @@ CI deployment contract:
 .\.venv\Scripts\python.exe -m unittest tests.test_deployment_contract
 ```
 
-This validates the Snowflake manifest, `COMPUTE_WH`, caller-mode boundary,
+This validates the Snowflake manifest, `WH_ALFA_OVERWATCH`, caller-mode boundary,
 Snowflake artifact list, Community Cloud wrapper, `.streamlit/config.toml`,
 deployment guide, and CI release rule. If it fails, fix the manifest, docs,
 and code contract before deploying.

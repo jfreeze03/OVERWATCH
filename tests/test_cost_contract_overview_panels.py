@@ -30,7 +30,7 @@ class CostContractOverviewPanelTests(unittest.TestCase):
         cockpit = pd.DataFrame([{
             "CURRENT_CREDITS": 120.0,
             "PRIOR_CREDITS": 100.0,
-            "TOP_INCREASE_WAREHOUSE": "COMPUTE_WH",
+            "TOP_INCREASE_WAREHOUSE": "WH_ALFA_OVERWATCH",
             "TOP_INCREASE_CREDITS": 12.5,
         }])
         run_rate = pd.DataFrame([{
@@ -52,7 +52,7 @@ class CostContractOverviewPanelTests(unittest.TestCase):
             "Is there already a fix path?",
         ])
         self.assertEqual(frame.loc[0, "DOLLAR_IMPACT"], "$+80")
-        self.assertIn("COMPUTE_WH", frame.loc[1, "ANSWER"])
+        self.assertIn("WH_ALFA_OVERWATCH", frame.loc[1, "ANSWER"])
         self.assertIn("Open Cost & Contract recommendations", frame.loc[1, "NEXT_ACTION"])
         self.assertIn("No baseline", frame.loc[2, "ANSWER"])
         self.assertEqual(frame.loc[3, "DOLLAR_IMPACT"], "$300/mo")

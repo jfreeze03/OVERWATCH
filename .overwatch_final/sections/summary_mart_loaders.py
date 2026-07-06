@@ -13,6 +13,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from utils.data_state import DataState, data_state_label
 from utils.performance import SUMMARY_AUTOLOAD_QUERY_BUDGET, query_budget_context
 from utils.query import run_query
 
@@ -33,18 +34,27 @@ def _limit(value: int | None) -> int:
     return max(1, min(parsed, DEFAULT_SUMMARY_LIMIT))
 
 
-def _fallback_frame(section: str, workflow: str, *, max_rows: int) -> pd.DataFrame:
+def _fallback_frame(
+    section: str,
+    workflow: str,
+    *,
+    max_rows: int,
+    state: DataState = DataState.REFRESH_REQUIRED,
+) -> pd.DataFrame:
+    status = data_state_label(state)
     return pd.DataFrame(
         [
             {
                 "SECTION": section,
                 "WORKFLOW": workflow,
-                "SOURCE_STATUS": "summary_mart_unavailable",
-                "SUMMARY_STATUS": "pending",
+                "SOURCE_STATUS": status,
+                "SUMMARY_STATUS": status,
+                "DATA_STATE": state.value,
                 "FRESHNESS_TS": datetime.now(UTC).isoformat(timespec="seconds"),
                 "SOURCE_FAMILY": "summary_mart",
                 "IS_FALLBACK": True,
                 "ROW_LIMIT": max_rows,
+                "ROW_COUNT": 0,
                 "RAW_SQL_INCLUDED": False,
             }
         ]
@@ -71,7 +81,7 @@ def _summary_query(
                 sql,
                 ttl_key=ttl_key,
                 use_cache=True,
-                spinner_msg="Loading summary...",
+                spinner_msg="Preparing current summary...",
                 tier="section_summary",
                 section=section,
                 max_rows=max_rows,
@@ -79,9 +89,9 @@ def _summary_query(
             )
             if isinstance(result, pd.DataFrame) and not result.empty:
                 return result
+            return _fallback_frame(section, workflow, max_rows=max_rows, state=DataState.REFRESH_REQUIRED)
         except Exception:
-            pass
-    return _fallback_frame(section, workflow, max_rows=max_rows)
+            return _fallback_frame(section, workflow, max_rows=max_rows, state=DataState.QUERY_FAILED)
 
 
 def _safe_window_days(value: int) -> int:

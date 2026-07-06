@@ -98,12 +98,12 @@ class CostContractSplashMonitoringLoaderTests(unittest.TestCase):
                 "CURRENT_CREDITS": 8.0,
                 "PRIOR_CREDITS": 4.0,
                 "ACTIVE_WAREHOUSES": 1,
-                "TOP_INCREASE_WAREHOUSE": "COMPUTE_WH",
+                "TOP_INCREASE_WAREHOUSE": "WH_ALFA_OVERWATCH",
                 "TOP_INCREASE_CREDITS": 2.0,
             }]),
             "trend": pd.DataFrame([{"DAILY_CREDITS": 2.0, "DAILY_SPEND_USD": 9.0}]),
             "warehouse_delta": pd.DataFrame([{
-                "WAREHOUSE_NAME": "COMPUTE_WH",
+                "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
                 "CURRENT_CREDITS": 8.0,
                 "PRIOR_CREDITS": 4.0,
                 "CREDIT_DELTA": 4.0,
@@ -165,7 +165,7 @@ class CostContractSplashMonitoringLoaderTests(unittest.TestCase):
         root_cause = pd.DataFrame([
             {
                 "SEVERITY": "Critical",
-                "ENTITY": "COMPUTE_WH",
+                "ENTITY": "WH_ALFA_OVERWATCH",
                 "EVIDENCE": "Spend jumped",
                 "NEXT_ACTION": "Review warehouse.",
                 "PROOF_REQUIRED": "Metering proof",
@@ -174,7 +174,7 @@ class CostContractSplashMonitoringLoaderTests(unittest.TestCase):
             },
             {
                 "SEVERITY": "Critical",
-                "ENTITY": "COMPUTE_WH",
+                "ENTITY": "WH_ALFA_OVERWATCH",
                 "EVIDENCE": "Spend jumped",
                 "NEXT_ACTION": "Review warehouse.",
                 "PROOF_REQUIRED": "Metering proof",
@@ -212,7 +212,7 @@ class CostContractSplashMonitoringLoaderTests(unittest.TestCase):
         cockpit = pd.DataFrame([{
             "CURRENT_CREDITS": 40.0,
             "PRIOR_CREDITS": 20.0,
-            "TOP_INCREASE_WAREHOUSE": "COMPUTE_WH",
+            "TOP_INCREASE_WAREHOUSE": "WH_ALFA_OVERWATCH",
             "TOP_INCREASE_CREDITS": 10.0,
         }])
         run_rate = pd.DataFrame([{"PCT_VS_30D_AVG": 30.0}])

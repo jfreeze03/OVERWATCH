@@ -256,7 +256,7 @@ class SecurityPostureSplitTests(unittest.TestCase):
         self.assertEqual(kwargs["key_prefix"], "security_monitoring_command_brief")
         self.assertIn("primary_action", kwargs)
         self.assertIn("detail_action", kwargs)
-        self.assertEqual(kwargs["detail_action"].label, "Load Security Evidence")
+        self.assertEqual(kwargs["detail_action"].label, "Open Security Details")
         self.assertFalse(kwargs["compact"])
         self.assertEqual(rendered, [])
 
@@ -620,7 +620,7 @@ class SecurityPostureSplitTests(unittest.TestCase):
         state_by_surface = dict(zip(rows["SURFACE"], rows["STATE"]))
         self.assertEqual(state_by_surface["Security summary"], "Loaded")
         self.assertEqual(state_by_surface["Control summary"], "Unavailable")
-        self.assertEqual(state_by_surface["Privileged grants"], "On demand")
+        self.assertEqual(state_by_surface["Privileged grants"], "Details available when needed")
 
     def test_security_summary_loader_mart_success_stores_state_and_proof_sql(self):
         summary = pd.DataFrame([{"FAILED_LOGINS": 3}])

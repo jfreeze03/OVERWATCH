@@ -44,7 +44,7 @@ Programmatic access token (PAT) runs are supported without recording the token f
 ```powershell
 $env:OVERWATCH_SNOWFLAKE_CLI_AUTHENTICATOR = "PROGRAMMATIC_ACCESS_TOKEN"
 $env:OVERWATCH_SNOWFLAKE_CLI_TOKEN_FILE_PATH = "C:\secure\overwatch_pat.txt"
-python -m tools.contracts.snowflake_cli_live_validation --connection <connection> --profile internal_live --authenticator PROGRAMMATIC_ACCESS_TOKEN --token-file-path "C:\secure\overwatch_pat.txt" --database DBA_MAINT_DB --schema OVERWATCH --warehouse COMPUTE_WH --company ALFA --environment ALL --window-days 7 --skip-refresh
+python -m tools.contracts.snowflake_cli_live_validation --connection <connection> --profile internal_live --authenticator PROGRAMMATIC_ACCESS_TOKEN --token-file-path "C:\secure\overwatch_pat.txt" --database DBA_MAINT_DB --schema OVERWATCH --warehouse WH_ALFA_OVERWATCH --company ALFA --environment ALL --window-days 7 --skip-refresh
 ```
 
 Artifacts only record `token_file_supplied=true`; they must never record the PAT, token file path, temp SQL file path, raw SQL body, account URL, stack trace, or raw Snowflake error text.
@@ -52,7 +52,7 @@ Artifacts only record `token_file_supplied=true`; they must never record the PAT
 Common options:
 
 ```powershell
-.\scripts\run_snowflake_cli_live_validation.ps1 <connection> -Database DBA_MAINT_DB -Schema OVERWATCH -Warehouse COMPUTE_WH
+.\scripts\run_snowflake_cli_live_validation.ps1 <connection> -Database DBA_MAINT_DB -Schema OVERWATCH -Warehouse WH_ALFA_OVERWATCH
 .\scripts\run_snowflake_cli_live_validation.ps1 <connection> -RunFastRefresh
 .\scripts\run_snowflake_cli_live_validation.ps1 <connection> -SkipRefresh
 ```
@@ -116,7 +116,7 @@ python -m tools.contracts.snowflake_cli_live_validation --connection <connection
 Token-backed equivalent:
 
 ```powershell
-python -m tools.contracts.snowflake_cli_live_validation --connection <connection> --profile internal_live --authenticator PROGRAMMATIC_ACCESS_TOKEN --token-file-path "C:\secure\overwatch_pat.txt" --database DBA_MAINT_DB --schema OVERWATCH --warehouse COMPUTE_WH --company ALFA --environment ALL --window-days 7 --skip-refresh
+python -m tools.contracts.snowflake_cli_live_validation --connection <connection> --profile internal_live --authenticator PROGRAMMATIC_ACCESS_TOKEN --token-file-path "C:\secure\overwatch_pat.txt" --database DBA_MAINT_DB --schema OVERWATCH --warehouse WH_ALFA_OVERWATCH --company ALFA --environment ALL --window-days 7 --skip-refresh
 ```
 
 3. Run FAST refresh validation only when you want that procedure exercised:
@@ -165,7 +165,7 @@ Do not place secrets in waivers, command-line arguments, issue comments, release
 
 ## Troubleshooting Live Findings
 
-- Summary pending / no packet: inspect `packet_availability_matrix_results.json` for exact-scope, relaxed-scope, alternate-window, flat-current, and last-known-good counts.
+- Refresh required / no packet: inspect `packet_availability_matrix_results.json` for exact-scope, relaxed-scope, alternate-window, flat-current, and last-known-good counts.
 - Window mismatch: the Streamlit date range `2026/06/21-2026/06/28` is treated as seven completed packet days. If a user selects an inclusive eight-date range, validation maps it to the seven-day packet convention and reports the closest available packet.
 - Account billing undercount: inspect `snowflake_cli_cost_reconciliation_results.json`; cloud-services adjustment must be present or explicitly unavailable, never silently zeroed.
 - Cortex service type unknown: inspect `cortex_service_type_live_results.json` and the formula rows for unknown-review status. Unknown services do not enter daily Cortex spend until approved.

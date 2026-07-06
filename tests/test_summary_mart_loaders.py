@@ -85,10 +85,12 @@ class SummaryMartLoaderTests(unittest.TestCase):
 
         self.assertEqual(len(result), 1)
         row = result.iloc[0].to_dict()
-        self.assertEqual(row["SOURCE_STATUS"], "summary_mart_unavailable")
-        self.assertEqual(row["SUMMARY_STATUS"], "pending")
+        self.assertEqual(row["SOURCE_STATUS"], "Refresh required")
+        self.assertEqual(row["SUMMARY_STATUS"], "Refresh required")
+        self.assertEqual(row["DATA_STATE"], "REFRESH_REQUIRED")
         self.assertTrue(row["IS_FALLBACK"])
         self.assertEqual(row["ROW_LIMIT"], 50)
+        self.assertEqual(row["ROW_COUNT"], 0)
         self.assertFalse(row["RAW_SQL_INCLUDED"])
         serialized = str(row)
         self.assertNotIn("ACCOUNT_USAGE", serialized)
@@ -105,8 +107,9 @@ class SummaryMartLoaderTests(unittest.TestCase):
             )
 
         row = result.iloc[0].to_dict()
-        self.assertEqual(row["SOURCE_STATUS"], "summary_mart_unavailable")
-        self.assertEqual(row["SUMMARY_STATUS"], "pending")
+        self.assertEqual(row["SOURCE_STATUS"], "Query failed")
+        self.assertEqual(row["SUMMARY_STATUS"], "Query failed")
+        self.assertEqual(row["DATA_STATE"], "QUERY_FAILED")
         self.assertNotIn("raw warehouse failure", str(row))
 
     def test_loader_sql_uses_safe_window_and_summary_mart(self) -> None:

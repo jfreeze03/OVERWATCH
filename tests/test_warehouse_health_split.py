@@ -130,18 +130,18 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         self.assertTrue(any("APPROVAL_STATE" in item for item in migrations))
         self.assertTrue(any("VERIFIED_MONTHLY_SAVINGS" in item for item in migrations))
 
-        review_sql = sql._warehouse_cost_control_review_sql("COMPUTE_WH", recommended_suspend=120)
+        review_sql = sql._warehouse_cost_control_review_sql("WH_ALFA_OVERWATCH", recommended_suspend=120)
         self.assertIn("Review only", review_sql)
         self.assertIn("SHOW WAREHOUSES LIKE", review_sql)
         self.assertIn("ALTER WAREHOUSE", review_sql)
         self.assertIn("AUTO_SUSPEND = 120", review_sql)
 
         setup_sql = sql._overwatch_dedicated_warehouse_setup_sql()
-        self.assertIn("CREATE WAREHOUSE IF NOT EXISTS COMPUTE_WH", setup_sql)
+        self.assertIn("CREATE WAREHOUSE IF NOT EXISTS WH_ALFA_OVERWATCH", setup_sql)
         self.assertIn("AUTO_SUSPEND = 60", setup_sql)
 
-        telemetry_sql = sql._warehouse_setting_review_sql("COMPUTE_WH", "Resize", days=5)
-        self.assertIn("-- Review only: Resize for COMPUTE_WH", telemetry_sql)
+        telemetry_sql = sql._warehouse_setting_review_sql("WH_ALFA_OVERWATCH", "Resize", days=5)
+        self.assertIn("-- Review only: Resize for WH_ALFA_OVERWATCH", telemetry_sql)
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY", telemetry_sql)
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", telemetry_sql)
 
@@ -177,7 +177,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         self.assertEqual(by_surface["Control summary"]["STATE"], "Unavailable")
         self.assertEqual(by_surface["Overview"]["STATE"], "Stale")
         self.assertEqual(by_surface["Scaling events"]["STATE"], "No Rows")
-        self.assertEqual(by_surface["Efficiency"]["STATE"], "On demand")
+        self.assertEqual(by_surface["Efficiency"]["STATE"], "Details available when needed")
         self.assertEqual(by_surface["Capacity brief"]["ROWS"], 1)
         self.assertEqual(by_surface["Overview"]["NEXT_ACTION"], "Reload after changing company, environment, lookback, or triage filters.")
 
@@ -342,7 +342,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
 
         overview = pd.DataFrame([
             {
-                "WAREHOUSE_NAME": "COMPUTE_WH",
+                "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
                 "METERED_CREDITS": 75,
                 "CREDIT_DELTA": 30,
                 "CREDIT_DELTA_PCT": 80,
@@ -364,7 +364,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         ])
         settings = pd.DataFrame([
             {
-                "NAME": "COMPUTE_WH",
+                "NAME": "WH_ALFA_OVERWATCH",
                 "AUTO_SUSPEND": 0,
                 "RESOURCE_MONITOR": "",
                 "STATEMENT_TIMEOUT_IN_SECONDS": 0,
@@ -381,9 +381,9 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         summary, board = actions._build_warehouse_guardrail_coverage(overview, settings_inventory=settings)
         by_wh = {row["WAREHOUSE_NAME"]: row for _, row in board.iterrows()}
 
-        self.assertEqual(by_wh["COMPUTE_WH"]["GUARDRAIL_STATE"], "Blocked")
+        self.assertEqual(by_wh["WH_ALFA_OVERWATCH"]["GUARDRAIL_STATE"], "Blocked")
         self.assertEqual(by_wh["READY_WH"]["GUARDRAIL_STATE"], "Ready")
-        self.assertLess(by_wh["COMPUTE_WH"]["GUARDRAIL_SCORE"], by_wh["READY_WH"]["GUARDRAIL_SCORE"])
+        self.assertLess(by_wh["WH_ALFA_OVERWATCH"]["GUARDRAIL_SCORE"], by_wh["READY_WH"]["GUARDRAIL_SCORE"])
         self.assertEqual(summary["warehouses"], 2)
         self.assertGreaterEqual(summary["blocked"], 1)
         self.assertIn("RESOURCE_MONITOR_STATE", board.columns)
@@ -396,7 +396,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
 
         plan = pd.DataFrame([{
             "PRIORITY": "High",
-            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
             "ACTION_TYPE": "Auto-suspend review",
             "CURRENT_STATE": "Blocked",
             "CURRENT_SETTING": "0",
@@ -407,7 +407,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
             "REVIEW_SQL": "-- review only",
         }])
         settings = pd.DataFrame([{
-            "NAME": "COMPUTE_WH",
+            "NAME": "WH_ALFA_OVERWATCH",
             "AUTO_SUSPEND": 0,
             "AUTO_RESUME": True,
             "WAREHOUSE_SIZE": "XSMALL",
@@ -449,7 +449,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         from sections import warehouse_health_actions as actions
 
         findings = pd.DataFrame([{
-            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
             "SEVERITY": "High",
             "SIGNAL": "Credit Spike",
             "CAPACITY_SCORE": 55,
@@ -558,7 +558,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
             pd.DataFrame([{
                 "SEVERITY": "High",
                 "SIGNAL": "Credit Spike",
-                "WAREHOUSE_NAME": "COMPUTE_WH",
+                "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
                 "METERED_CREDITS": 42.5,
                 "SETTING_CHANGE_CANDIDATE": "Review AUTO_SUSPEND.",
             }]),
@@ -568,7 +568,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         self.assertIn("## DBA Narrative", markdown)
         self.assertIn("## Top Warehouse Exceptions", markdown)
         self.assertIn(
-            "High | Credit Spike | COMPUTE_WH | 42.50 credits | "
+            "High | Credit Spike | WH_ALFA_OVERWATCH | 42.50 credits | "
             "Review AUTO_SUSPEND, MIN_CLUSTER_COUNT, MAX_CLUSTER_COUNT",
             markdown,
         )
@@ -628,7 +628,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
             return len(actions)
 
         exceptions = pd.DataFrame([{
-            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
             "SIGNAL": "Credit Spike",
             "SEVERITY": "High",
             "QUEUED_QUERIES": 2,
@@ -776,7 +776,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
             "wh_capacity_exceptions": pd.DataFrame([{
                 "SEVERITY": "High",
                 "SIGNAL": "Credit Spike",
-                "WAREHOUSE_NAME": "COMPUTE_WH",
+                "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
                 "WAREHOUSE_SIZE": "XSMALL",
                 "QUEUED_QUERIES": 2,
                 "SPILL_QUERIES": 1,
@@ -865,8 +865,8 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         from sections import warehouse_health_view_overview as overview
 
         session_state: dict = {}
-        data = pd.DataFrame([{"WAREHOUSE_NAME": "COMPUTE_WH"}])
-        inventory = pd.DataFrame([{"NAME": "COMPUTE_WH"}])
+        data = pd.DataFrame([{"WAREHOUSE_NAME": "WH_ALFA_OVERWATCH"}])
+        inventory = pd.DataFrame([{"NAME": "WH_ALFA_OVERWATCH"}])
 
         with (
             patch.object(overview.st, "session_state", session_state),
@@ -900,7 +900,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         session_state["wh_scaling_meta"] = overview._warehouse_scope_meta("ALFA", "PROD", 7, state=session_state)
         session_state["wh_df_wh_source"] = "Fast warehouse summary"
         session_state["wh_df_wh"] = pd.DataFrame([{
-            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
             "WAREHOUSE_SIZE": "XSMALL",
             "TOTAL_QUERIES": 20,
             "TOTAL_REMOTE_SPILL_GB": 1.5,
@@ -914,7 +914,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
             "P95_ELAPSED_SEC": 3.0,
         }])
         session_state["wh_settings_inventory"] = pd.DataFrame([{
-            "NAME": "COMPUTE_WH",
+            "NAME": "WH_ALFA_OVERWATCH",
             "AUTO_SUSPEND": 0,
             "RESOURCE_MONITOR": "",
             "STATEMENT_TIMEOUT_IN_SECONDS": 0,
@@ -922,7 +922,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         }])
         session_state["wh_scaling_source"] = "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
         session_state["wh_scaling"] = pd.DataFrame([{
-            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
             "WAREHOUSE_SIZE": "XSMALL",
             "START_TIME": "2026-06-01",
             "END_TIME": "2026-06-01",
@@ -985,7 +985,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         session_state["wh_efficiency_meta"] = efficiency._warehouse_scope_meta("ALFA", "PROD", 7, state=session_state)
         session_state["wh_efficiency_source"] = "SNOWFLAKE.ACCOUNT_USAGE"
         session_state["wh_efficiency"] = pd.DataFrame([{
-            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
             "WAREHOUSE_SIZE": "XSMALL",
             "EFFICIENCY_SCORE": 48.0,
             "METERED_CREDITS": 12.0,
@@ -1027,7 +1027,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         session_state["wh_df_sp_meta"] = spill._warehouse_scope_meta("ALFA", "PROD", 7, state=session_state)
         session_state["wh_df_sp_source"] = "Live: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
         session_state["wh_df_sp"] = pd.DataFrame([{
-            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
             "WAREHOUSE_SIZE": "XSMALL",
             "SPILL_QUERY_COUNT": 3,
             "LOCAL_SPILL_GB": 2.0,
@@ -1064,7 +1064,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         rows = []
         for day in range(7):
             rows.append({
-                "WAREHOUSE_NAME": "COMPUTE_WH",
+                "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
                 "DAY_OF_WEEK": day,
                 "HOUR_OF_DAY": 8,
                 "QUERY_COUNT": day + 1,

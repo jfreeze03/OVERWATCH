@@ -288,8 +288,8 @@ class ExportDownloadGauntletTests(unittest.TestCase):
             payload_path.parent.mkdir(parents=True)
             payload_text = (
                 "query_id,warehouse,status,note\n"
-                "01abc,COMPUTE_WH,OK,C:\\secure\\overwatch_pat_token.txt\n"
-                "01def,COMPUTE_WH,OK,C:\\Temp\\overwatch_snowflake_validation_abc.sql\n"
+                "01abc,WH_ALFA_OVERWATCH,OK,C:\\secure\\overwatch_pat_token.txt\n"
+                "01def,WH_ALFA_OVERWATCH,OK,C:\\Temp\\overwatch_snowflake_validation_abc.sql\n"
             )
             payload_path.write_text(payload_text, encoding="utf-8")
             gate = evaluate_export_download_gate(

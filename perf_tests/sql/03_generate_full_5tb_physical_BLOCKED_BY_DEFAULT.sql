@@ -4,11 +4,11 @@
 
 USE DATABASE DBA_MAINT_DB;
 USE SCHEMA OVERWATCH;
-USE WAREHOUSE COMPUTE_WH;
+USE WAREHOUSE WH_ALFA_OVERWATCH;
 
 -- Required explicit changes before any physical 5TB creation:
 --   1. Confirm resource monitor and budget approval.
---   2. Confirm COMPUTE_WH size/auto-suspend or switch to an approved isolated
+--   2. Confirm WH_ALFA_OVERWATCH size/auto-suspend or switch to an approved isolated
 --      PERF_TEST warehouse.
 --   3. Change ALLOW_FULL_5TB below to TRUE.
 --   4. Uncomment the CTAS block at the bottom.

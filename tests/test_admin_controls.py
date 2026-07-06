@@ -68,7 +68,7 @@ class AdminControlTests(unittest.TestCase):
         bucket_sql = _data_compare_bucket_sql(
             "ALFA_EDW_DEV",
             "PUBLIC",
-            "ALFA_EDW_PROD",
+            "ALFA_EDW_PRD",
             "PUBLIC",
             "POLICY_FACT",
             ["POLICY_ID", "PREMIUM_AMT"],
@@ -77,7 +77,7 @@ class AdminControlTests(unittest.TestCase):
         forensic_sql = _data_compare_forensic_sql(
             "ALFA_EDW_DEV",
             "PUBLIC",
-            "ALFA_EDW_PROD",
+            "ALFA_EDW_PRD",
             "PUBLIC",
             "POLICY_FACT",
             ["POLICY_ID", "PREMIUM_AMT"],
@@ -87,7 +87,7 @@ class AdminControlTests(unittest.TestCase):
         no_key_sql = _data_compare_forensic_sql(
             "ALFA_EDW_DEV",
             "PUBLIC",
-            "ALFA_EDW_PROD",
+            "ALFA_EDW_PRD",
             "PUBLIC",
             "POLICY_FACT",
             ["POLICY_ID", "PREMIUM_AMT"],
@@ -229,7 +229,7 @@ class AdminControlTests(unittest.TestCase):
         target_inventory = _schema_compare_inventory(
             target_objects,
             target_columns,
-            database="ALFA_EDW_PROD",
+            database="ALFA_EDW_PRD",
             schema="PUBLIC",
             side="TARGET",
         )
@@ -238,7 +238,7 @@ class AdminControlTests(unittest.TestCase):
             target_inventory,
             source_db="ALFA_EDW_DEV",
             source_schema="PUBLIC",
-            target_db="ALFA_EDW_PROD",
+            target_db="ALFA_EDW_PRD",
             target_schema="PUBLIC",
         )
         rows = {
@@ -252,16 +252,16 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn(", TRUE)", rows[("PROCEDURE", "SP_LOAD_POLICY")]["DDL_REVIEW_SQL"])
         self.assertIn("AS DDL_STATEMENT", rows[("PROCEDURE", "SP_LOAD_POLICY")]["DDL_REVIEW_SQL"])
         self.assertIn('"ALFA_EDW_DEV"."PUBLIC"."SP_LOAD_POLICY"', rows[("PROCEDURE", "SP_LOAD_POLICY")]["DDL_REVIEW_SQL"])
-        self.assertIn('"ALFA_EDW_PROD"."PUBLIC"', rows[("PROCEDURE", "SP_LOAD_POLICY")]["DDL_REVIEW_SQL"])
+        self.assertIn('"ALFA_EDW_PRD"."PUBLIC"', rows[("PROCEDURE", "SP_LOAD_POLICY")]["DDL_REVIEW_SQL"])
         self.assertIn(
-            'ALTER TABLE "ALFA_EDW_PROD"."PUBLIC"."POLICY_FACT" ADD COLUMN "LOAD_TS" TIMESTAMP_NTZ;',
+            'ALTER TABLE "ALFA_EDW_PRD"."PUBLIC"."POLICY_FACT" ADD COLUMN "LOAD_TS" TIMESTAMP_NTZ;',
             rows[("COLUMN", "POLICY_FACT.LOAD_TS")]["DDL_REVIEW_SQL"],
         )
         script = _schema_compare_ddl_script(
             compare[compare["DDL_REVIEW_SQL"].fillna("").astype(str).str.strip().ne("")],
             source_db="ALFA_EDW_DEV",
             source_schema="PUBLIC",
-            target_db="ALFA_EDW_PROD",
+            target_db="ALFA_EDW_PRD",
             target_schema="PUBLIC",
         )
         self.assertIn("OVERWATCH schema compare missing-object script", script)
@@ -276,11 +276,11 @@ class AdminControlTests(unittest.TestCase):
                 "COMPARE_STATUS": "Only in source",
                 "OBJECT_TYPE": "TABLE",
                 "OBJECT_NAME": "POLICY_FACT",
-                "DDL_STATEMENT": 'CREATE TABLE "ALFA_EDW_PROD"."PUBLIC"."POLICY_FACT" (POLICY_ID NUMBER);',
+                "DDL_STATEMENT": 'CREATE TABLE "ALFA_EDW_PRD"."PUBLIC"."POLICY_FACT" (POLICY_ID NUMBER);',
             }]),
             source_db="ALFA_EDW_DEV",
             source_schema="PUBLIC",
-            target_db="ALFA_EDW_PROD",
+            target_db="ALFA_EDW_PRD",
             target_schema="PUBLIC",
             owner="Release DBA",
             severity="HIGH",
@@ -308,7 +308,7 @@ class AdminControlTests(unittest.TestCase):
             check_name="Policy cutover count/hash",
             source_db="ALFA_EDW_DEV",
             source_schema="PUBLIC",
-            target_db="ALFA_EDW_PROD",
+            target_db="ALFA_EDW_PRD",
             target_schema="PUBLIC",
             table_pattern="%POLICY%",
             key_columns="POLICY_ID",
@@ -680,7 +680,7 @@ class AdminControlTests(unittest.TestCase):
         self.assertNotIn("CREATE OR REPLACE VIEW OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", setup_sql)
         self.assertNotIn("COMPUTE_WH_EXECUTION", setup_sql)
         self.assertNotIn("COMPUTE_WH_EXECUTION", setup_sql)
-        self.assertNotIn("ALFA_EDW_PROD_DATABASE", setup_sql)
+        self.assertNotIn("ALFA_EDW_PRD_DATABASE", setup_sql)
         self.assertNotIn("ALFA_EDW_DEV_DATABASES", setup_sql)
         self.assertNotIn("ARCHITECTURE_DEFAULT", setup_sql)
         self.assertIn("ONCALL_PRIMARY", setup_sql)
@@ -789,23 +789,23 @@ class AdminControlTests(unittest.TestCase):
         self.assertEqual(
             warehouses,
             {
-                "OVERWATCH_ANOMALY_CHECK": "COMPUTE_WH",
-                "OVERWATCH_LOAD_HOURLY": "COMPUTE_WH",
-                "OVERWATCH_LOAD_QUERY_HOURLY": "COMPUTE_WH",
-                "OVERWATCH_LOAD_QUERY_DETAIL": "COMPUTE_WH",
-                "OVERWATCH_LOAD_OBJECT_CHANGE": "COMPUTE_WH",
-                "OVERWATCH_LOAD_TASK_RUN": "COMPUTE_WH",
-                "OVERWATCH_LOAD_PROCEDURE_RUN": "COMPUTE_WH",
-                "OVERWATCH_LOAD_SNAPSHOTS": "COMPUTE_WH",
-                "OVERWATCH_LOAD_TASK_CRITICAL_PATH": "COMPUTE_WH",
-                "OVERWATCH_LOAD_CORTEX": "COMPUTE_WH",
-                "OVERWATCH_REFRESH_CONTROL_ROOM": "COMPUTE_WH",
-                "OVERWATCH_COST_MONITORING_REFRESH": "COMPUTE_WH",
-                "OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH": "COMPUTE_WH",
-                "OVERWATCH_DECISION_BRIEF_FULL_REFRESH": "COMPUTE_WH",
-                "OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH": "COMPUTE_WH",
-                "OVERWATCH_EXECUTIVE_COMMAND_CENTER_REFRESH": "COMPUTE_WH",
-                "OVERWATCH_LOAD_DAILY": "COMPUTE_WH",
+                "OVERWATCH_ANOMALY_CHECK": "WH_ALFA_OVERWATCH",
+                "OVERWATCH_LOAD_HOURLY": "WH_ALFA_OVERWATCH",
+                "OVERWATCH_LOAD_QUERY_HOURLY": "WH_ALFA_OVERWATCH",
+                "OVERWATCH_LOAD_QUERY_DETAIL": "WH_ALFA_OVERWATCH",
+                "OVERWATCH_LOAD_OBJECT_CHANGE": "WH_ALFA_OVERWATCH",
+                "OVERWATCH_LOAD_TASK_RUN": "WH_ALFA_OVERWATCH",
+                "OVERWATCH_LOAD_PROCEDURE_RUN": "WH_ALFA_OVERWATCH",
+                "OVERWATCH_LOAD_SNAPSHOTS": "WH_ALFA_OVERWATCH",
+                "OVERWATCH_LOAD_TASK_CRITICAL_PATH": "WH_ALFA_OVERWATCH",
+                "OVERWATCH_LOAD_CORTEX": "WH_ALFA_OVERWATCH",
+                "OVERWATCH_REFRESH_CONTROL_ROOM": "WH_ALFA_OVERWATCH",
+                "OVERWATCH_COST_MONITORING_REFRESH": "WH_ALFA_OVERWATCH",
+                "OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH": "WH_ALFA_OVERWATCH",
+                "OVERWATCH_DECISION_BRIEF_FULL_REFRESH": "WH_ALFA_OVERWATCH",
+                "OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH": "WH_ALFA_OVERWATCH",
+                "OVERWATCH_EXECUTIVE_COMMAND_CENTER_REFRESH": "WH_ALFA_OVERWATCH",
+                "OVERWATCH_LOAD_DAILY": "WH_ALFA_OVERWATCH",
             },
         )
         self.assertEqual(

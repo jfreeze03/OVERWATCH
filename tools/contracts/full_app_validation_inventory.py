@@ -316,7 +316,7 @@ def _export_results(primary_sections: tuple[str, ...]) -> list[dict[str, Any]]:
     rows.append({
         "filename": "query_search_results.csv",
         "content_type": "text/csv",
-        "content": "query_id,warehouse_name,elapsed_ms\n01abc,COMPUTE_WH,42\n",
+        "content": "query_id,warehouse_name,elapsed_ms\n01abc,WH_ALFA_OVERWATCH,42\n",
         "content_length": 55,
         "row_count": 1,
         "target_label": "Query 01abc",

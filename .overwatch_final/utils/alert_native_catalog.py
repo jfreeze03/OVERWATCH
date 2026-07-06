@@ -141,7 +141,7 @@ def build_alert_data_quality_check_seed_rows() -> list[dict[str, object]]:
     return [
         {
             "CHECK_KEY": "DQ_ORDER_FRESHNESS",
-            "DATABASE_NAME": "ALFA_EDW_PROD",
+            "DATABASE_NAME": "ALFA_EDW_PRD",
             "SCHEMA_NAME": "CURATED",
             "TABLE_NAME": "FACT_ORDER",
             "COLUMN_NAME": "LOAD_TS",
@@ -155,7 +155,7 @@ def build_alert_data_quality_check_seed_rows() -> list[dict[str, object]]:
         },
         {
             "CHECK_KEY": "DQ_POLICY_NULL_RATE",
-            "DATABASE_NAME": "ALFA_EDW_PROD",
+            "DATABASE_NAME": "ALFA_EDW_PRD",
             "SCHEMA_NAME": "CURATED",
             "TABLE_NAME": "DIM_POLICY",
             "COLUMN_NAME": "POLICY_ID",
@@ -169,7 +169,7 @@ def build_alert_data_quality_check_seed_rows() -> list[dict[str, object]]:
         },
         {
             "CHECK_KEY": "DQ_CLAIM_VOLUME_DROP",
-            "DATABASE_NAME": "ALFA_EDW_PROD",
+            "DATABASE_NAME": "ALFA_EDW_PRD",
             "SCHEMA_NAME": "CURATED",
             "TABLE_NAME": "FACT_CLAIM",
             "COLUMN_NAME": "*",
@@ -270,13 +270,13 @@ def build_alert_native_object_registry_seed_rows(
             "CATEGORY": "Cost",
             "ALERT_OBJECT_NAME": "OVERWATCH_ALERT_CORTEX_SPEND_SPIKE",
             "TARGET_ROUTE": "Cost & Contract",
-            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
             "SCHEDULE_TEXT": "60 MINUTE",
             "STATUS": "CANDIDATE",
             "CONDITION_SOURCE": "FACT_CORTEX_DAILY company-labeled 7-day spend vs shared threshold",
             "ACTION_SOURCE": "Insert recommend-only event into ALERT_EVENTS",
             "GENERATED_CREATE_SQL": f"""CREATE OR REPLACE ALERT OVERWATCH_ALERT_CORTEX_SPEND_SPIKE
-  WAREHOUSE = COMPUTE_WH
+  WAREHOUSE = WH_ALFA_OVERWATCH
   SCHEDULE = '60 MINUTE'
   IF (EXISTS (
     SELECT 1
@@ -306,13 +306,13 @@ def build_alert_native_object_registry_seed_rows(
             "CATEGORY": "Cost",
             "ALERT_OBJECT_NAME": "OVERWATCH_ALERT_WAREHOUSE_CREDIT_SPIKE",
             "TARGET_ROUTE": "Cost & Contract",
-            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
             "SCHEDULE_TEXT": "60 MINUTE",
             "STATUS": "CANDIDATE",
             "CONDITION_SOURCE": "FACT_WAREHOUSE_HOURLY company-labeled current-day CREDITS_USED vs 30-day baseline",
             "ACTION_SOURCE": "Insert recommend-only cost movement event into ALERT_EVENTS",
             "GENERATED_CREATE_SQL": f"""CREATE OR REPLACE ALERT OVERWATCH_ALERT_WAREHOUSE_CREDIT_SPIKE
-  WAREHOUSE = COMPUTE_WH
+  WAREHOUSE = WH_ALFA_OVERWATCH
   SCHEDULE = '60 MINUTE'
   IF (EXISTS (
     WITH current_window AS (
@@ -374,13 +374,13 @@ def build_alert_native_object_registry_seed_rows(
             "CATEGORY": "Security",
             "ALERT_OBJECT_NAME": "OVERWATCH_ALERT_PRIVILEGE_ESCALATION",
             "TARGET_ROUTE": "Security Monitoring",
-            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
             "SCHEDULE_TEXT": "60 MINUTE",
             "STATUS": "CANDIDATE",
             "CONDITION_SOURCE": "FACT_GRANT_DAILY company-labeled privileged role grants",
             "ACTION_SOURCE": "Insert status-review event into ALERT_EVENTS",
             "GENERATED_CREATE_SQL": f"""CREATE OR REPLACE ALERT OVERWATCH_ALERT_PRIVILEGE_ESCALATION
-  WAREHOUSE = COMPUTE_WH
+  WAREHOUSE = WH_ALFA_OVERWATCH
   SCHEDULE = '60 MINUTE'
   IF (EXISTS (
     SELECT 1
@@ -412,13 +412,13 @@ def build_alert_native_object_registry_seed_rows(
             "CATEGORY": "Task / Pipeline",
             "ALERT_OBJECT_NAME": "OVERWATCH_ALERT_TASK_FAILURE",
             "TARGET_ROUTE": "Workload Operations",
-            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
             "SCHEDULE_TEXT": "30 MINUTE",
             "STATUS": "CANDIDATE",
             "CONDITION_SOURCE": "FACT_TASK_RUN company/environment-labeled failed/skipped task graph rows",
             "ACTION_SOURCE": "Insert status-review event into ALERT_EVENTS",
             "GENERATED_CREATE_SQL": f"""CREATE OR REPLACE ALERT OVERWATCH_ALERT_TASK_FAILURE
-  WAREHOUSE = COMPUTE_WH
+  WAREHOUSE = WH_ALFA_OVERWATCH
   SCHEDULE = '30 MINUTE'
   IF (EXISTS (
     SELECT 1
@@ -446,13 +446,13 @@ def build_alert_native_object_registry_seed_rows(
             "CATEGORY": "Behavior",
             "ALERT_OBJECT_NAME": "OVERWATCH_ALERT_USER_QUERY_BEHAVIOR",
             "TARGET_ROUTE": "Workload Operations",
-            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
             "SCHEDULE_TEXT": "60 MINUTE",
             "STATUS": "CANDIDATE",
             "CONDITION_SOURCE": "FACT_QUERY_DETAIL_RECENT company/environment-labeled user failure, runtime, spill, and warehouse pressure patterns",
             "ACTION_SOURCE": "Insert status-review behavior event into ALERT_EVENTS",
             "GENERATED_CREATE_SQL": f"""CREATE OR REPLACE ALERT OVERWATCH_ALERT_USER_QUERY_BEHAVIOR
-  WAREHOUSE = COMPUTE_WH
+  WAREHOUSE = WH_ALFA_OVERWATCH
   SCHEDULE = '60 MINUTE'
   IF (EXISTS (
     SELECT 1

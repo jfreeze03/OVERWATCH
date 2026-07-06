@@ -554,11 +554,11 @@ def build_monitoring_cost_sql(days_back: int = 7) -> str:
             COUNT(*) AS events,
             ROUND(SUM(credits_used), 4) AS credits,
             'Exact' AS confidence,
-            'WAREHOUSE_METERING_HISTORY for COMPUTE_WH and Streamlit-style warehouses' AS source
+            'WAREHOUSE_METERING_HISTORY for WH_ALFA_OVERWATCH and Streamlit-style warehouses' AS source
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
         WHERE start_time >= DATEADD('day', -{int(days_back)}, CURRENT_TIMESTAMP())
           AND (
-              warehouse_name = 'COMPUTE_WH'
+              warehouse_name = 'WH_ALFA_OVERWATCH'
               OR warehouse_name ILIKE 'SYSTEM$STREAMLIT%'
               OR warehouse_name ILIKE '%STREAMLIT%'
           )
@@ -639,7 +639,7 @@ def build_app_runtime_cost_sql(days_back: int = 30) -> str:
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
         WHERE start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
           AND (
-              warehouse_name = 'COMPUTE_WH'
+              warehouse_name = 'WH_ALFA_OVERWATCH'
               OR warehouse_name ILIKE 'SYSTEM$STREAMLIT%'
               OR warehouse_name ILIKE '%STREAMLIT%'
           )

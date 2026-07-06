@@ -30,7 +30,7 @@ class QueryDrilldownSafetyTests(unittest.TestCase):
                 "QUERY_ID": "01a1234567890123456",
                 "QUERY_TEXT": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
                 "USER_NAME": "ANALYST",
-                "WAREHOUSE_NAME": "COMPUTE_WH",
+                "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
                 "ELAPSED_SEC": 1.2,
             }
         ])
@@ -72,7 +72,7 @@ class QueryDrilldownSafetyTests(unittest.TestCase):
                 "QUERY_ID": "01a1234567890123456",
                 "QUERY_TEXT": "SELECT * FROM SECRET_TABLE WHERE PASSWORD='hidden'",
                 "USER_NAME": "ANALYST",
-                "WAREHOUSE_NAME": "COMPUTE_WH",
+                "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
                 "ELAPSED_SEC": 1.2,
             }
         ])

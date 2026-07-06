@@ -117,7 +117,7 @@ Trexis:
 
 ALFA:
 
-- `ALFA_EDW_PROD` and `ALFA_EDW_MGM`: `PROD`
+- `ALFA_EDW_PRD` and `ALFA_EDW_MGM`: `PROD`
 - configured development/test ALFA databases: `DEV_ALL`
 
 No database context:

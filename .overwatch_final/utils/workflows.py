@@ -35,7 +35,7 @@ STATUS_DISPLAY_COLUMNS = (
     "OWNER_APPROVAL_STATUS",
 )
 _EXACT_STATUS_DISPLAY_LABELS = {
-    "Not Loaded": "Load on demand",
+    "Not Loaded": "Explicit action",
     "Refresh Needed": "Refresh available",
 }
 _DISPLAY_TEXT_REPLACEMENTS = (

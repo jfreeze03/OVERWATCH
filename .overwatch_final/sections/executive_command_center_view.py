@@ -58,7 +58,6 @@ def _render_recommended_actions_panel(model: ExecutiveCommandCenterModel) -> tup
                             width="stretch",
                         )
                     )
-        st.html('<div class="ow-cc-link-action ow-cc-action-link">View all actions&nbsp; -></div>')
     return refresh_requested, snapshot_requested
 
 
@@ -100,7 +99,7 @@ def render_executive_command_center_page(
 
     mid_left, mid_right = st.columns([1.15, 1.0], gap="small")
     with mid_left:
-        render_coco_leadership_watchlist(model)
+        render_attention_panel(model)
     with mid_right:
         refresh_requested, snapshot_requested = _render_recommended_actions_panel(model)
 
@@ -109,6 +108,7 @@ def render_executive_command_center_page(
         render_recent_status_alerts_panel(model)
     with bottom_right:
         render_operational_context_panel(model)
+    render_coco_leadership_watchlist(model)
 
     return refresh_requested, snapshot_requested
 

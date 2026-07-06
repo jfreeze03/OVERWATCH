@@ -173,17 +173,17 @@ def _metric_value(board: pd.DataFrame, metric: str, column: str = "VALUE") -> fl
 def _top_dimension(board: pd.DataFrame, panel: str, metric: str | None = None) -> tuple[str, float, float]:
     rows = _rows(board, panel, metric)
     if rows.empty:
-        return "On demand", 0.0, 0.0
+        return "Details available when needed", 0.0, 0.0
     try:
         ranked = rows.sort_values(["VALUE_USD", "VALUE"], ascending=[False, False], na_position="last")
         row = ranked.iloc[0]
         return (
-            str(row.get("DIMENSION") or "On demand"),
+            str(row.get("DIMENSION") or "Details available when needed"),
             _safe_float(row.get("VALUE")),
             _safe_float(row.get("VALUE_USD")),
         )
     except Exception:
-        return "On demand", 0.0, 0.0
+        return "Details available when needed", 0.0, 0.0
 
 
 def _credit_price() -> float:
@@ -977,7 +977,7 @@ def summarize_command_board(board: pd.DataFrame) -> dict[str, object]:
     summary.update({
         "score": score["score"],
         "raw_score": score["raw_score"],
-        "state": score["state"] if not rows.empty else "On demand",
+        "state": score["state"] if not rows.empty else "Details available when needed",
         "score_cap": score["score_cap"],
         "cap_reason": score["cap_reason"] if not rows.empty else (
             "Executive observability summary is available after refresh for this scope."

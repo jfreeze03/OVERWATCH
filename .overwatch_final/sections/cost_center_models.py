@@ -32,7 +32,7 @@ def _environment_rollup_for_cost(row) -> str:
     db = _row_text(row, "DATABASE_NAME").upper()
     if db in NO_DATABASE_CONTEXT_VALUES or env in NO_DATABASE_CONTEXT_VALUES:
         return "No Database Context"
-    if db == "ALFA_EDW_PROD" or db in TREXIS_PROD_DATABASES or env == "PROD":
+    if db == "ALFA_EDW_PRD" or db in TREXIS_PROD_DATABASES or env == "PROD":
         return "PROD"
     if (
         db in ALFA_DEV_DATABASES

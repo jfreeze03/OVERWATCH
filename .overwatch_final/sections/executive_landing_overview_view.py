@@ -231,7 +231,7 @@ def _render_executive_overview(
         source="Executive summary facts",
         target_minutes=60,
         refresh_method="Scheduled data refresh",
-        live_fallback="On demand",
+        live_fallback="Details available when needed",
     )
     st.markdown("**Core executive KPIs**")
     _render_executive_kpi_grid(

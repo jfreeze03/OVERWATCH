@@ -107,7 +107,7 @@ def render_command_center_kpi_strip(model: ExecutiveCommandCenterModel) -> None:
 
 
 def _score_value(model: ExecutiveCommandCenterModel) -> float:
-    if model.health_value == "Unavailable":
+    if model.health_value in {"Refresh required", "Unavailable"}:
         return 0.0
     return max(0.0, min(100.0, safe_float(str(model.health_value).split("/")[0], default=0.0)))
 
@@ -115,9 +115,9 @@ def _score_value(model: ExecutiveCommandCenterModel) -> float:
 def render_coco_ai_summary(model: ExecutiveCommandCenterModel) -> None:
     headline = clean_display_text(model.summary_headline)
     detail = clean_display_text(model.summary_detail)
-    if not detail or detail.lower().startswith("connection unavailable"):
-        detail = "Platform summary is pending for the selected scope. Core navigation and drill-through actions remain available."
-    if headline and headline.lower() not in {"summary pending", "operating summary loaded"}:
+    if not detail or "connection unavailable" in detail.lower():
+        detail = "Loading the current packet for the selected scope."
+    if headline and headline.lower() not in {"refresh required", "operating summary loaded"}:
         body = f"{headline}. {detail}"
     else:
         body = detail
@@ -134,11 +134,11 @@ def render_coco_score_section(model: ExecutiveCommandCenterModel) -> None:
     score = _score_value(model)
     dash = 314.16 * score / 100.0
     breakdown = (
-        ("Cost Health", "Ready" if model.total_credits_text != "Unavailable" else "Pending", "blue"),
-        ("Pipeline Success", "Pending", "amber"),
-        ("Security Posture", "Ready" if model.health_value != "Unavailable" else "Pending", "green"),
+        ("Cost Health", "Ready" if model.total_credits_text not in {"Refresh required", "Unavailable"} else "Refresh required", "blue"),
+        ("Pipeline Success", "Open details", "amber"),
+        ("Security Posture", "Ready" if model.health_value not in {"Refresh required", "Unavailable"} else "Refresh required", "green"),
         ("Alert Health", model.open_actions_detail, "amber" if model.open_actions_value != "0" else "green"),
-        ("Warehouse Efficiency", "Scoped" if model.warehouse_slices else "Pending", "purple"),
+        ("Warehouse Efficiency", "Scoped" if model.warehouse_slices else "Refresh required", "purple"),
         ("Data Freshness", model.freshness_value, "blue"),
     )
     items = "".join(
@@ -176,7 +176,7 @@ def render_coco_kpi_row(model: ExecutiveCommandCenterModel) -> None:
         _coco_kpi("Credits Used", model.total_credits_text, "Selected window", "blue"),
         _coco_kpi("Active Warehouses", warehouse_value, "All scoped warehouses", "purple"),
         _coco_kpi("Open Actions", model.open_actions_value, model.open_actions_detail, "amber" if model.open_actions_value != "0" else "green"),
-        _coco_kpi("Account Health", model.health_value, model.health_detail, "green" if model.health_value != "Unavailable" else "amber"),
+        _coco_kpi("Account Health", model.health_value, model.health_detail, "green" if model.health_value not in {"Refresh required", "Unavailable"} else "amber"),
     )
     st.html('<section class="ow-coco-kpi-row" aria-label="Executive KPIs">' + "".join(cards) + "</section>")
 
@@ -199,7 +199,7 @@ def render_coco_warehouse_panel(model: ExecutiveCommandCenterModel) -> None:
             f'<div class="ow-coco-table-row"><strong>{_html(item.warehouse)}</strong><span>{_html(item.credits_text)}</span><em>{_html(item.pct_text)}</em></div>'
             for item in model.warehouse_slices
         )
-        or '<div class="ow-coco-table-row"><strong>Warehouse split</strong><span>Pending</span><em>Packet</em></div>'
+        or '<div class="ow-coco-table-row"><strong>Warehouse split</strong><span>Loading current summary</span><em>Packet</em></div>'
     )
     st.html(
         '<section class="ow-coco-chart-card" aria-label="Top Warehouses by Credits">'
@@ -215,11 +215,11 @@ def render_coco_warehouse_panel(model: ExecutiveCommandCenterModel) -> None:
 def render_coco_leadership_watchlist(model: ExecutiveCommandCenterModel) -> None:
     entries = (
         ("Credit burn", model.total_credits_text, "Cost Intelligence", "blue"),
-        ("Failed logins", "Pending", "Security Monitoring", "amber"),
-        ("Query errors", "Pending", "Workload Operations", "amber"),
-        ("Storage growth", "Pending", "Cost Intelligence", "blue"),
-        ("Cortex Code", "On request", "Cost Intelligence", "purple"),
-        ("Role / grant audit", "On request", "Security Monitoring", "green"),
+        ("Failed logins", "Open details", "Security Monitoring", "amber"),
+        ("Query errors", "Open details", "Workload Operations", "amber"),
+        ("Storage growth", "Open details", "Cost Intelligence", "blue"),
+        ("Cortex Code", "Open details", "Cost Intelligence", "purple"),
+        ("Role / grant audit", "Open details", "Security Monitoring", "green"),
     )
     rows = "".join(
         f'<div class="ow-coco-watch-row"><i data-tone="{_html(tone)}"></i><strong>{_html(label)}</strong><span>{_html(value)}</span><em>{_html(route)}</em></div>'
@@ -280,7 +280,7 @@ def _attention_row(row: CommandCenterStatusRow) -> str:
         f'<div class="ow-cc-attention-row" data-tone="{_html(tone)}">'
         f'<div><i></i><strong>{_html(row.severity)}</strong></div>'
         f'<div><b>{_html(row.status)}</b><small>{_html(row.details)}</small></div>'
-        f'<div><span>Owner</span><small>{_html(row.owner)}</small></div>'
+        f'<div><span>Workflow</span><small>{_html(row.owner)}</small></div>'
         f'<div><span>SLA</span><small>{_html(row.sla)}</small></div>'
         "</div>"
     )
@@ -292,7 +292,6 @@ def render_attention_panel(model: ExecutiveCommandCenterModel) -> None:
         '<section class="ow-cc-card ow-cc-attention-panel" aria-label="What needs attention">'
         '<header><h3>What Needs Attention</h3><span aria-hidden="true">i</span></header>'
         f'<div class="ow-cc-attention-list">{rows}</div>'
-        '<div class="ow-cc-link-action">View all issues&nbsp; -></div>'
         "</section>"
     )
 
@@ -300,15 +299,15 @@ def render_attention_panel(model: ExecutiveCommandCenterModel) -> None:
 def _gauge(model: ExecutiveCommandCenterModel) -> str:
     score_text = model.health_value
     score = 0.0
-    if score_text != "Unavailable":
+    if score_text not in {"Refresh required", "Unavailable"}:
         score = max(0.0, min(100.0, safe_float(score_text.split("/")[0].strip(), default=0.0)))
     dash = 188.0 * score / 100.0
     return (
         '<svg class="ow-cc-gauge" viewBox="0 0 150 102" role="img" aria-label="Account Health">'
         '<path class="track" d="M24 78a51 51 0 0 1 102 0"/>'
         f'<path class="value" stroke-dasharray="{dash:.1f} 188" d="M24 78a51 51 0 0 1 102 0"/>'
-        f'<text x="75" y="66" text-anchor="middle">{_html(score_text.split()[0] if score_text != "Unavailable" else "N/A")}</text>'
-        f'<text x="75" y="86" text-anchor="middle">{"/100" if score_text != "Unavailable" else ""}</text>'
+        f'<text x="75" y="66" text-anchor="middle">{_html(score_text.split()[0] if score_text not in {"Refresh required", "Unavailable"} else "N/A")}</text>'
+        f'<text x="75" y="86" text-anchor="middle">{"/100" if score_text not in {"Refresh required", "Unavailable"} else ""}</text>'
         "</svg>"
     )
 
@@ -352,7 +351,7 @@ def render_credits_by_warehouse_panel(model: ExecutiveCommandCenterModel) -> Non
             f'<div class="ow-cc-legend-row" data-tone="{_html(item.tone)}"><span></span><strong>{_html(item.warehouse)}</strong><em>{_html(item.pct_text)}</em></div>'
             for item in model.warehouse_slices
         )
-        or '<div class="ow-cc-empty-note">Warehouse split unavailable</div>'
+        or '<div class="ow-cc-empty-note">Warehouse split loading</div>'
     )
     st.html(
         '<section class="ow-cc-card ow-cc-warehouse-panel" aria-label="Credits by Warehouse">'
@@ -361,7 +360,6 @@ def render_credits_by_warehouse_panel(model: ExecutiveCommandCenterModel) -> Non
         f'<div class="ow-cc-donut" style="background:{_html(_donut_style(model.warehouse_slices))}"><div><strong>{_html(model.total_credits_text)}</strong><span>Total Credits</span></div></div>'
         f'<div class="ow-cc-donut-legend">{legend}</div>'
         "</div>"
-        '<div class="ow-cc-link-action">View all warehouses&nbsp; -></div>'
         "</section>"
     )
 
@@ -374,9 +372,8 @@ def render_recent_status_alerts_panel(model: ExecutiveCommandCenterModel) -> Non
     st.html(
         '<section class="ow-cc-card ow-cc-status-panel" aria-label="Recent Status and Alerts">'
         '<header><h3>Recent Status &amp; Alerts</h3><span aria-hidden="true">i</span></header>'
-        '<div class="ow-cc-status-head"><span>Severity</span><span>Status</span><span>Details</span><span>Owner</span><span>SLA</span><span>Time</span></div>'
+        '<div class="ow-cc-status-head"><span>Severity</span><span>Status</span><span>Details</span><span>Workflow</span><span>SLA</span><span>Time</span></div>'
         f'<div class="ow-cc-status-table">{rows}</div>'
-        '<div class="ow-cc-link-action">View all alerts&nbsp; -></div>'
         "</section>"
     )
 

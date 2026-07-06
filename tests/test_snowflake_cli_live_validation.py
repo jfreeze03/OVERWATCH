@@ -146,7 +146,7 @@ def _query_budget_stdout() -> str:
                     "bytes_scanned": 0,
                     "rows_produced": 0,
                     "max_elapsed_ms": 0,
-                    "warehouse": "COMPUTE_WH",
+                    "warehouse": "WH_ALFA_OVERWATCH",
                     "query_tag_prefix": "OVERWATCH_VALIDATION",
                 }
             }

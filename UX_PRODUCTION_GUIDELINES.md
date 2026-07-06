@@ -36,7 +36,7 @@ Current canonical production sections:
 2. DBA Control Room
 3. Alert Center
 4. Workload Operations
-5. Cost & Contract
+5. Cost Intelligence
 6. Security Monitoring
 
 Do not introduce a new top-level section unless it represents a distinct DBA
@@ -50,6 +50,12 @@ mart command summaries. A section entry should show the active view, scope,
 freshness, expected lanes, and the next safe load action before detailed rows,
 exports, and specialist diagnostics appear. Heavy live proof and row-level
 account-history reads stay behind explicit load buttons.
+
+First-paint copy must describe the real mart state. Use `Refresh required`
+when a mart exists but has no current packet rows, `No rows for selected scope`
+when the selected scope is empty, `Setup required` when a required object is
+not configured, and `Snowflake connection unavailable` when session setup is
+blocked. Do not leave final cards in a generic waiting state after render.
 
 Executive Landing owns the command-center overview. Its first viewport should
 look and behave like an operational control room: six packet-backed KPI cards,
@@ -88,6 +94,16 @@ driver, and cost-risk state from already-loaded/session data where available.
 When Cortex telemetry is unavailable, show an honest summary-unavailable state
 and route the operator to the explicit Cortex cost-driver workflow instead of
 hiding the signal under tables or expanders.
+
+## Metric Language
+
+Use the governed metric catalog in `.overwatch_final/metrics/metric_registry.py`
+for product labels, thresholds, help text, and recommended actions. In daily UI,
+use `Queries Waiting` instead of `Queue Pressure`, `Source Freshness` instead of
+`Data Trust`, and `Open Work Items` instead of `Open Actions`. Cost screens are
+user-facing `Cost Intelligence` even where the internal route remains
+`Cost & Contract`. Do not surface Owner Coverage, Unassigned Findings,
+Unassigned Alerts, Owner Route, Owner Approval, or Cost Owner as metric cards.
 
 Primary sections should use the Command Brief layer for entry context. Use
 `FirstPaintSummarySpec` only for specialized legacy loaded-context surfaces that

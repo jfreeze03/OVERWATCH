@@ -33,7 +33,7 @@ class DbaToolsQasMonitorTests(unittest.TestCase):
 
         previous = dict(st.session_state)
         qas_df = pd.DataFrame([{
-            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_NAME": "WH_ALFA_OVERWATCH",
             "WAREHOUSE_SIZE": "SMALL",
             "DAY": "2026-06-23",
             "DAILY_CREDITS": 1.25,

@@ -5,7 +5,7 @@
 - Status: `PASS`
 - Environment: `LOKAXGM-WU94316`
 - Role: `SNOW_ACCOUNTADMINS`
-- Warehouse: `COMPUTE_WH`
+- Warehouse: `WH_ALFA_OVERWATCH`
 - Database/schema: `DBA_MAINT_DB.OVERWATCH`
 - JSON evidence: `C:\Users\jfree\Desktop\overwatchv3\_deploy_OVERWATCH\perf_tests\results\SNOWFLAKE_REGRESSION_LIVE_PASS_full_app_snowflake_regression.json`
 

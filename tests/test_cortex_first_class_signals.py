@@ -23,7 +23,7 @@ class CortexFirstClassSignalTests(unittest.TestCase):
 
         signal = build_cortex_signal({}, state={}, days=7)
 
-        self.assertEqual(signal["spend_label"], "Cortex summary pending")
+        self.assertEqual(signal["spend_label"], "Cortex summary loading")
         self.assertEqual(signal["forecast_label"], "Pending")
         self.assertEqual(signal["predictive_alert_label"], "Pending")
         self.assertEqual(signal["top_driver"], "Pending")

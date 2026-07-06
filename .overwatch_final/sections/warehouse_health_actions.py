@@ -353,7 +353,7 @@ def _warehouse_setting_control_board(
         })
 
         route_readiness = str(owner_row.get("ROUTE_READINESS") or "Monitoring")
-        closure_readiness = str(closure_row.get("CLOSURE_READINESS") or "On demand")
+        closure_readiness = str(closure_row.get("CLOSURE_READINESS") or "Details available when needed")
         closure_rank = safe_int(closure_row.get("CLOSURE_RANK", 9))
         overdue = safe_int(closure_row.get("OVERDUE_OPEN", 0))
         fixed_without_verification = safe_int(closure_row.get("FIXED_WITHOUT_VERIFICATION", 0))
@@ -400,7 +400,7 @@ def _warehouse_setting_control_board(
             "AUDIT_ROWS": audit_rows,
             "SUCCESSFUL_CHANGES": safe_int(audit_row.get("SUCCESSFUL_CHANGES", 0)),
             "FAILED_CHANGES": failed_changes,
-            "LAST_EXECUTION_STATUS": audit_row.get("LAST_EXECUTION_STATUS", "On demand"),
+            "LAST_EXECUTION_STATUS": audit_row.get("LAST_EXECUTION_STATUS", "Details available when needed"),
             "LAST_EXECUTED_AT": audit_row.get("LAST_EXECUTED_AT", ""),
             "APPROVAL_REQUIRED": row.get("APPROVAL_REQUIRED", "No"),
             "ROLLBACK_REQUIRED": row.get("ROLLBACK_REQUIRED", "Yes"),
@@ -448,7 +448,7 @@ def _build_warehouse_cost_control_posture(
         auto_resume = _warehouse_bool_setting(row.get("AUTO_RESUME"))
         overview_row = overview_by_wh.get(wh_key, {})
         metered = safe_float(overview_row.get("METERED_CREDITS"))
-        recommended_suspend = 60 if wh_key in {"COMPUTE_WH", "COMPUTE_WH"} or "OVERWATCH" in wh_key else 300
+        recommended_suspend = 60 if wh_key in {"WH_ALFA_OVERWATCH", "WH_ALFA_OVERWATCH"} or "OVERWATCH" in wh_key else 300
 
         reasons: list[str] = []
         rank = 8
@@ -465,7 +465,7 @@ def _build_warehouse_cost_control_posture(
         elif auto_suspend > 1000:
             state = "Needs Review"
             idle_risk = "Longer than current 1000s session timeout"
-            reasons.append("AUTO_SUSPEND exceeds the current COMPUTE_WH session-timeout context.")
+            reasons.append("AUTO_SUSPEND exceeds the current WH_ALFA_OVERWATCH session-timeout context.")
             rank = 1
         elif auto_suspend > 600:
             state = "Needs Review"
@@ -492,7 +492,7 @@ def _build_warehouse_cost_control_posture(
             rank = min(rank, 4)
             reasons.append("AUTO_RESUME was not available from SHOW WAREHOUSES.")
 
-        if wh_key == "COMPUTE_WH":
+        if wh_key == "WH_ALFA_OVERWATCH":
             if state == "Ready":
                 state = "Watch"
                 rank = min(rank, 5)
@@ -542,7 +542,7 @@ def _build_warehouse_cost_control_posture(
         "blocked": int(state_series.eq("Blocked").sum()),
         "review": int(state_series.isin(["Needs Review", "Watch", "Data Missing"]).sum()),
         "ready": int(state_series.eq("Ready").sum()),
-        "overwatch_candidates": int(posture["WAREHOUSE_NAME"].astype(str).str.upper().str.contains("OVERWATCH|COMPUTE_WH").sum()),
+        "overwatch_candidates": int(posture["WAREHOUSE_NAME"].astype(str).str.upper().str.contains("OVERWATCH|WH_ALFA_OVERWATCH").sum()),
     }
     return summary, posture[columns]
 
@@ -610,9 +610,9 @@ def _build_warehouse_guardrail_coverage(
             monitor_state = "Ready"
             monitor_action = "Keep resource monitor assignment with the warehouse review."
             monitor_deduction = 0
-        elif "OVERWATCH" in wh_key or wh_key == "COMPUTE_WH":
+        elif "OVERWATCH" in wh_key or wh_key == "WH_ALFA_OVERWATCH":
             monitor_state = "Blocked"
-            monitor_action = "Assign COMPUTE_WH to COMPUTE_WH_RM before declaring release compute guarded."
+            monitor_action = "Assign WH_ALFA_OVERWATCH to WH_ALFA_OVERWATCH_RM before declaring release compute guarded."
             monitor_deduction = 28
         elif metered >= 50 or credit_delta > 0:
             monitor_state = "Review"
@@ -766,10 +766,10 @@ def _build_warehouse_guardrail_coverage(
             if state in {"Blocked", "Review", "Unknown"}
         ]
         evidence_parts = [
-            f"resource_monitor={monitor_value if monitor_known else 'on demand'}",
-            f"auto_suspend={suspend_value if suspend_known else 'on demand'}",
-            f"statement_timeout={statement_timeout_value if statement_timeout_known else 'on demand'}",
-            f"queued_timeout={queued_timeout_value if queued_timeout_known else 'on demand'}",
+            f"resource_monitor={monitor_value if monitor_known else 'as needed'}",
+            f"auto_suspend={suspend_value if suspend_known else 'as needed'}",
+            f"statement_timeout={statement_timeout_value if statement_timeout_known else 'as needed'}",
+            f"queued_timeout={queued_timeout_value if queued_timeout_known else 'as needed'}",
             f"route={control_state or 'DBA on-call'}",
             f"queued={queued:.2f}s",
             f"spill={spill:.2f} GB",

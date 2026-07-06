@@ -40,6 +40,12 @@ metric contracts, and route action keys. `scripts/generate_decision_brief_contra
 generates the import-safe Python contract module plus Snowflake seed/validation
 snippets, and tests fail when those artifacts drift.
 
+The product-facing metric catalog lives in
+`.overwatch_final/metrics/metric_registry.py`. It maps command-brief metric keys
+to display labels, calculations, units, directionality, good/bad thresholds,
+tooltip copy, and recommended actions. This catalog is app-side governance over
+existing packet rows; it does not add a Snowflake table.
+
 The visible Decision Brief is an operating loop, not a board: status, headline,
 four available primary metrics, top findings with impact/owner/SLA, one primary
 route, up to two secondary routes, the real detail-load action, and compact

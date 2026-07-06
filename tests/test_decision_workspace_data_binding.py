@@ -545,7 +545,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertIn(">9<", markup_a)
         self.assertIn("$987", markup_a)
         self.assertIn("Packet A headline", markup_a)
-        self.assertIn("Trend unavailable", markup_a)
+        self.assertIn("Loading trend", markup_a)
         self.assertNotIn("ow-trend-unavailable", markup_a)
 
         packet_b = _packet(
@@ -657,12 +657,13 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertFalse(brief.raw_payload.get("fixture_mode"))
         self.assertNotIn("section_command_brief::Executive Landing::ALFA::ALL::7::last_good", state)
 
-    def test_initialize_summaries_button_sets_bootstrap_request(self):
+    def test_uninitialized_fallback_does_not_render_initialize_summaries(self):
         from sections.section_command_brief import SectionCommandBrief
         from sections import section_command_rendering
         from sections import decision_workspace_bootstrap as bootstrap
 
         state: dict[str, object] = {}
+        labels: list[str] = []
         brief = SectionCommandBrief(
             section="Executive Landing",
             company="ALFA",
@@ -677,6 +678,11 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             fallback_reason="No packet row.",
             raw_payload={"workspace_mode": "UNINITIALIZED"},
         )
+
+        def _button(label, *args, **kwargs):
+            labels.append(str(label))
+            return False
+
         with patch.dict(os.environ, {"OVERWATCH_TEST_MODE": "1"}), patch.object(
             section_command_rendering.st,
             "session_state",
@@ -688,23 +694,20 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             section_command_rendering.st,
             "columns",
             return_value=[contextlib.nullcontext(), contextlib.nullcontext()],
-        ), patch.object(section_command_rendering.st, "button", return_value=True), patch.object(
-            section_command_rendering.st,
-            "rerun",
-            side_effect=RuntimeError("rerun"),
-        ):
-            with self.assertRaises(RuntimeError):
-                section_command_rendering.render_section_command_brief(brief, key_prefix="bootstrap")
+        ), patch.object(section_command_rendering.st, "button", side_effect=_button):
+            section_command_rendering.render_section_command_brief(brief, key_prefix="bootstrap")
 
-        self.assertTrue(state[bootstrap.BOOTSTRAP_REQUEST_KEY])
+        self.assertNotIn("Initialize" + " summaries", labels)
+        self.assertFalse(state.get(bootstrap.BOOTSTRAP_REQUEST_KEY))
 
-    def test_initialize_summaries_button_records_admin_setup_budget(self):
+    def test_uninitialized_fallback_does_not_open_admin_setup_budget_from_daily_ui(self):
         import performance
         from sections.section_command_brief import SectionCommandBrief
         from sections import decision_workspace_bootstrap as bootstrap
         from sections import section_command_rendering
 
         state: dict[str, object] = {}
+        labels: list[str] = []
         brief = SectionCommandBrief(
             section="Alert Center",
             company="ALFA",
@@ -721,7 +724,8 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         )
 
         def _button(label, *args, **kwargs):
-            return str(label) == "Initialize summaries"
+            labels.append(str(label))
+            return False
 
         with patch.dict(os.environ, {"OVERWATCH_TEST_MODE": "1"}), patch.object(
             section_command_rendering.st,
@@ -737,13 +741,12 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             side_effect=RuntimeError("rerun"),
         ):
             performance.clear_query_budget_context_events()
-            with self.assertRaises(RuntimeError):
-                section_command_rendering.render_section_command_brief(brief, key_prefix="bootstrap_budget")
+            section_command_rendering.render_section_command_brief(brief, key_prefix="bootstrap_budget")
 
-        self.assertTrue(state[bootstrap.BOOTSTRAP_REQUEST_KEY])
+        self.assertNotIn("Initialize" + " summaries", labels)
+        self.assertFalse(state.get(bootstrap.BOOTSTRAP_REQUEST_KEY))
         budget_events = list(state.get("_overwatch_query_budget_context_events", []))
-        self.assertEqual([event["name"] for event in budget_events], ["admin_setup"])
-        self.assertTrue(budget_events[0]["passed_query_budget"])
+        self.assertEqual(budget_events, [])
 
     def test_refresh_lives_in_hero_and_evidence_is_separate(self):
         from sections.section_command_brief import SectionCommandAction, SectionCommandBrief, SectionCommandMetric
@@ -1601,7 +1604,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             )
 
         self.assertIn("Refresh", labels)
-        self.assertIn("Initialize summaries", labels)
+        self.assertNotIn("Initialize" + " summaries", labels)
         self.assertNotIn("Open Setup Health", labels)
 
     def test_fallback_shows_setup_health_action_for_admin_role(self):
@@ -1936,7 +1939,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             environment="ALL",
             window_label="8 days",
             state="Offline",
-            headline="Summary unavailable",
+            headline="Loading current summary",
             summary="Offline fallback",
             source="MART_SECTION_DECISION_CURRENT",
             freshness_label="Freshness unavailable",
@@ -1972,7 +1975,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         )
         for relative in section_files:
             source = (APP_ROOT / "sections" / relative).read_text(encoding="utf-8")
-            self.assertNotIn('render_evidence_settings("Evidence settings"', source, relative)
+            self.assertNotIn('render_evidence_settings("Detail settings"', source, relative)
         renderer = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
         self.assertIn("settings_renderer = controls.evidence_action.settings_renderer", renderer)
 
@@ -1997,7 +2000,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             action = make_evidence_action(
                 "Cost & Contract",
                 "Cost Overview",
-                label="Load Cost Evidence",
+                label="Open Cost Drivers",
                 state_key="cost_contract_command_brief_load_evidence",
             )
             self.assertIsNotNone(action)
@@ -2380,7 +2383,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             ),
         )
         markup = _render_markup(brief)
-        self.assertEqual(markup.count("Trend unavailable"), 1)
+        self.assertEqual(markup.count("Loading trend"), 1)
         self.assertNotIn("ow-trend-unavailable", markup)
 
     def test_decision_window_uses_completed_packet_days(self):
@@ -2501,7 +2504,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                 markup = _render_markup(brief)
                 self.assertIn("ow-decision-workspace", markup)
                 self.assertIn("What needs attention", markup)
-                self.assertIn("Recommended actions", markup)
+                self.assertIn("Recommended Action", markup)
                 self.assertIn("Data Trust", markup)
                 for token in forbidden:
                     self.assertNotIn(token, markup)

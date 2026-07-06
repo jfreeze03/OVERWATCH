@@ -54,7 +54,7 @@ class AlertDeliveryTests(unittest.TestCase):
             "SEVERITY": "critical",
             "CATEGORY": "Reliability",
             "ALERT_TYPE": "Task Failure",
-            "ENTITY_NAME": "ALFA_EDW_PROD.PUBLIC.T_LOAD_POLICY",
+            "ENTITY_NAME": "ALFA_EDW_PRD.PUBLIC.T_LOAD_POLICY",
             "MESSAGE": "Task failed twice.",
             "SUGGESTED_ACTION": "Open Pipeline & Task Health.",
             "PROOF_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY LIMIT 10",
@@ -62,7 +62,7 @@ class AlertDeliveryTests(unittest.TestCase):
 
         self.assertEqual(
             alerts.build_alert_email_subject(row, company="ALFA"),
-            "OVERWATCH Critical: Reliability - ALFA_EDW_PROD.PUBLIC.T_LOAD_POLICY (ALFA)",
+            "OVERWATCH Critical: Reliability - ALFA_EDW_PRD.PUBLIC.T_LOAD_POLICY (ALFA)",
         )
         body = alerts.build_alert_email_body(row, company="ALFA")
         self.assertIn("Environment: PROD", body)

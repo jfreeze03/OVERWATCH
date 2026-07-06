@@ -160,13 +160,13 @@ def build_streamlit_manifest_contract(root: str | Path | None = None) -> pd.Data
         ),
         _contract_row(
             "Snowsight compute pool",
-            "SYSTEM_COMPUTE_POOL_CPU plus query_warehouse COMPUTE_WH",
+            "SYSTEM_COMPUTE_POOL_CPU plus query_warehouse WH_ALFA_OVERWATCH",
             "configured"
             if "compute_pool: SYSTEM_COMPUTE_POOL_CPU" in root_manifest
-            and "query_warehouse: COMPUTE_WH" in root_manifest
+            and "query_warehouse: WH_ALFA_OVERWATCH" in root_manifest
             else "unknown",
             "compute_pool: SYSTEM_COMPUTE_POOL_CPU" in root_manifest
-            and "query_warehouse: COMPUTE_WH" in root_manifest,
+            and "query_warehouse: WH_ALFA_OVERWATCH" in root_manifest,
             "Keep Snowsight deploy on the approved compute pool and query warehouse.",
         ),
         _contract_row(
@@ -194,10 +194,10 @@ def build_streamlit_manifest_contract(root: str | Path | None = None) -> pd.Data
         ),
         _contract_row(
             "Snowflake runtime warehouse",
-            "query_warehouse: COMPUTE_WH",
-            "COMPUTE_WH" if "query_warehouse: COMPUTE_WH" in manifest else "unknown",
-            "query_warehouse: COMPUTE_WH" in manifest,
-            "Use COMPUTE_WH for app execution until a dedicated OVERWATCH warehouse is approved.",
+            "query_warehouse: WH_ALFA_OVERWATCH",
+            "WH_ALFA_OVERWATCH" if "query_warehouse: WH_ALFA_OVERWATCH" in manifest else "unknown",
+            "query_warehouse: WH_ALFA_OVERWATCH" in manifest,
+            "Use WH_ALFA_OVERWATCH for app execution until a dedicated OVERWATCH warehouse is approved.",
         ),
         _contract_row(
             "Snowflake owner-rights boundary",
@@ -287,7 +287,7 @@ def build_streamlit_deployment_decision() -> pd.DataFrame:
             "DECISION": "Use .overwatch_final/snowflake.yml",
             "ENTRYPOINT": ".overwatch_final/app.py",
             "MANIFEST": ".overwatch_final/snowflake.yml",
-            "WAREHOUSE": "COMPUTE_WH",
+            "WAREHOUSE": "WH_ALFA_OVERWATCH",
             "EXECUTE_AS": "owner_default_no_manifest_key",
             "DEPLOY_CONTEXT": "Snowflake app package root is .overwatch_final.",
             "DO_NOT_USE": "streamlit_app.py, unsupported execute_as override",

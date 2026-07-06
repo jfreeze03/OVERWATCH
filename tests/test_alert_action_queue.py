@@ -44,7 +44,7 @@ class AlertActionQueueTests(unittest.TestCase):
             "ALERT_TYPE": "Credit Spike",
             "SEVERITY": "High",
             "STATUS": "New",
-            "ENTITY_NAME": "COMPUTE_WH",
+            "ENTITY_NAME": "WH_ALFA_OVERWATCH",
             "MESSAGE": "Credits increased by 50 percent.",
             "SUGGESTED_ACTION": "Open Cost & Contract.",
             "PROOF_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY LIMIT 10",
@@ -61,7 +61,7 @@ class AlertActionQueueTests(unittest.TestCase):
         self.assertEqual(action["Severity"], "High")
         self.assertEqual(action["Category"], "Cost Control")
         self.assertEqual(action["Entity Type"], "Alert Entity")
-        self.assertEqual(action["Entity"], "COMPUTE_WH")
+        self.assertEqual(action["Entity"], "WH_ALFA_OVERWATCH")
         self.assertEqual(action["Owner"], "DBA / Cost owner")
         self.assertEqual(action["Verification Status"], "Pending")
         self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
@@ -76,8 +76,8 @@ class AlertActionQueueTests(unittest.TestCase):
                 "ALERT_TYPE": "Task Failure",
                 "SEVERITY": "Critical",
                 "STATUS": "New",
-                "ENTITY_NAME": "ALFA_EDW_PROD.PUBLIC.T_LOAD_POLICY",
-                "DATABASE_NAME": "ALFA_EDW_PROD",
+                "ENTITY_NAME": "ALFA_EDW_PRD.PUBLIC.T_LOAD_POLICY",
+                "DATABASE_NAME": "ALFA_EDW_PRD",
                 "SCHEMA_NAME": "PUBLIC",
                 "MESSAGE": "2 failed task runs.",
                 "SUGGESTED_ACTION": "Review task failure.",
@@ -109,7 +109,7 @@ class AlertActionQueueTests(unittest.TestCase):
         ])
 
         by_entity = {action["Entity"]: action for action in alerts.alert_history_to_actions(rows, company="ALFA")}
-        task = by_entity["ALFA_EDW_PROD.PUBLIC.T_LOAD_POLICY"]
+        task = by_entity["ALFA_EDW_PRD.PUBLIC.T_LOAD_POLICY"]
         proc = by_entity["ALFA_EDW_DEV.PUBLIC.SP_LOAD_POLICY"]
 
         self.assertEqual(task["Category"], "Task & Procedure Reliability")

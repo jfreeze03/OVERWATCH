@@ -38,7 +38,7 @@ class CommandBriefDetailAction:
     callback: Callable[[], None]
     key: str | None = None
     settings_renderer: Callable[[], None] | None = None
-    settings_label: str = "Evidence settings"
+    settings_label: str = "Detail settings"
 
 
 @dataclass(frozen=True)
@@ -104,7 +104,7 @@ def make_evidence_action(
     state_key: str = "",
     key: str | None = None,
     settings_renderer: Callable[[], None] | None = None,
-    settings_label: str = "Evidence settings",
+    settings_label: str = "Detail settings",
 ) -> CommandBriefDetailAction | None:
     """Return a renderer-compatible evidence action when a real boundary exists."""
     if callback is None and not state_key:

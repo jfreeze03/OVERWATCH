@@ -162,7 +162,7 @@ def render_chart_table_panel(
     chart_html: str,
     table_columns: Sequence[str],
     callout: str,
-    drillthrough_label: str,
+    context_label: str,
     source_label: str = "App-facing summary view",
     max_rows: int = 8,
 ) -> None:
@@ -171,11 +171,11 @@ def render_chart_table_panel(
         '<section class="ow-lw-panel">'
         '<header>'
         f'<div><h3>{_html(title)}</h3><p>{_html(description)}</p></div>'
-        f'<span>{_html(source_label)} · {_html(_freshness(safe))}</span>'
+        f'<span>{_html(source_label)} - {_html(_freshness(safe))}</span>'
         '</header>'
         f'<div class="ow-lw-callout">{_html(callout)}</div>'
         f'{chart_html}'
-        f'<div class="ow-lw-drill">{_html(drillthrough_label)} -></div>'
+        f'<div class="ow-lw-context" data-interactive="false" data-action-like="false">{_html(context_label)}</div>'
         '</section>'
     )
     st.dataframe(_format_table(safe, table_columns, max_rows=max_rows), hide_index=True, width="stretch")
@@ -191,7 +191,7 @@ def _credit_daily_panels(company: str, environment: str, start_date: object, end
         chart_html=_sparkline(_series(credit, "CREDITS_USED"), tone="warning"),
         table_columns=("USAGE_DATE", "SERVICE_TYPE", "WAREHOUSE_NAME", "CREDITS_USED", "ESTIMATED_COST_USD"),
         callout=_status_from_total(total, unit="credits"),
-        drillthrough_label="Load Cost Evidence",
+        context_label="Cost drivers available in Cost Intelligence",
     )
 
     ytd_start = date(_today().year, 1, 1)
@@ -216,7 +216,7 @@ def _credit_daily_panels(company: str, environment: str, start_date: object, end
             safe_float(pd.to_numeric(monthly.get("CREDITS_USED", pd.Series(dtype=float)), errors="coerce").sum(), default=float("nan")),
             unit="YTD credits",
         ),
-        drillthrough_label="Open Cost Intelligence",
+        context_label="Cost Intelligence workflow available",
     )
 
 
@@ -240,7 +240,7 @@ def render_cost_leadership_panels(
         chart_html=_bar_chart(comparison.get("CONTRIBUTOR_NAME", []), comparison.get("CREDIT_DELTA", []), tone="warning"),
         table_columns=("CONTRIBUTOR_TYPE", "CONTRIBUTOR_NAME", "CURRENT_24H_CREDITS", "PRIOR_24H_CREDITS", "CREDIT_DELTA", "PCT_DELTA"),
         callout="Flat versus prior 24h" if math.isfinite(delta) and abs(delta) < 0.01 else f"{delta:+,.1f} credit delta versus prior 24h",
-        drillthrough_label="Open contributors",
+        context_label="Contributor detail available in Cost Intelligence",
     )
 
     storage = leadership_queries.get_storage_daily(company, environment, start_date, end_date)
@@ -252,7 +252,7 @@ def render_cost_leadership_panels(
         chart_html=_bar_chart(storage.get("DATABASE_NAME", []), storage.get("TOTAL_TB", []), tone="info"),
         table_columns=("USAGE_DATE", "DATABASE_NAME", "DATABASE_TB", "FAILSAFE_TB", "TOTAL_TB", "DAILY_GROWTH_BYTES", "DAILY_GROWTH_PCT"),
         callout="Storage source unavailable" if not math.isfinite(growth) else f"{growth / (1024 ** 4):+,.2f} TB net daily growth",
-        drillthrough_label="Review storage drivers",
+        context_label="Storage driver detail available in Cost Intelligence",
     )
 
     cortex_start, cortex_end = _window(30)
@@ -265,7 +265,7 @@ def render_cost_leadership_panels(
         chart_html=_bar_chart(cortex.get("USER_CHART_LABEL", []), cortex.get("TOKEN_COUNT", []), tone="healthy"),
         table_columns=("USAGE_DATE", "USER_CHART_LABEL", "CLIENT_SOURCE", "SERVICE_TYPE", "TOKEN_COUNT", "CREDITS_USED", "ESTIMATED_COST_USD"),
         callout=_status_from_total(tokens, unit="tokens"),
-        drillthrough_label="Open Cortex drivers",
+        context_label="Cortex drivers available in Cost Intelligence",
     )
 
 
@@ -295,7 +295,7 @@ def render_security_leadership_panels(company: str, environment: str, *, days: i
         chart_html=_bar_chart(failed_last_hour.get("USER_NAME", []), failed_last_hour.get("FAILED_COUNT", []), tone="critical"),
         table_columns=("USER_NAME", "CLIENT_IP", "REPORTED_CLIENT_TYPE", "ERROR_CODE", "ERROR_MESSAGE", "FIRST_SEEN", "LAST_SEEN", "FAILED_COUNT"),
         callout=_status_from_total(failed_total, unit="failed logins"),
-        drillthrough_label="Load Security Evidence",
+        context_label="Security detail available in Security Monitoring",
     )
 
     login = leadership_queries.get_login_security(company, environment, start_date, end_date)
@@ -306,7 +306,7 @@ def render_security_leadership_panels(company: str, environment: str, *, days: i
         chart_html=_sparkline(_series(login, "FAILED_COUNT"), tone="warning"),
         table_columns=("EVENT_DATE", "LOGIN_COUNT", "FAILED_COUNT", "USER_NAME", "CLIENT_IP", "RISK_REASON"),
         callout=f"{safe_int(pd.to_numeric(login.get('FAILED_COUNT', pd.Series(dtype=float)), errors='coerce').sum()):,} failed login(s) in 7 days",
-        drillthrough_label="Open Failed Logins",
+        context_label="Failed-login detail available in Security Monitoring",
     )
 
     suspicious = leadership_queries.get_suspicious_logins(company, environment, start_date, end_date)
@@ -317,7 +317,7 @@ def render_security_leadership_panels(company: str, environment: str, *, days: i
         chart_html=_bar_chart(suspicious.get("CLIENT_IP", []), suspicious.get("RISK_SCORE", []), tone="critical"),
         table_columns=("USER_NAME", "CLIENT_IP", "REPORTED_CLIENT_TYPE", "FAILED_COUNT", "ERROR_MESSAGE", "FIRST_SEEN", "LAST_SEEN", "RISK_REASON"),
         callout=f"{len(suspicious):,} suspicious login pattern(s)" if not suspicious.empty else "No suspicious login patterns in scope",
-        drillthrough_label="Review access signals",
+        context_label="Access signal detail available in Security Monitoring",
     )
 
     grants = leadership_queries.get_role_grant_audit(company, environment)
@@ -328,7 +328,7 @@ def render_security_leadership_panels(company: str, environment: str, *, days: i
         chart_html=_bar_chart(grants.get("ROLE_NAME", []), [1] * len(grants), tone="warning"),
         table_columns=("ROLE_NAME", "PRIVILEGE", "GRANTED_ON", "OBJECT_DATABASE", "OBJECT_NAME", "GRANTEE_NAME", "GRANTED_BY", "CREATED_ON", "DELETED_ON"),
         callout=f"{len(grants):,} grant row(s) in audit scope" if not grants.empty else "No grant changes in audit scope",
-        drillthrough_label="Open Risky Grants",
+        context_label="Risky grant detail available in Security Monitoring",
     )
 
 
@@ -344,7 +344,7 @@ def render_workload_query_error_panels(company: str, environment: str) -> None:
         chart_html=_bar_chart(errors.get("ERROR_CODE", []), errors.get("FAILED_QUERY_COUNT", []), tone="critical"),
         table_columns=("ERROR_CODE", "ERROR_MESSAGE", "FAILED_QUERY_COUNT", "USER_NAME", "WAREHOUSE_NAME", "DATABASE_NAME", "LATEST_OCCURRENCE", "LATEST_QUERY_ID"),
         callout=f"{safe_int(pd.to_numeric(errors.get('FAILED_QUERY_COUNT', pd.Series(dtype=float)), errors='coerce').sum()):,} failed query row(s) in 24h",
-        drillthrough_label="Open Query Investigation",
+        context_label="Query Investigation workflow available",
     )
     render_chart_table_panel(
         title="Failed Query Trend",
@@ -353,7 +353,7 @@ def render_workload_query_error_panels(company: str, environment: str) -> None:
         chart_html=_sparkline(_series(errors, "FAILED_QUERY_COUNT"), tone="warning"),
         table_columns=("EVENT_HOUR", "TOTAL_QUERY_COUNT", "FAILED_QUERY_COUNT", "FAILURE_RATE", "ERROR_CODE", "WAREHOUSE_NAME"),
         callout="Failure trend unavailable" if errors.empty else "Review top error code before tuning warehouse capacity",
-        drillthrough_label="Open specialist workflow",
+        context_label="Specialist workflow available",
     )
 
 
@@ -379,7 +379,7 @@ def render_alert_candidate_panel() -> None:
         chart_html=_bar_chart(frame["category"], [idx + 1 for idx in range(len(frame))], tone="info"),
         table_columns=("category", "threshold", "severity", "route", "owner", "source_panel", "suppression"),
         callout=f"{len(candidates):,} monitored candidate categories",
-        drillthrough_label="Open Detection Catalog",
+        context_label="Detection catalog available in Alert Center",
         source_label="Alert rule catalog",
         max_rows=10,
     )

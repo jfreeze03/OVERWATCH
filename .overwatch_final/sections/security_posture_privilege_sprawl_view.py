@@ -193,7 +193,7 @@ def _render_privileged_grant_readiness(
             st.info("Load this before granting, revoking, or narrowing high-risk roles and object privileges.")
             with st.expander("Privileged Grant Status", expanded=False):
                 render_shell_snapshot((
-                    ("Scope", "On demand"),
+                    ("Scope", "Details available when needed"),
                     ("Escalation route", "Required"),
                     ("Review", "Required"),
                     ("Execution", "Runbook only"),

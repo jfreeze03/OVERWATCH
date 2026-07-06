@@ -11,7 +11,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from html import escape
 import math
 
-from utils.display_safety import safe_source_footer_items, scrub_daily_text
+from utils.data_state import detail_available_text, first_paint_text
+from utils.display_safety import clean_display_text, safe_source_footer_items
 
 
 def _section_label(value: object) -> str:
@@ -37,7 +38,7 @@ def _value(item: object, *names: str, default: object = "") -> object:
 
 
 def _safe(value: object) -> str:
-    return escape(scrub_daily_text(value), quote=True)
+    return escape(first_paint_text(clean_display_text(value)), quote=True)
 
 
 def _tone(value: object) -> str:
@@ -110,7 +111,7 @@ def render_signal_panel(findings: Sequence[object], *, title: object = "What nee
         severity = _value(item, "severity", default="Info")
         signal = _value(item, "signal", "title", default="Review summary")
         entity = _value(item, "entity_name", "entity", "entity_id", default="Entity unavailable")
-        owner = _value(item, "owner_name", "owner", default="Owner unavailable")
+        workflow = _value(item, "route_workflow", "workflow", "owner_name", "owner", default="Workflow unavailable")
         sla = _value(item, "sla", "due_label", "sla_state", default="SLA unavailable")
         first_seen = _value(item, "first_seen_label", default="")
         due = _value(item, "due_label", default="")
@@ -131,7 +132,7 @@ def render_signal_panel(findings: Sequence[object], *, title: object = "What nee
             f'<strong>{_safe(severity)}</strong>'
             f'<div class="ow-attention-copy"><b>{_safe(signal)}</b><small>{_safe(detail)}</small>{supplemental}</div>'
             f'<div class="ow-attention-meta"><span>Entity</span><b>{_safe(entity)}</b></div>'
-            f'<div class="ow-attention-meta"><span>Owner</span><b>{_safe(owner)}</b></div>'
+            f'<div class="ow-attention-meta"><span>Workflow</span><b>{_safe(workflow)}</b></div>'
             f'<div class="ow-attention-meta"><span>SLA</span><b>{_safe(sla)}</b></div>'
             "</div>"
         )
@@ -141,9 +142,9 @@ def render_signal_panel(findings: Sequence[object], *, title: object = "What nee
             '<span class="ow-attention-icon" data-severity="clear"></span>'
             '<strong>CLEAR</strong>'
             '<div class="ow-attention-copy"><b>No threshold breach in the command brief</b>'
-            '<small>Evidence loads on request.</small></div>'
-            '<div class="ow-attention-meta"><span>Owner</span><b>Owner unavailable</b></div>'
-            '<div class="ow-attention-meta"><span>SLA</span><b>SLA unavailable</b></div>'
+            f'<small>{_safe(detail_available_text())}</small></div>'
+            '<div class="ow-attention-meta"><span>Workflow</span><b>Overview</b></div>'
+            '<div class="ow-attention-meta"><span>SLA</span><b>Current window</b></div>'
             "</div>"
         )
     return '<section class="ow-kit-signal-panel ow-decision-attention-panel">' f"<h4>{_safe(title)}</h4>" + "".join(rows) + "</section>"
@@ -155,7 +156,7 @@ def render_action_row(actions: Sequence[object], *, title: object = "Recommended
     rows = []
     for action in tuple(actions or ())[:3]:
         label = _value(action, "cta", "label", default="Open")
-        detail = _value(action, "detail", "description", default="Evidence loads on request")
+        detail = _value(action, "detail", "description", default=detail_available_text())
         rows.append(
             '<div class="ow-kit-action-row ow-kit-action-summary" data-action-like="false">'
             '<span>Action available below</span>'
@@ -166,7 +167,7 @@ def render_action_row(actions: Sequence[object], *, title: object = "Recommended
         rows.append(
             '<div class="ow-kit-action-row ow-kit-action-summary" data-action-like="false">'
             "<span>Recommended action</span><strong>Continue monitoring</strong>"
-            "<small>Evidence loads on request.</small></div>"
+            f"<small>{_safe(detail_available_text())}</small></div>"
         )
     return (
         '<section class="ow-kit-action-panel ow-kit-recommendation-panel" '
@@ -194,14 +195,14 @@ def _trend_detail(metric: object) -> str:
         if numeric_points > 0:
             parts.append(f"{int(numeric_points)} trend point{'s' if int(numeric_points) != 1 else ''}")
         else:
-            parts.append("Trend unavailable")
+            parts.append("Loading trend")
     elif "run-rate" in detail.lower() or quality.lower() in {"run_rate", "run-rate", "run-rate only"}:
         parts.append("Run-rate only")
     if quality:
         parts.append(f"Quality: {quality}")
     if zero_policy:
         parts.append(f"Zero policy: {zero_policy}")
-    return " · ".join(parts) if parts else "Trend unavailable"
+    return " - ".join(parts) if parts else "Loading trend"
 
 
 def render_change_panel(model: object, *, title: object = "What changed") -> str:
@@ -226,8 +227,8 @@ def render_change_panel(model: object, *, title: object = "What changed") -> str
     if not rows:
         rows.append(
             '<article class="ow-kit-change-row ow-decision-trend-tile">'
-            "<span>Trend</span><strong>Trend unavailable</strong>"
-            "<small>No governed trend metadata in this packet.</small></article>"
+            "<span>Trend</span><strong>Loading trend</strong>"
+            "<small>Trend loads with the current packet.</small></article>"
         )
     return (
         '<section class="ow-kit-change-panel ow-decision-trend-band" aria-label="What changed">'
@@ -355,9 +356,9 @@ def render_area_trend_panel(
 
 def render_evidence_empty_state(
     *,
-    title: object = "Evidence loads on request",
-    detail: object = "Use the section evidence action to load compact rows for this scope.",
-    cta: object = "Load evidence",
+    title: object = "Details available when needed",
+    detail: object = "Use the section detail action to open compact rows for this scope.",
+    cta: object = "Open details",
 ) -> str:
     return (
         '<section class="ow-kit-evidence-empty ow-decision-evidence-panel">'
@@ -370,20 +371,20 @@ def render_evidence_empty_state(
 
 def render_compact_pending_state(
     *,
-    title: object = "Summary pending",
-    detail: object = "Waiting for the current summary packet.",
+    title: object = "Refresh required",
+    detail: object = "Mart exists but has no current rows for this view.",
     latest_available: object = "",
 ) -> str:
     latest = f'<small>{_safe(latest_available)}</small>' if str(latest_available or "").strip() else ""
     return (
         '<section class="ow-kit-pending-state ow-decision-recovery ow-decision-operating-loop">'
         '<div class="ow-decision-loop-header" data-state="uninitialized">'
-        f'<strong>{_safe(title)}</strong><span>Evidence loads on request</span></div>'
+        f'<strong>{_safe(title)}</strong><span>{_safe(detail_available_text())}</span></div>'
         f'<p class="ow-decision-loop-summary">{_safe(detail)}</p>{latest}</section>'
     )
 
 
-def render_command_brief(model: object) -> str:
+def render_command_brief(model: object, *, include_attention: bool = True) -> str:
     """Return a full CommandBrief shell from a view model-like object."""
 
     source_labels = [_value(row, "source_object", "source_key") for row in tuple(_value(model, "source_rows", default=()) or ())]
@@ -429,9 +430,13 @@ def render_command_brief(model: object) -> str:
         'aria-label="CommandBrief">'
         + hero
         + metrics
-        + '<div class="ow-decision-main-grid ow-decision-main-grid-single">'
-        + signals
-        + "</div>"
+        + (
+            '<div class="ow-decision-main-grid ow-decision-main-grid-single">'
+            + signals
+            + "</div>"
+            if include_attention
+            else ""
+        )
         + changes
         + footer
         + "</section>"

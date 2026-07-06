@@ -11,7 +11,6 @@ import re
 import streamlit as st
 
 from utils.performance import (
-    ADMIN_CLICK_QUERY_BUDGET,
     SECTION_ROUTE_QUERY_BUDGET,
     current_first_paint_render_id,
     end_first_paint,
@@ -32,7 +31,6 @@ from sections.decision_workspace_components import (
     render_signal_panel as _kit_signal_panel,
 )
 from sections.decision_workspace_setup_health import can_open_decision_setup_health, open_decision_setup_health
-from sections.decision_workspace_bootstrap import BOOTSTRAP_REQUEST_KEY
 from sections.decision_workspace_view_model import (
     DecisionActionView,
     DecisionMetricCell,
@@ -41,7 +39,8 @@ from sections.decision_workspace_view_model import (
     format_metric_value,
 )
 from sections.section_command_brief import SectionCommandBrief
-from utils.display_safety import safe_source_label, scrub_daily_text
+from utils.data_state import detail_available_text, first_paint_text
+from utils.display_safety import clean_display_text, safe_source_label
 
 _COMMAND_BRIEF_HTML = _kit_command_brief
 
@@ -63,7 +62,7 @@ def _html(value: object) -> str:
 
 def _public_text(value: object) -> str:
     """Remove Snowflake implementation names from first-viewport user copy."""
-    text = scrub_daily_text(value)
+    text = first_paint_text(clean_display_text(value))
     text = re.sub(r"\bsnowflake/[A-Za-z0-9_./-]+\.sql\b", "setup script", text, flags=re.IGNORECASE)
     return text
 
@@ -299,18 +298,16 @@ def _render_fallback(
                 tone="warning",
             ),
             DecisionMetricCell(
-                key="evidence_state",
-                label="Evidence",
-                value="On request",
-                detail="Use the action buttons below",
+                key="details_state",
+                label="Details",
+                value=detail_available_text(),
+                detail="Use Recommended actions",
                 tone="neutral",
             ),
         )
     fallback_actions: list[DecisionActionView] = []
     if refresh_action is not None:
         fallback_actions.append(DecisionActionView(label="Refresh", cta="Refresh"))
-    if fallback.can_initialize:
-        fallback_actions.append(DecisionActionView(label=fallback.recovery_label, cta=fallback.recovery_label))
     if detail_action is not None and fallback.can_show_evidence:
         fallback_actions.append(DecisionActionView(label=detail_action.label, cta=detail_action.label))
     fallback_model = replace(
@@ -331,16 +328,14 @@ def _render_fallback(
         actions = []
         if refresh_action is not None:
             actions.append("refresh")
-        if fallback.can_initialize:
-            actions.append("initialize")
-            if can_open_decision_setup_health():
-                actions.append("setup_health")
-            else:
-                st.html(
-                    '<p class="ow-decision-admin-note">'
-                    "Ask an administrator to review Decision summary setup health."
-                    "</p>"
-                )
+        if fallback.can_initialize and can_open_decision_setup_health():
+            actions.append("setup_health")
+        elif fallback.can_initialize:
+            st.html(
+                '<p class="ow-decision-admin-note">'
+                "Ask an administrator to review Decision summary setup health."
+                "</p>"
+            )
         attempt_note = _bootstrap_attempt_note()
         if attempt_note:
             st.html(
@@ -353,7 +348,7 @@ def _render_fallback(
         if not actions:
             return
         with st.container(key=f"{key_prefix}_recommended_actions_panel", border=False):
-            st.html('<div class="ow-decision-actions-panel-label">Recommended actions</div>')
+            st.html('<div class="ow-decision-actions-panel-label">Recommended Action</div>')
             for action in actions:
                 label_col, button_col = st.columns([3.2, 1.35])
                 if action == "refresh":
@@ -369,24 +364,6 @@ def _render_fallback(
                         ):
                             _close_first_paint_for_user_action()
                             refresh_action()
-                            st.rerun()
-                elif action == "initialize":
-                    with label_col:
-                        _render_action_copy(fallback.recovery_label, "Initialize current summary packets for this scope.")
-                    with button_col:
-                        if st.button(
-                            fallback.recovery_label,
-                            key=f"{key_prefix}_fallback_initialize_summaries",
-                            width="stretch",
-                        ):
-                            _close_first_paint_for_user_action()
-                            with query_budget_context(
-                                "admin_setup",
-                                section=model.section,
-                                workflow=model.workflow or "Decision Summary Initialization",
-                                budget=ADMIN_CLICK_QUERY_BUDGET,
-                            ):
-                                st.session_state[BOOTSTRAP_REQUEST_KEY] = True
                             st.rerun()
                 elif action == "setup_health":
                     with label_col:
@@ -410,7 +387,7 @@ def _render_fallback(
                             st.rerun()
                 elif action == "evidence":
                     with label_col:
-                        _render_action_copy(detail_action.label, detail_action.help_text or "Load scoped evidence for this section.")
+                        _render_action_copy(detail_action.label, detail_action.help_text or "Open scoped details for this section.")
                     with button_col:
                         _render_detail_action(key_prefix=key_prefix, detail_action=detail_action)
 
@@ -524,7 +501,7 @@ def _render_model_trend_band(model: DecisionWorkspaceViewModel) -> str:
         return (
             '<section class="ow-decision-trend-band ow-decision-trend-empty">'
             '<h4>What changed</h4>'
-            '<p>Trend unavailable. No governed trend metadata in this packet.</p>'
+            '<p>Loading trend. Trend loads with the current packet.</p>'
             '</section>'
         )
     return (
@@ -558,7 +535,7 @@ def _render_workspace_actions(
 ) -> None:
     actions = dedupe_command_actions(controls.route_actions or model.actions, model.section, model.workflow)
     with st.container(key=f"{key_prefix}_recommended_actions_panel", border=False):
-        st.html('<div class="ow-decision-actions-panel-label">Recommended actions</div>')
+        st.html('<div class="ow-decision-actions-panel-label">Recommended Action</div>')
         rendered_any = False
         if controls.can_refresh and controls.refresh_packet is not None:
             rendered_any = True
@@ -746,8 +723,12 @@ def render_decision_workspace(
             'aria-label="OVERWATCH Decision Workspace"></div>'
         )
         st.html(_breadcrumb_html(parts))
-        st.html(_kit_command_brief(_command_brief_render_model(model, controls)))
-        _render_workspace_actions(model, controls, key_prefix=key_prefix)
+        st.html(_kit_command_brief(_command_brief_render_model(model, controls), include_attention=False))
+        attention_col, action_col = st.columns([1.15, 1.0])
+        with attention_col:
+            st.html(_render_model_attention_panel(model))
+        with action_col:
+            _render_workspace_actions(model, controls, key_prefix=key_prefix)
         if model.has_sources:
             with st.expander("Data Trust details", expanded=False):
                 st.html(f'<div class="ow-decision-source-drawer">{_trust_detail_html(model)}</div>')

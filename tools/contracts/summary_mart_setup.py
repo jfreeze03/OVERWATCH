@@ -16,12 +16,13 @@ FULL_APP_DIR = "artifacts/full_app_validation"
 SNOWFLAKE_VALIDATION_DIR = "artifacts/snowflake_validation"
 LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
 
-SUMMARY_MART_SQL_REL = f"{SNOWFLAKE_DIR}/mart_setup/09_summary_marts.sql"
+SUMMARY_MART_SQL_REL = f"{SNOWFLAKE_DIR}/mart_setup/04_mart_tables.sql"
 SUMMARY_MART_SETUP_RESULTS_REL = f"{SNOWFLAKE_VALIDATION_DIR}/summary_mart_setup_results.json"
 SUMMARY_MART_SETUP_FULL_APP_REL = f"{FULL_APP_DIR}/summary_mart_setup_results.json"
 SUMMARY_MART_SETUP_GATE_REL = f"{LAUNCH_READINESS_DIR}/summary_mart_setup_gate_results.json"
 
 PRODUCER = "summary_mart_setup"
+SUMMARY_MART_BLOCK_MARKER = "COCO section summary marts"
 
 EXPECTED_SUMMARY_MARTS: tuple[dict[str, Any], ...] = (
     {
@@ -157,11 +158,20 @@ def _source_family_present(sql: str, source_family: str) -> bool:
     )
 
 
+def _summary_mart_sql(sql: str) -> str:
+    """Return only the folded summary-mart block when it is embedded in 04."""
+    marker_index = sql.find(SUMMARY_MART_BLOCK_MARKER)
+    if marker_index < 0:
+        return sql
+    return sql[marker_index:]
+
+
 def build_summary_mart_setup_results(root: Path | str = ".") -> dict[str, Any]:
     root_path = Path(root).resolve()
     sql_path = root_path / SUMMARY_MART_SQL_REL
     sql = sql_path.read_text(encoding="utf-8") if sql_path.exists() else ""
-    upper = sql.upper()
+    summary_sql = _summary_mart_sql(sql)
+    upper = summary_sql.upper()
     commit_sha = _git_commit(root_path)
     generated_at = _now()
     producer_signature = "summary_mart_setup::row_v1"
@@ -174,8 +184,8 @@ def build_summary_mart_setup_results(root: Path | str = ".") -> dict[str, Any]:
     for spec in EXPECTED_SUMMARY_MARTS:
         object_name = str(spec["object_name"])
         view_name = str(spec["view_name"])
-        block = _object_block(sql, object_name)
-        view_block = _view_block(sql, view_name)
+        block = _object_block(summary_sql, object_name)
+        view_block = _view_block(summary_sql, view_name)
         required_columns = tuple(str(col) for col in spec["required_columns"])
         missing_columns = [
             column
@@ -192,7 +202,7 @@ def build_summary_mart_setup_results(root: Path | str = ".") -> dict[str, Any]:
             reasons.append("app-facing secure view does not select from compact mart")
         if missing_columns:
             reasons.append("missing columns: " + ", ".join(missing_columns))
-        if not _source_family_present(sql, source_family):
+        if not _source_family_present(summary_sql, source_family):
             reasons.append("source family marker missing")
         if "SELECT *" in upper:
             reasons.append("SELECT * is forbidden in summary mart setup")

@@ -94,7 +94,7 @@ PHASES: tuple[PhaseSpec, ...] = (
         (
             "tools/contracts/account_usage_query_audit.py",
             "tools/contracts/summary_mart_setup.py",
-            "snowflake/mart_setup/09_summary_marts.sql",
+            "snowflake/mart_setup/04_mart_tables.sql",
             ".overwatch_final/sections/summary_mart_loaders.py",
             "tools/contracts/launch_readiness.py",
             "tools/contracts/full_app_release_sweep.py",

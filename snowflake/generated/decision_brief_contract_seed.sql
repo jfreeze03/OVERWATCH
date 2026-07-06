@@ -48,7 +48,6 @@ SELECT * FROM VALUES
     ('Security Monitoring', 'grant_daily', 'FACT_GRANT_DAILY', TRUE, 60, 'allocated', TRUE),
     ('Security Monitoring', 'credential_expiration', 'MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT', TRUE, 60, 'allocated', TRUE),
     ('Security Monitoring', 'security_alerts', 'ALERT_EVENTS', TRUE, 60, 'allocated', TRUE),
-    ('Security Monitoring', 'owner_coverage', 'MART_OPERATIONAL_OWNER_COVERAGE', TRUE, 60, 'allocated', TRUE),
     ('Security Monitoring', 'change_summary', 'MART_CHANGE_INTELLIGENCE_SUMMARY', FALSE, 60, 'allocated', TRUE)
   AS v(SECTION_NAME, SOURCE_KEY, SOURCE_OBJECT, REQUIRED, TARGET_FRESHNESS_MINUTES, DEFAULT_CONFIDENCE, ENABLED)
 WHERE NOT EXISTS (

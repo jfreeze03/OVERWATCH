@@ -17,9 +17,10 @@ you intend to remove the full runtime container.
 3. Save any manual notes you need from `OVERWATCH_ACTION_QUEUE`, alert history, or
    recovery tables if you are intentionally preserving operational history elsewhere.
 4. Keep a copy of the current `snowflake/mart_setup/` ordered files (the
-   canonical human deployment path) and `snowflake/OVERWATCH_MART_DROP.sql` from
-   the same Git revision. `snowflake/OVERWATCH_MART_SETUP.sql` is the
-   byte-equivalent single-file artifact of those parts if you prefer one file.
+   canonical human deployment path), `snowflake/ACTIVE_MART_DDL_MANIFEST.yml`,
+   and `snowflake/OVERWATCH_MART_DROP.sql` from the same Git revision.
+   `snowflake/OVERWATCH_MART_SETUP.sql` is the byte-equivalent generated
+   single-file artifact of the active split if you prefer one file.
 
 ## Reset Sequence
 
@@ -51,13 +52,15 @@ DATABASE/SCHEMA` context carries across files):
 !source snowflake/mart_setup/05_load_procedures.sql
 !source snowflake/mart_setup/06_alert_framework.sql
 !source snowflake/mart_setup/07_tasks.sql
-!source snowflake/mart_setup/08_validation.sql
+!source snowflake/validation/validate_overwatch_mart_setup.sql
 ```
 
 The single-file artifact `snowflake/OVERWATCH_MART_SETUP.sql` is byte-for-byte
-equivalent to the ordered concatenation of those parts (enforced by
-`tests/test_mart_setup_split.py`), so `!source snowflake/OVERWATCH_MART_SETUP.sql`
-produces the same result if you prefer one file.
+equivalent to the ordered concatenation of the seven active setup files
+(enforced by `tests/test_mart_setup_split.py`), so
+`!source snowflake/OVERWATCH_MART_SETUP.sql` produces the same setup result if
+you prefer one file. Run `snowflake/validation/validate_overwatch_mart_setup.sql`
+afterward for smoke checks.
 
 If your SQL client does not support `!source`, open each file and run it as a script.
 

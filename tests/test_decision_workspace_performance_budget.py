@@ -694,7 +694,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
 
         self.assertIn("Access grants", rendered)
         self.assertIn("All-environment fallback source", rendered)
-        self.assertIn("Source unavailable", rendered)
+        self.assertIn("Source not configured", rendered)
         self.assertNotIn("FACT_", rendered)
         self.assertNotIn("MART_", rendered)
         self.assertNotIn("SELECT", rendered)
@@ -702,7 +702,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
     def test_environment_support_contract_is_deployment_owned(self):
         setup = (ROOT / "snowflake" / "mart_setup" / "04_mart_tables.sql").read_text(encoding="utf-8")
         package = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
-        validation = (ROOT / "snowflake" / "mart_setup" / "08_validation.sql").read_text(encoding="utf-8")
+        validation = (ROOT / "snowflake" / "validation" / "validate_overwatch_mart_setup.sql").read_text(encoding="utf-8")
 
         self.assertIn("SUPPORTS_ENVIRONMENT", setup)
         self.assertIn("ENVIRONMENT_MODE", setup)
@@ -731,7 +731,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertNotIn('DECISION_PACKET:"', sql)
 
         setup = (ROOT / "snowflake" / "mart_setup" / "04_mart_tables.sql").read_text(encoding="utf-8")
-        validation = (ROOT / "snowflake" / "mart_setup" / "08_validation.sql").read_text(encoding="utf-8")
+        validation = (ROOT / "snowflake" / "validation" / "validate_overwatch_mart_setup.sql").read_text(encoding="utf-8")
         self.assertIn("DROP VIEW IF EXISTS MART_SECTION_DECISION_CURRENT_FLAT", setup)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS MART_SECTION_DECISION_CURRENT_FLAT", setup)
         self.assertIn("MERGE INTO MART_SECTION_DECISION_CURRENT_FLAT", setup)
@@ -756,7 +756,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
     def test_optional_query_optimization_flags_are_guarded(self):
         config = (ROOT / "snowflake" / "mart_setup" / "03_config_and_audit_tables.sql").read_text(encoding="utf-8")
         procs = (ROOT / "snowflake" / "mart_setup" / "05_load_procedures.sql").read_text(encoding="utf-8")
-        validation = (ROOT / "snowflake" / "mart_setup" / "08_validation.sql").read_text(encoding="utf-8")
+        validation = (ROOT / "snowflake" / "validation" / "validate_overwatch_mart_setup.sql").read_text(encoding="utf-8")
 
         self.assertIn("'OVERWATCH_ENABLE_CLUSTER_KEYS', 'TRUE'", config)
         self.assertIn("'OVERWATCH_ENABLE_SEARCH_OPTIMIZATION', 'FALSE'", config)

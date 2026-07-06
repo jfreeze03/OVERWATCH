@@ -64,11 +64,11 @@ windows, and DBA-entered audit notes that should not disappear if a reproducible
 mart is rebuilt.
 
 The production DDL is deployed from the ordered split under
-`snowflake/mart_setup/` (the canonical human deployment path; run the numbered
-files `01_runtime_objects.sql` ... `08_validation.sql` in order, or use
+`snowflake/mart_setup/` (the canonical human deployment path; run the active
+numbered files `01_runtime_objects.sql` ... `07_tasks.sql` in order, or use
 `snowflake/mart_setup/run_mart_setup.sh`). `snowflake/OVERWATCH_MART_SETUP.sql`
-is retained as the canonical single-file artifact and stays byte-for-byte
-equivalent to the concatenation of those parts. Optional precompute experiments
+is a generated single-file artifact and stays byte-for-byte equivalent to the
+concatenation of those active deployment files. Optional precompute experiments
 have been retired so there is one deployable Snowflake setup path. Materialized
 views are avoided for the main monitoring app because
 the app needs multi-source, windowed, exception ranking logic with explicit
@@ -259,13 +259,15 @@ runner:
 cd snowflake/mart_setup
 ./run_mart_setup.sh <snowsql-connection-name>
 # (equivalently: snowsql -c <connection> -f 01_runtime_objects.sql, then
-#  02_..., 03_..., through 08_validation.sql, in numeric order.)
+#  02_..., 03_..., through 07_tasks.sql, in numeric order.)
 ```
 
 `snowflake/OVERWATCH_MART_SETUP.sql` is retained as the canonical single-file
 artifact and remains byte-for-byte equivalent to the ordered concatenation of
-`snowflake/mart_setup/` (enforced by `tests/test_mart_setup_split.py`). Running
-it directly produces the same result; see `snowflake/mart_setup/README.md`.
+the seven active files in `snowflake/mart_setup/` (enforced by
+`tests/test_mart_setup_split.py`). Run
+`snowflake/validation/validate_overwatch_mart_setup.sql` after deployment for
+smoke validation; see `snowflake/mart_setup/README.md`.
 
 Streamlit Community Cloud settings:
 
@@ -280,10 +282,10 @@ Streamlit in Snowflake has two pinned deploy manifests:
   `.overwatch_final/app.py` to deploy-root `app.py`, sets
   `definition_version: 2`, `main_file: app.py`,
   `compute_pool: SYSTEM_COMPUTE_POOL_CPU`, and
-  `query_warehouse: COMPUTE_WH`.
+  `query_warehouse: WH_ALFA_OVERWATCH`.
 - Package-root CLI deploy uses `.overwatch_final/snowflake.yml` with
   `definition_version: 2`, `main_file: app.py`, and
-  `query_warehouse: COMPUTE_WH`.
+  `query_warehouse: WH_ALFA_OVERWATCH`.
 
 If Snowflake reports `Missing MAIN_FILE`, deploy from the repository root
 manifest or run `snow streamlit deploy --replace` from `.overwatch_final`.

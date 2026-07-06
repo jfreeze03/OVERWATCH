@@ -150,7 +150,13 @@ def _find_action_row(root: Path, section: str, workflow: str) -> tuple[str, int,
     return "", -1, {}
 
 
-def _find_action_row_by_key(root: Path, section: str, workflow: str, stable_key: str) -> tuple[str, int, Mapping[str, Any]]:
+def _find_action_row_by_key(
+    root: Path,
+    section: str,
+    workflow: str,
+    stable_key: str | tuple[str, ...],
+) -> tuple[str, int, Mapping[str, Any]]:
+    stable_keys = {stable_key} if isinstance(stable_key, str) else set(stable_key)
     for rel in (
         "artifacts/full_app_validation/button_click_results.json",
         "artifacts/full_app_validation/action_click_results.json",
@@ -160,7 +166,7 @@ def _find_action_row_by_key(root: Path, section: str, workflow: str, stable_key:
             if (
                 str(row.get("section") or "") == section
                 and str(row.get("workflow") or "") == workflow
-                and row_key == stable_key
+                and row_key in stable_keys
                 and bool(row.get("clicked", row.get("passed", False)))
             ):
                 return rel, index, row
@@ -433,7 +439,7 @@ def _scan_forbidden_daily_source(root: Path, forbidden: str, daily_roots: Iterab
 def build_credential_expiration_validation(root: Path) -> dict[str, Any]:
     table_sql = _read(root, "snowflake/mart_setup/04_mart_tables.sql")
     proc_sql = _read(root, "snowflake/mart_setup/05_load_procedures.sql")
-    split_validation_sql = _read(root, "snowflake/mart_setup/08_validation.sql")
+    split_validation_sql = _read(root, "snowflake/validation/validate_overwatch_mart_setup.sql")
     setup_sql = _read(root, "snowflake/OVERWATCH_MART_SETUP.sql")
     validation_sql = _read(root, "snowflake/OVERWATCH_MART_VALIDATION.sql")
     semantic_registry = _read(root, ".overwatch_final/sections/metric_semantic_registry.py")
@@ -1064,7 +1070,10 @@ def build_security_credential_snapshot_results(root: Path) -> dict[str, Any]:
         root,
         "Alert Center",
         "Active Alerts",
-        "alert_center_command_brief_primary_security_credential_expirations",
+        (
+            "alert_center_command_brief_route_1_security_credential_expirations",
+            "alert_center_command_brief_primary_security_credential_expirations",
+        ),
     )
     route_body = (
         "Review Credential Expirations action clicked. "

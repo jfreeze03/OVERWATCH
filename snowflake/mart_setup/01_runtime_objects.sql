@@ -10,7 +10,7 @@
 --   - MONITOR ACCOUNT for operational metadata
 --
 -- Cost posture:
---   - current COMPUTE_WH runtime warehouse, XSMALL, 60-second auto-suspend
+--   - current WH_ALFA_OVERWATCH runtime warehouse, XSMALL, 60-second auto-suspend
 --   - current runtime warehouse resource monitor with notify/suspend guardrails
 --   - transient mart tables for rebuildable data
 --   - permanent audit/action tables for telemetry and DBA-entered status
@@ -26,7 +26,7 @@
 CREATE DATABASE IF NOT EXISTS DBA_MAINT_DB;
 CREATE SCHEMA IF NOT EXISTS DBA_MAINT_DB.OVERWATCH;
 
-CREATE WAREHOUSE IF NOT EXISTS COMPUTE_WH
+CREATE WAREHOUSE IF NOT EXISTS WH_ALFA_OVERWATCH
   WAREHOUSE_SIZE = XSMALL
   AUTO_SUSPEND = 60
   AUTO_RESUME = TRUE
@@ -34,15 +34,15 @@ CREATE WAREHOUSE IF NOT EXISTS COMPUTE_WH
   STATEMENT_TIMEOUT_IN_SECONDS = 600
   COMMENT = 'Current warehouse for OVERWATCH Streamlit app runtime and mart refresh until a dedicated warehouse is approved.';
 
-CREATE RESOURCE MONITOR IF NOT EXISTS COMPUTE_WH_RM
+CREATE RESOURCE MONITOR IF NOT EXISTS WH_ALFA_OVERWATCH_RM
   WITH CREDIT_QUOTA = 50
        FREQUENCY = MONTHLY
        START_TIMESTAMP = IMMEDIATELY
        TRIGGERS ON 80 PERCENT DO NOTIFY
                 ON 100 PERCENT DO SUSPEND;
 
-ALTER WAREHOUSE IF EXISTS COMPUTE_WH
-  SET RESOURCE_MONITOR = COMPUTE_WH_RM;
+ALTER WAREHOUSE IF EXISTS WH_ALFA_OVERWATCH
+  SET RESOURCE_MONITOR = WH_ALFA_OVERWATCH_RM;
 
 USE DATABASE DBA_MAINT_DB;
 USE SCHEMA OVERWATCH;

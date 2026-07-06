@@ -10,7 +10,11 @@ app. Use permanent tables only for configuration, acknowledgements,
 suppression windows, remediation logs, action queue history, and routing.
 
 Do not make Dynamic Tables the base architecture. The production setup has one
-deployable DDL source: `snowflake/OVERWATCH_MART_SETUP.sql`.
+active split deployment path: `snowflake/mart_setup/01_runtime_objects.sql`
+through `snowflake/mart_setup/07_tasks.sql`. The single-file
+`snowflake/OVERWATCH_MART_SETUP.sql` artifact is generated from that split by
+`tools/build_mart_setup_monolith.py`; post-deploy smoke checks live under
+`snowflake/validation/`.
 
 This is now a hard deployment boundary for secure-view compatibility. If an
 OVERWATCH mart source can resolve through a secure view, the target must be a
@@ -36,7 +40,8 @@ views.
 The audit emits generated drop SQL plus table/procedure/task rewrite stubs for
 flagged Dynamic Tables. Treat those as conversion scaffolding only; the source
 query still needs DBA review before the rewritten table/procedure/task enters
-`OVERWATCH_MART_SETUP.sql`.
+the generated `OVERWATCH_MART_SETUP.sql` artifact and the active split files
+listed in `snowflake/ACTIVE_MART_DDL_MANIFEST.yml`.
 
 Do not use materialized views for the primary monitoring app. The app needs
 multi-source, windowed exception logic with explicit refresh and
@@ -50,6 +55,13 @@ metric, finding, source, and action payload, and renders an operational story
 immediately. The normalized BRIEF_ID-linked history tables remain available for
 audit, validation, and diagnostics. Heavy detail/live proof remains explicit
 behind the section's Load, Refresh, investigation, or evidence controls.
+
+First paint uses the shared data-state model in
+`.overwatch_final/utils/data_state.py`. Once the packet lookup completes, the
+UI should render either packet values, a stale badge with the latest packet, a
+no-rows-for-scope state, a refresh-required state, setup-required guidance,
+connection-unavailable copy, or a sanitized query-failed state. Generic waiting
+labels are reserved for transient spinners while a query is actively running.
 
 | Surface | Entry command brief source | Target freshness | Live fallback |
 |---|---|---:|---|

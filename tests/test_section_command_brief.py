@@ -167,7 +167,7 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("'SOURCE_OBJECTS', l.SOURCE_OBJECTS", sql)
 
     def test_decision_brief_deployment_validation_checks_source_key_truth(self):
-        validation = (ROOT / "snowflake" / "mart_setup" / "08_validation.sql").read_text(encoding="utf-8")
+        validation = (ROOT / "snowflake" / "validation" / "validate_overwatch_mart_setup.sql").read_text(encoding="utf-8")
         self.assertIn("SECTION_COMMAND_SOURCE_CONFIG_UNIQUE_SOURCE_KEYS", validation)
         self.assertIn("SECTION_COMMAND_METRIC_SOURCE_KEYS_CONFIGURED", validation)
         self.assertIn("SECTION_DECISION_CURRENT_SOURCE_KEYS_CONFIGURED", validation)
@@ -346,7 +346,6 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertEqual(metrics_by_key["forecast_run_rate"].unavailable_reason, "Forecast mart has no current row")
         self.assertEqual(brief.top_signal.signal, "Cortex AI spend")
         self.assertEqual(brief.top_signal.priority_score, 95)
-        self.assertEqual(brief.top_signal.owner_name, "AI Cost Owner")
         self.assertEqual(brief.top_signal.entity_type, "service")
         self.assertEqual(brief.top_signal.entity_id, "CORTEX_AI")
         self.assertEqual(brief.top_signal.evidence_id, "COST-42")
@@ -462,11 +461,11 @@ class SectionCommandBriefTests(unittest.TestCase):
         ):
             brief = brief_module.autoload_section_command_brief("Security Monitoring", "ALFA", "PROD", 30)
 
-        self.assertEqual(brief.state, "Summary pending")
+        self.assertEqual(brief.state, "Refresh required")
         self.assertIn("Mart summary unavailable", brief.fallback_reason)
         self.assertEqual(len(brief.metrics), 0)
-        self.assertEqual(brief.detail_cta, "Load Security Evidence")
-        self.assertEqual(brief.raw_payload.get("workspace_mode"), "PENDING")
+        self.assertEqual(brief.detail_cta, "Open Security Details")
+        self.assertEqual(brief.raw_payload.get("workspace_mode"), "REFRESH_REQUIRED")
 
     def test_loader_skips_query_when_snowflake_entry_is_unavailable(self):
         from sections import section_command_brief as brief_module
@@ -619,11 +618,11 @@ class SectionCommandBriefTests(unittest.TestCase):
             company="ALFA",
             environment="PROD",
             window_label="7 days",
-            state="Summary pending",
-            headline="Summary pending",
-            summary="Waiting for the current ALFA / PROD summary packet.",
+            state="Refresh required",
+            headline="Refresh required",
+            summary="Mart exists but has no current rows for this view.",
             source="Decision packet",
-            freshness_label="Packet pending",
+            freshness_label="Refresh required",
             loaded_at="2026-06-25T10:00:00",
             fallback_reason="MART_SECTION_DECISION_CURRENT has no row for FACT_COST_DAILY.",
             source_gap_detail="FACT_COST_DAILY; FACT_CORTEX_DAILY",
@@ -641,15 +640,17 @@ class SectionCommandBriefTests(unittest.TestCase):
         ):
             section_command_rendering.render_section_command_brief(brief, key_prefix="fallback")
 
-        first_markup = html.call_args_list[0].args[0]
-        self.assertNotIn("SUMMARY UNAVAILABLE", first_markup)
-        self.assertIn("Summary pending", first_markup)
-        self.assertNotIn("MART_SECTION_DECISION_CURRENT", first_markup)
-        self.assertNotIn("FACT_COST_DAILY", first_markup)
+        rendered_markup = "\n".join(call.args[0] for call in html.call_args_list)
+        self.assertNotIn("SUMMARY UNAVAILABLE", rendered_markup)
+        self.assertIn("Refresh required", rendered_markup)
+        self.assertNotIn("MART_SECTION_DECISION_CURRENT", rendered_markup)
+        self.assertNotIn("FACT_COST_DAILY", rendered_markup)
         renderer_source = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
         component_source = (APP_ROOT / "sections" / "decision_workspace_components.py").read_text(encoding="utf-8")
         self.assertNotIn('"Technical details"', renderer_source)
-        self.assertIn("_kit_command_brief(", renderer_source)
+        self.assertIn("_kit_command_brief_top(", renderer_source)
+        self.assertIn("_kit_command_attention_panel(", renderer_source)
+        self.assertIn("_kit_command_brief_tail(", renderer_source)
         self.assertIn("ow-decision-trust-footer", component_source)
 
     def test_command_actions_are_deduped_and_unknown_routes_removed(self):
@@ -692,7 +693,7 @@ class SectionCommandBriefTests(unittest.TestCase):
     def test_snowflake_setup_declares_command_brief_marts(self):
         setup = (ROOT / "snowflake" / "mart_setup" / "04_mart_tables.sql").read_text(encoding="utf-8")
         combined_setup = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
-        modular_validation = (ROOT / "snowflake" / "mart_setup" / "08_validation.sql").read_text(encoding="utf-8")
+        modular_validation = (ROOT / "snowflake" / "validation" / "validate_overwatch_mart_setup.sql").read_text(encoding="utf-8")
         validation = (ROOT / "snowflake" / "OVERWATCH_MART_VALIDATION.sql").read_text(encoding="utf-8")
         drop = (ROOT / "snowflake" / "OVERWATCH_MART_DROP.sql").read_text(encoding="utf-8")
         for name in (
@@ -718,7 +719,7 @@ class SectionCommandBriefTests(unittest.TestCase):
         tables = (ROOT / "snowflake" / "mart_setup" / "04_mart_tables.sql").read_text(encoding="utf-8").upper()
         procs = (ROOT / "snowflake" / "mart_setup" / "05_load_procedures.sql").read_text(encoding="utf-8").upper()
         tasks = (ROOT / "snowflake" / "mart_setup" / "07_tasks.sql").read_text(encoding="utf-8").upper()
-        validation = (ROOT / "snowflake" / "mart_setup" / "08_validation.sql").read_text(encoding="utf-8").upper()
+        validation = (ROOT / "snowflake" / "validation" / "validate_overwatch_mart_setup.sql").read_text(encoding="utf-8").upper()
         drop = (ROOT / "snowflake" / "OVERWATCH_MART_DROP.sql").read_text(encoding="utf-8").upper()
 
         for token in (
@@ -1041,7 +1042,7 @@ class SectionCommandBriefTests(unittest.TestCase):
             "DBA Control Room": ("failed_queries", "pipeline_failures", "queue_pressure", "cost_24h"),
             "Alert Center": ("active_alerts", "critical_high", "overdue_alerts", "cortex_predictive"),
             "Cost & Contract": ("total_spend", "spend_movement_pct", "forecast_run_rate", "cortex_spend_share"),
-            "Workload Operations": ("failed_queries", "pipeline_failures", "queue_blocked_pressure", "sla_risk"),
+            "Workload Operations": ("failed_queries", "pipeline_failures", "queries_waiting", "sla_risk"),
             "Security Monitoring": (
                 "failed_logins",
                 "mfa_gaps",

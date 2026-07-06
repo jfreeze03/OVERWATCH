@@ -1,0 +1,35 @@
+# Active OVERWATCH mart DDL manifest.
+# This file is intentionally metadata only: it stores paths and decisions, not SQL bodies.
+version: 1
+active_deployment_path:
+  - snowflake/mart_setup/01_runtime_objects.sql
+  - snowflake/mart_setup/02_roles_and_grants.sql
+  - snowflake/mart_setup/03_config_and_audit_tables.sql
+  - snowflake/mart_setup/04_mart_tables.sql
+  - snowflake/mart_setup/05_load_procedures.sql
+  - snowflake/mart_setup/06_alert_framework.sql
+  - snowflake/mart_setup/07_tasks.sql
+validation_sql:
+  - snowflake/validation/validate_overwatch_mart_setup.sql
+  - snowflake/validation/validate_mart_first_paint_readiness.sql
+  - snowflake/validation/validate_owner_routing_removed.sql
+  - snowflake/OVERWATCH_MART_VALIDATION.sql
+reset_or_rollback_only:
+  - snowflake/OVERWATCH_MART_DROP.sql
+migration_only:
+  - snowflake/migrations/2026_07_remove_owner_routing.sql
+generated_equivalent_artifacts:
+  - snowflake/OVERWATCH_MART_SETUP.sql
+  - snowflake/generated/decision_brief_contract_seed.sql
+  - snowflake/generated/decision_brief_metric_validation.sql
+retired_or_moved_paths:
+  - snowflake/mart_setup/08_validation.sql
+  - snowflake/mart_setup/09_summary_marts.sql
+summary_mart_location: snowflake/mart_setup/04_mart_tables.sql
+monolith_builder: tools/build_mart_setup_monolith.py
+monolith_artifact: snowflake/OVERWATCH_MART_SETUP.sql
+post_deploy_validation: snowflake/validation/validate_overwatch_mart_setup.sql
+owner_routing_cleanup:
+  migration: snowflake/migrations/2026_07_remove_owner_routing.sql
+  validation: snowflake/validation/validate_owner_routing_removed.sql
+  note: Active OWNER columns remain only where they describe action ownership or cost attribution; generic owner-routing cleanup is handled by the migration gate.

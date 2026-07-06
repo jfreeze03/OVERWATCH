@@ -3,7 +3,7 @@
 -- -----------------------------------------------------------------------------
 
 CREATE OR REPLACE TASK OVERWATCH_ANOMALY_CHECK
-  WAREHOUSE = COMPUTE_WH
+  WAREHOUSE = WH_ALFA_OVERWATCH
   SCHEDULE = 'USING CRON 5 * * * * America/Chicago'
 AS
 INSERT INTO OVERWATCH_ALERTS (

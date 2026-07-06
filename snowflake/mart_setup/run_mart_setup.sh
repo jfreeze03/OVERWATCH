@@ -2,7 +2,7 @@
 #
 # Deploy the OVERWATCH mart in dependency-safe order.
 #
-# Runs the numbered split files (01..08) in a single snowsql invocation so they
+# Runs the numbered active deployment files (01..07) in a single snowsql invocation so they
 # share session context (USE DATABASE/SCHEMA established by 01). This is exactly
 # equivalent to running ../OVERWATCH_MART_SETUP.sql.
 #

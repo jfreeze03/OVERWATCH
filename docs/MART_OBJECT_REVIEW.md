@@ -2,9 +2,11 @@
 
 Static scan date: 2026-06-17
 
-This review inventories deployable Snowflake objects in `snowflake/OVERWATCH_MART_SETUP.sql`
-and cross-checks them against `.overwatch_final` app references. It is a static code scan,
-not a live database dependency graph. Use `docs/MART_RESET_RUNBOOK.md` with
+This historical review inventories deployable Snowflake objects in
+`snowflake/OVERWATCH_MART_SETUP.sql` and cross-checks them against
+`.overwatch_final` app references. The current active deployment contract is
+`snowflake/ACTIVE_MART_DDL_MANIFEST.yml` with the full current inventory in
+`docs/DDL_ACTIVE_MART_REVIEW.md`. Use `docs/MART_RESET_RUNBOOK.md` with
 `snowflake/OVERWATCH_MART_DROP.sql` when a clean mart rebuild is needed.
 
 ## Counts

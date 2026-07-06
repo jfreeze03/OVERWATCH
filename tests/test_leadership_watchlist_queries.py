@@ -35,12 +35,12 @@ class LeadershipWatchlistQueryTests(unittest.TestCase):
             return pd.DataFrame([{"ROW_COUNT": 1}])
 
         with patch.object(queries, "run_query", side_effect=fake_run_query):
-            queries.get_credit_daily("ALFA", "ALL", "2026-06-28", "2026-07-05", warehouse="COMPUTE_WH")
+            queries.get_credit_daily("ALFA", "ALL", "2026-06-28", "2026-07-05", warehouse="WH_ALFA_OVERWATCH")
             queries.get_credit_comparison_24h("ALFA", "ALL")
             queries.get_login_security("ALFA", "ALL", "2026-06-28", "2026-07-05", user="JANE")
             queries.get_failed_logins_last_hour("ALFA", "ALL")
             queries.get_suspicious_logins("ALFA", "ALL", "2026-06-28", "2026-07-05")
-            queries.get_query_errors("ALFA", "ALL", "2026-06-28", "2026-07-05", warehouse="COMPUTE_WH")
+            queries.get_query_errors("ALFA", "ALL", "2026-06-28", "2026-07-05", warehouse="WH_ALFA_OVERWATCH")
             queries.get_storage_daily("ALFA", "ALL", "2026-06-28", "2026-07-05", database="ALFA_EDW_SAN")
             queries.get_cortex_code_usage("ALFA", "ALL", "2026-06-01", "2026-07-05", user="JANE")
             queries.get_role_grant_audit("ALFA", "ALL")
@@ -71,7 +71,7 @@ class LeadershipWatchlistQueryTests(unittest.TestCase):
         self.assertIn("OBJECT_DATABASE = 'ALFA_EDW_SAN'", sql)
 
     def test_repo_defines_leadership_secure_views(self) -> None:
-        sql = (ROOT / "snowflake" / "mart_setup" / "09_summary_marts.sql").read_text(encoding="utf-8").upper()
+        sql = (ROOT / "snowflake" / "mart_setup" / "04_mart_tables.sql").read_text(encoding="utf-8").upper()
         validation = (ROOT / "snowflake" / "OVERWATCH_MART_VALIDATION.sql").read_text(encoding="utf-8").upper()
         drop = (ROOT / "snowflake" / "OVERWATCH_MART_DROP.sql").read_text(encoding="utf-8").upper()
         for spec in queries.LEADERSHIP_VIEW_SPECS.values():

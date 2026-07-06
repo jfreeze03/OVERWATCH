@@ -31,7 +31,6 @@ WITH expected_metrics AS (
     ('Alert Center', 'reliability_alerts', FALSE, 'alert_events', 'optional'),
     ('Alert Center', 'security_alerts', FALSE, 'alert_events', 'optional'),
     ('Alert Center', 'notification_failures', FALSE, 'notification_log', 'optional'),
-    ('Alert Center', 'unassigned_alerts', FALSE, 'alert_events', 'optional'),
     ('Alert Center', 'open_action_queue', FALSE, 'action_queue', 'optional'),
     ('Cost & Contract', 'total_spend', TRUE, 'cost_daily', 'required'),
     ('Cost & Contract', 'spend_movement_pct', TRUE, 'cost_daily', 'required'),
@@ -46,7 +45,8 @@ WITH expected_metrics AS (
     ('Cost & Contract', 'open_cost_actions', FALSE, 'action_queue', 'optional'),
     ('Workload Operations', 'failed_queries', TRUE, 'query_hourly', 'required'),
     ('Workload Operations', 'pipeline_failures', TRUE, 'task_runs', 'required'),
-    ('Workload Operations', 'queue_blocked_pressure', TRUE, 'query_hourly', 'required'),
+    ('Workload Operations', 'queries_waiting', TRUE, 'query_hourly', 'required'),
+    ('Workload Operations', 'blocked_time', FALSE, 'query_hourly', 'optional'),
     ('Workload Operations', 'sla_risk', TRUE, 'task_runs', 'required'),
     ('Workload Operations', 'spill_bytes', FALSE, 'query_hourly', 'optional'),
     ('Workload Operations', 'long_running_queries', FALSE, 'query_hourly', 'optional'),
@@ -62,9 +62,7 @@ WITH expected_metrics AS (
     ('Security Monitoring', 'privilege_changes', FALSE, 'security_operability', 'optional'),
     ('Security Monitoring', 'security_alerts', FALSE, 'security_alerts', 'optional'),
     ('Security Monitoring', 'access_changes', FALSE, 'change_summary', 'optional'),
-    ('Security Monitoring', 'unassigned_findings', FALSE, 'owner_coverage', 'optional'),
-    ('Security Monitoring', 'overdue_security_actions', FALSE, 'security_operability', 'optional'),
-    ('Security Monitoring', 'owner_coverage', FALSE, 'owner_coverage', 'optional')
+    ('Security Monitoring', 'overdue_security_actions', FALSE, 'security_operability', 'optional')
   AS v(SECTION_NAME, METRIC_KEY, IS_PRIMARY, SOURCE_KEY, AVAILABILITY_POLICY)
 )
 SELECT 'SECTION_DECISION_CONTRACT_METRICS' AS CHECK_NAME, COUNT(*) AS OBSERVED_VALUE, 'PASS' AS STATUS

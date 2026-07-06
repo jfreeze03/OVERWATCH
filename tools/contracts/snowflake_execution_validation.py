@@ -25,7 +25,7 @@ EXPECTED_SCRIPT_ORDER = [
     "snowflake/mart_setup/04_mart_tables.sql",
     "snowflake/mart_setup/05_load_procedures.sql",
     "snowflake/mart_setup/07_tasks.sql",
-    "snowflake/mart_setup/08_validation.sql",
+    "snowflake/validation/validate_overwatch_mart_setup.sql",
     "snowflake/OVERWATCH_MART_SETUP.sql",
     "snowflake/OVERWATCH_MART_VALIDATION.sql",
     "snowflake/OVERWATCH_MART_DROP.sql",
@@ -1276,12 +1276,12 @@ def _streamlit_manifest_validation(root: Path) -> dict[str, Any]:
         "src: .overwatch_final/app.py": "ROOT_APP_MAPPING_MISSING",
         "dest: app.py": "ROOT_APP_DEST_MISSING",
         "compute_pool: SYSTEM_COMPUTE_POOL_CPU": "ROOT_COMPUTE_POOL_MISSING",
-        "query_warehouse: COMPUTE_WH": "ROOT_QUERY_WAREHOUSE_MISSING",
+        "query_warehouse: WH_ALFA_OVERWATCH": "ROOT_QUERY_WAREHOUSE_MISSING",
     }
     required_package_tokens = {
         "definition_version: 2": "PACKAGE_DEFINITION_VERSION_MISSING",
         "main_file: app.py": "PACKAGE_MAIN_FILE_MISSING",
-        "query_warehouse: COMPUTE_WH": "PACKAGE_QUERY_WAREHOUSE_MISSING",
+        "query_warehouse: WH_ALFA_OVERWATCH": "PACKAGE_QUERY_WAREHOUSE_MISSING",
     }
     if not root_manifest.exists():
         failures.append({"code": "ROOT_SNOWFLAKE_MANIFEST_MISSING"})

@@ -116,7 +116,7 @@ _RENDERED_SUMMARY_FIELDS = {
 _SQL_FILES = {
     "setup": "snowflake/mart_setup/05_load_procedures.sql",
     "tables": "snowflake/mart_setup/04_mart_tables.sql",
-    "validation": "snowflake/mart_setup/08_validation.sql",
+    "validation": "snowflake/validation/validate_overwatch_mart_setup.sql",
     "monolith_setup": "snowflake/OVERWATCH_MART_SETUP.sql",
     "monolith_validation": "snowflake/OVERWATCH_MART_VALIDATION.sql",
     "drop": "snowflake/OVERWATCH_MART_DROP.sql",

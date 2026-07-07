@@ -46,8 +46,8 @@ def build_warehouse_setting_review_ddl(
     SEVERITY                     VARCHAR(40),
     SIGNAL                       VARCHAR(120),
     OWNER                        VARCHAR(200),
-    REVIEW_TARGET            VARCHAR(200),
-    ROUTE_SOURCE                 VARCHAR(200),
+    WORKFLOW_ROUTE            VARCHAR(200),
+    ALLOCATION_SOURCE                 VARCHAR(200),
     APPROVER                     VARCHAR(200),
     APPROVAL_REQUIRED            VARCHAR(20),
     ROLLBACK_REQUIRED            VARCHAR(20),
@@ -326,7 +326,7 @@ def _warehouse_setting_review_history_sql(days: int, company: str, environment: 
 SELECT
     WAREHOUSE_NAME,
     OWNER,
-    REVIEW_TARGET,
+    WORKFLOW_ROUTE,
     COUNT(*) AS REVIEW_ROWS,
     COUNT_IF(APPROVAL_REQUIRED = 'Yes') AS APPROVAL_REQUIRED_ROWS,
     COUNT_IF(ROLLBACK_REQUIRED = 'Yes') AS ROLLBACK_REQUIRED_ROWS,
@@ -340,7 +340,7 @@ SELECT
     MAX_BY(SETTING_CHANGE_CANDIDATE, SNAPSHOT_TS) AS LAST_SETTING_CHANGE_CANDIDATE
 FROM {fqn}
 WHERE {where_clause}
-GROUP BY WAREHOUSE_NAME, OWNER, REVIEW_TARGET
+GROUP BY WAREHOUSE_NAME, OWNER, WORKFLOW_ROUTE
 ORDER BY
     WORST_BASELINE_CAPACITY_SCORE ASC,
     APPROVAL_REQUIRED_ROWS DESC,

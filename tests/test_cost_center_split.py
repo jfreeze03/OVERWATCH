@@ -106,7 +106,7 @@ class CostCenterSplitTests(unittest.TestCase):
         ready = cost_center._cost_allocation_quality({
             "DATABASE_NAME": "ALFA_EDW_PRD",
             "ENVIRONMENT": "PROD",
-            "ROUTE_SOURCE": "WAREHOUSE_TAG",
+            "ALLOCATION_SOURCE": "WAREHOUSE_TAG",
             "COST_ATTRIBUTION": "Finance",
         })
         self.assertEqual(ready["ENVIRONMENT_ROLLUP"], "PROD")
@@ -124,10 +124,10 @@ class CostCenterSplitTests(unittest.TestCase):
             "USER_NAME": "ANALYST",
             "TOTAL_CREDITS": 5,
         }]))
-        for column in ("COST_ATTRIBUTION", "ROUTE_SOURCE", "ROUTE_EVIDENCE", "ENVIRONMENT_ROLLUP"):
+        for column in ("COST_ATTRIBUTION", "ALLOCATION_SOURCE", "ALLOCATION_BASIS", "ENVIRONMENT_ROLLUP"):
             self.assertIn(column, annotated.columns)
         self.assertEqual(annotated["COST_ATTRIBUTION"].iloc[0], "ANALYST")
-        self.assertEqual(annotated["ROUTE_SOURCE"].iloc[0], "QUERY_USER")
+        self.assertEqual(annotated["ALLOCATION_SOURCE"].iloc[0], "QUERY_USER")
 
     def test_chargeback_renderer_imports_shared_aggregation_labels(self):
         self.assertIs(chargeback_view._mixed_label, models._mixed_label)

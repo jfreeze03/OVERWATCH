@@ -60,8 +60,8 @@ class DisplaySafetyTests(unittest.TestCase):
     def test_operator_copy_normalizer_is_explicit(self):
         from utils.display_safety import clean_display_text, clean_operator_copy
 
-        self.assertEqual(clean_display_text("Route Evidence"), "Route Evidence")
-        self.assertEqual(clean_operator_copy("Route Evidence"), "Route Telemetry")
+        self.assertEqual(clean_display_text("Allocation Basis"), "Allocation Basis")
+        self.assertEqual(clean_operator_copy("Allocation Basis"), "Route Telemetry")
 
     def test_raw_internal_scrubber_still_blocks_default_daily_identifiers(self):
         from utils.display_safety import clean_display_text, contains_raw_source_token, scrub_raw_internal_text

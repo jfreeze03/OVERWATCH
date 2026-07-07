@@ -188,7 +188,7 @@ def render_cost_explorer(session, company: str, credit_price: float, max_wh_size
             total_credits = safe_float(detail["TOTAL_CREDITS"].sum())
             denominator = max(total_cost, 0.01)
             readiness = detail["CHARGEBACK_READY"].fillna("").astype(str).str.upper()
-            route_source = detail["ROUTE_SOURCE"].fillna("").astype(str).str.upper()
+            route_source = detail["ALLOCATION_SOURCE"].fillna("").astype(str).str.upper()
             database = detail["DATABASE_NAME"].fillna("").astype(str).str.upper()
             no_context = database.isin(NO_DATABASE_CONTEXT_VALUES) | detail["ENVIRONMENT_ROLLUP"].fillna("").astype(str).str.upper().eq("NO DATABASE CONTEXT")
             ready_cost = safe_float(detail.loc[readiness.eq("READY"), "EST_COST"].sum())
@@ -269,7 +269,7 @@ def render_cost_explorer(session, company: str, credit_price: float, max_wh_size
                     "QUERY_COUNT",
                     "ALLOCATION_CONFIDENCE",
                     "CHARGEBACK_READY",
-                    "ROUTE_SOURCE",
+                    "ALLOCATION_SOURCE",
                     "FIRST_USAGE_DATE",
                     "LAST_USAGE_DATE",
                 ],

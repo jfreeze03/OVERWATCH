@@ -279,7 +279,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                     "SEVERITY", "SIGNAL", "WAREHOUSE_NAME", "WAREHOUSE_SIZE",
                     "QUEUED_QUERIES", "SPILL_QUERIES", "HIGH_LATENCY_QUERIES",
                     "METERED_CREDITS", "ADMIN_READINESS", "SETTING_CHANGE_CANDIDATE",
-                    "OWNER", "REVIEW_TARGET", "APPROVER",
+                    "OWNER", "WORKFLOW_ROUTE", "APPROVER",
                     "APPROVAL_REQUIRED", "ROLLBACK_REQUIRED", "IMPACT_TELEMETRY_REQUIRED", "NEXT_ACTION",
                 ],
                 sort_by=["QUEUED_QUERIES", "SPILL_QUERIES", "HIGH_LATENCY_QUERIES", "METERED_CREDITS"],
@@ -327,7 +327,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                         trend,
                         title="Persistent warehouse setting review backlog",
                         priority_columns=[
-                            "WAREHOUSE_NAME", "OWNER", "REVIEW_TARGET", "REVIEW_ROWS",
+                            "WAREHOUSE_NAME", "OWNER", "WORKFLOW_ROUTE", "REVIEW_ROWS",
                             "APPROVAL_REQUIRED_ROWS", "ROLLBACK_REQUIRED_ROWS",
                             "IMPACT_TELEMETRY_ROWS", "WORST_BASELINE_CAPACITY_SCORE",
                             "MAX_BASELINE_QUEUED_QUERIES", "MAX_BASELINE_SPILL_QUERIES",

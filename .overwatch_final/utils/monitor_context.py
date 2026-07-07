@@ -12,14 +12,14 @@ from typing import Any
 
 OWNER_CONTEXT_COLUMNS = (
     "OWNER",
-    "ROUTE_EMAIL",
-    "ROUTE_EMAIL",
-    "REVIEW_PRIMARY",
-    "REVIEW_SECONDARY",
-    "REVIEW_TARGET",
+    "EMAIL_TARGET",
+    "REVIEWED_BY",
+    "REVIEW_STATUS",
+    "WORKFLOW_ROUTE",
     "DEFAULT_ROUTE",
     "SERVICE_TIER",
-    "ROUTE_SOURCE",
+    "ALLOCATION_SOURCE",
+    "ALLOCATION_BASIS",
 )
 
 
@@ -65,21 +65,19 @@ def resolve_owner_context(
     row = row if row is not None else {}
     owner_value = (
         _text(owner)
-        or _row_value(row, "OWNER", "ROUTED_OWNER", "REVIEW_TARGET", default="DBA Review")
+        or _row_value(row, "OWNER", "ROUTED_OWNER", "WORKFLOW_ROUTE", default="DBA Review")
     )
-    escalation = _row_value(row, "REVIEW_TARGET", "ALERT_ROUTE", default=owner_value)
+    escalation = _row_value(row, "WORKFLOW_ROUTE", "ALERT_ROUTE", default=owner_value)
     route = _text(default_route) or _row_value(row, "DEFAULT_ROUTE", "NEXT_WORKFLOW", default="Monitoring")
     return {
         "OWNER": owner_value,
-        "ROUTE_EMAIL": _row_value(row, "ROUTE_EMAIL", "ROUTE_EMAIL", "EMAIL_TARGET"),
-        "ROUTE_EMAIL": _row_value(row, "ROUTE_EMAIL", "ROUTE_EMAIL", "EMAIL_TARGET"),
-        "REVIEW_PRIMARY": _row_value(row, "REVIEW_PRIMARY", default=_review_default(owner_value)),
-        "REVIEW_SECONDARY": _row_value(row, "REVIEW_SECONDARY"),
-        "REVIEW_GROUP": "",
-        "REVIEW_TARGET": escalation or owner_value,
+        "EMAIL_TARGET": _row_value(row, "EMAIL_TARGET"),
+        "REVIEWED_BY": _row_value(row, "REVIEWED_BY", default=_review_default(owner_value)),
+        "REVIEW_STATUS": "",
+        "WORKFLOW_ROUTE": escalation or owner_value,
         "DEFAULT_ROUTE": route,
         "SERVICE_TIER": _text(service_tier) or _row_value(row, "SERVICE_TIER", default="Monitor"),
-        "ROUTE_SOURCE": "MONITORING_CONTEXT",
-        "ROUTE_EVIDENCE": "Derived from the loaded telemetry row.",
+        "ALLOCATION_SOURCE": "MONITORING_CONTEXT",
+        "ALLOCATION_BASIS": "Derived from the loaded telemetry row.",
         "MATCH_PRIORITY": 0,
     }

@@ -376,7 +376,7 @@ def _automation_blockers(row: Mapping | pd.Series | dict, hardened: Mapping | di
     )
     generated_sql = _text(row, "Generated SQL Fix", "GENERATED_SQL_FIX") or _text(hardened, "Generated SQL Fix")
     owner = _text(row, "Owner", "OWNER") or _text(hardened, "Escalation Route", "Owner")
-    approver = _text(row, "Approver", "APPROVER", "Review Group", "REVIEW_GROUP")
+    approver = _text(row, "Approver", "APPROVER", "Review Status", "REVIEW_STATUS")
     approval = _approval_state(row)
     blob = _upper_blob(
         _text(row, "Category", "CATEGORY"),

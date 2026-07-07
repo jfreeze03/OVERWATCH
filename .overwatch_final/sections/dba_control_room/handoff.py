@@ -1040,7 +1040,7 @@ def _dba_handoff_rows(
         for _, item in important.iterrows():
             route = str(item.get("ROUTE") or _command_queue_route(item.get("CATEGORY")) or "DBA Control Room")
             entity = str(item.get("ENTITY_NAME") or item.get("ENTITY") or item.get("CATEGORY") or "queued item")
-            owner = str(item.get("OWNER") or item.get("ROUTE_EMAIL") or item.get("REVIEW_GROUP") or route)
+            owner = str(item.get("OWNER") or item.get("EMAIL_TARGET") or item.get("REVIEW_STATUS") or route)
             evidence_required = str(item.get("COMMAND_EVIDENCE_REQUIRED") or item.get("EVIDENCE_GAP") or "")
             rows.append({
                 "PRIORITY_RANK": 0 if str(item.get("DUE_STATE")) == "Overdue" else 1 if str(item.get("COMMAND_EXECUTION_GATE", "")).startswith("Blocked") else 2,

@@ -74,7 +74,11 @@ class SummaryMartLoaderTests(unittest.TestCase):
         self.assertTrue(kwargs["use_cache"])
 
     def test_empty_result_returns_safe_fallback_row(self) -> None:
-        with patch.object(loaders, "run_query", return_value=pd.DataFrame()):
+        with patch.object(loaders, "run_query", return_value=pd.DataFrame()), patch.object(
+            loaders,
+            "probe_summary_source",
+            return_value=loaders.SourceProbeResult(True, 0, 0, None, None),
+        ):
             result = loaders._summary_query(
                 section="Alert Center",
                 workflow="Overview",
@@ -112,7 +116,11 @@ class SummaryMartLoaderTests(unittest.TestCase):
         self.assertNotIn("raw warehouse failure", str(result.attrs))
 
     def test_summary_result_keeps_empty_and_error_states_distinct(self) -> None:
-        with patch.object(loaders, "run_query", return_value=pd.DataFrame()):
+        with patch.object(loaders, "run_query", return_value=pd.DataFrame()), patch.object(
+            loaders,
+            "probe_summary_source",
+            return_value=loaders.SourceProbeResult(True, 0, 0, None, None),
+        ):
             empty = loaders._summary_result(
                 section="Alert Center",
                 workflow="Overview",

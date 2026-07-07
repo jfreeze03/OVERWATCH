@@ -27,7 +27,7 @@ def render_alert_inbox_shell(
     kpis = (
         ("New", summary["open_queue"], "Action queue"),
         ("Critical / High", summary["critical_high"], "Priority alerts"),
-        ("Overdue SLA", summary["overdue"], "Needs owner"),
+        ("Overdue SLA", summary["overdue"], "Needs review"),
         ("Resolved 24h", "On load", "Detail rows"),
         ("Noise Ratio", "Pending", "Rule quality"),
         ("MTTR", "Pending", "After load"),
@@ -37,8 +37,8 @@ def render_alert_inbox_shell(
         for label, value, detail in kpis
     )
     rows = (
-        ("Info", f"{source_view} ready", source_summary, "Open", "Owner on load", "Selected window"),
-        ("Info", "Load details for row-level triage", f"{int(days)} days / {int(limit)} rows", "New", "Route on load", summary["freshness"]),
+        ("Info", f"{source_view} ready", source_summary, "Open", "Workflow on load", "Selected window"),
+        ("Info", "Load details for row-level triage", f"{int(days)} days / {int(limit)} rows", "New", "Workflow on load", summary["freshness"]),
     )
     row_html = "".join(
         '<div class="ow-coco-alert-row">'
@@ -59,12 +59,12 @@ def render_alert_inbox_shell(
     )
     st.html(
         '<section class="ow-coco-alert-shell" aria-label="Alert Inbox">'
-        '<header><div><h3>Alert Inbox</h3><p>Lifecycle filters and alert intelligence replace the old board-first workflow.</p></div>'
+        '<header><div><h3>Alert Inbox</h3><p>Lifecycle filters and alert intelligence stay first.</p></div>'
         f'<span>{_html(source_summary)}</span></header>'
         f'<div class="ow-coco-alert-kpis">{kpi_html}</div>'
         f'<div class="ow-coco-filter-bar" aria-label="Alert lifecycle filters">{chip_html}</div>'
         '<div class="ow-coco-alert-table">'
-        '<div class="ow-coco-alert-head"><span>Severity</span><span>Title</span><span>Object</span><span>Status</span><span>Owner</span><span>SLA</span></div>'
+        '<div class="ow-coco-alert-head"><span>Severity</span><span>Title</span><span>Object</span><span>Status</span><span>Workflow</span><span>SLA</span></div>'
         f"{row_html}</div>"
         '<div class="ow-coco-intel-table"><header><h4>Alert Intelligence</h4><span>Compact scorecard</span></header>'
         f"{intelligence_html}</div>"

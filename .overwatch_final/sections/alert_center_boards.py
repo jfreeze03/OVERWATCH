@@ -488,7 +488,7 @@ def _alert_next_incident_packet(incident_board: pd.DataFrame) -> pd.DataFrame:
         {
             "CHECKPOINT": "Automation boundary",
             "STATE": remediation_mode,
-            "DETAIL": str(top.get("REVIEW_GROUP") or "DBA Review"),
+            "DETAIL": str(top.get("REVIEW_STATUS") or "DBA Review"),
             "NEXT_ACTION": "Dry-run/status review only unless a separately approved guarded workflow executes the change.",
         },
     ])
@@ -993,9 +993,9 @@ def _alert_workflow_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tu
                 "ENTITY": row.get("ENTITY_NAME", ""),
                 "OWNER": owner or "DBA",
                 "EMAIL_TARGET": email_target,
-                "REVIEW_PRIMARY": row.get("REVIEW_PRIMARY", ""),
-                "REVIEW_TARGET": row.get("REVIEW_TARGET", ""),
-                "ROUTE_SOURCE": row.get("ROUTE_SOURCE", ""),
+                "REVIEWED_BY": row.get("REVIEWED_BY", ""),
+                "WORKFLOW_ROUTE": row.get("WORKFLOW_ROUTE", ""),
+                "ALLOCATION_SOURCE": row.get("ALLOCATION_SOURCE", ""),
                 "WORKFLOW_ROUTE_STATE": "Needs named route" if owner_key in generic_owners else "Named route",
                 "DELIVERY_ROUTE_STATE": "Missing email target" if not email_target else "Email target ready",
                 "ACTION_ROUTE_STATE": "Route to action queue" if route == "Alert Center" else f"Route: {route}",
@@ -1008,7 +1008,7 @@ def _alert_workflow_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tu
         for _, row in open_queue.iterrows():
             owner = str(row.get("OWNER") or row.get("OWNER_NAME") or "").strip()
             owner_key = owner.upper()
-            email_target = str(row.get("ROUTE_EMAIL") or row.get("ROUTE_EMAIL") or row.get("EMAIL_TARGET") or "").strip()
+            email_target = str(row.get("EMAIL_TARGET") or row.get("EMAIL_TARGET") or row.get("EMAIL_TARGET") or "").strip()
             rows.append({
                 "ISSUE_SOURCE": "Action Queue",
                 "SEVERITY": row.get("SEVERITY", ""),
@@ -1017,9 +1017,9 @@ def _alert_workflow_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tu
                 "ENTITY": row.get("ENTITY_NAME", row.get("ENTITY", "")),
                 "OWNER": owner or "DBA",
                 "EMAIL_TARGET": email_target,
-                "REVIEW_PRIMARY": row.get("REVIEW_PRIMARY", ""),
-                "REVIEW_TARGET": row.get("REVIEW_TARGET", ""),
-                "ROUTE_SOURCE": row.get("ROUTE_SOURCE", ""),
+                "REVIEWED_BY": row.get("REVIEWED_BY", ""),
+                "WORKFLOW_ROUTE": row.get("WORKFLOW_ROUTE", ""),
+                "ALLOCATION_SOURCE": row.get("ALLOCATION_SOURCE", ""),
                 "WORKFLOW_ROUTE_STATE": "Needs named route" if owner_key in generic_owners else "Named route",
                 "DELIVERY_ROUTE_STATE": "Missing route email" if not email_target else "Route email ready",
                 "ACTION_ROUTE_STATE": "Queued",
@@ -1038,7 +1038,7 @@ def _alert_workflow_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tu
 
     owner_ready = board["WORKFLOW_ROUTE_STATE"].astype(str).eq("Named route")
     email_ready = ~board["DELIVERY_ROUTE_STATE"].astype(str).str.startswith("Missing")
-    review_ready = board["REVIEW_PRIMARY"].fillna("").astype(str).str.strip().ne("")
+    review_ready = board["REVIEWED_BY"].fillna("").astype(str).str.strip().ne("")
     route_gap = (
         board["WORKFLOW_ROUTE_STATE"].astype(str).ne("Named route")
         | ~email_ready
@@ -1110,7 +1110,7 @@ def _alert_lifecycle_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> pd.Data
             "ALERT_TYPE": row.get("ALERT_TYPE", ""),
             "ENTITY_NAME": entity,
             "OWNER": owner,
-            "REVIEW_TARGET": row.get("REVIEW_TARGET", ""),
+            "WORKFLOW_ROUTE": row.get("WORKFLOW_ROUTE", ""),
             "DELIVERY_STATUS": row.get("DELIVERY_STATUS", ""),
             "ACTION_QUEUE_STATE": "Queued" if queued else "Not queued",
             "CLOSURE_STATUS_REQUIRED": (

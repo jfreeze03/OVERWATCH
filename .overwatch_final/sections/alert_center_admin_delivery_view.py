@@ -254,7 +254,7 @@ def render_alert_action_queue_routing(
                 title="Action queue routing preview",
                 priority_columns=[
                     "Severity", "Category", "Entity Type", "Entity", "Owner",
-                    "Review Primary", "Review Group",
+                    "Reviewed By", "Review Status",
                     "Recovery SLA State", "Recovery SLA Target Hours",
                     "Action",
                 ],
@@ -281,7 +281,7 @@ def render_alert_action_queue_routing(
             title="Current action queue",
             priority_columns=[
                 "SEVERITY", "STATUS", "CATEGORY", "ENTITY_NAME", "OWNER",
-                "REVIEW_PRIMARY", "FINDING", "RECOMMENDED_ACTION",
+                "REVIEWED_BY", "FINDING", "RECOMMENDED_ACTION",
                 "TICKET_ID", "DUE_STATE",
             ],
             sort_by=["SEVERITY", "STATUS", "UPDATED_AT"],

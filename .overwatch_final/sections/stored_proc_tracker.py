@@ -1050,7 +1050,7 @@ def _build_procedure_reliability_action(row: pd.Series, company: str, source: st
     )
     recovery_state = "Procedure Cost Review Required" if "COST" in signal.upper() else "Procedure Recovery Review Required"
     recovery_target_hours = 8.0 if severity.upper() in {"CRITICAL", "HIGH"} else 24.0
-    review_group = owner_context.get("REVIEW_GROUP") or owner_context.get("REVIEW_TARGET") or _procedure_owner(row)
+    review_group = owner_context.get("REVIEW_STATUS") or owner_context.get("WORKFLOW_ROUTE") or _procedure_owner(row)
     return {
         "Action ID": make_action_id("Procedure Reliability", proc, finding),
         "Source": source,
@@ -1059,13 +1059,13 @@ def _build_procedure_reliability_action(row: pd.Series, company: str, source: st
         "Entity Type": "Stored Procedure",
         "Entity": proc,
         "Owner": owner_context.get("OWNER") or _procedure_owner(row),
-        "Route Email": owner_context.get("ROUTE_EMAIL", ""),
-        "Review Primary": owner_context.get("REVIEW_PRIMARY", ""),
-        "Review Secondary": owner_context.get("REVIEW_SECONDARY", ""),
-        "Review Group": review_group,
-        "Review Target": owner_context.get("REVIEW_TARGET", ""),
-        "Route Source": owner_context.get("ROUTE_SOURCE", ""),
-        "Route Evidence": owner_context.get("ROUTE_EVIDENCE", ""),
+        "Email Target": owner_context.get("EMAIL_TARGET", ""),
+        "Reviewed By": owner_context.get("REVIEWED_BY", ""),
+        "Reviewed By": owner_context.get("REVIEWED_BY", ""),
+        "Review Status": review_group,
+        "Workflow Route": owner_context.get("WORKFLOW_ROUTE", ""),
+        "Allocation Source": owner_context.get("ALLOCATION_SOURCE", ""),
+        "Allocation Basis": owner_context.get("ALLOCATION_BASIS", ""),
         "Approver": review_group,
         "Finding": finding,
         "Action": action,

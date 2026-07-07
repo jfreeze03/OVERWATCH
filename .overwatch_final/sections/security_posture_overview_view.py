@@ -1002,7 +1002,7 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
                     title="Security access-review status before queueing",
                     priority_columns=[
                         "SEVERITY", "REVIEW_READINESS", "ACCESS_REVIEW_STATE", "FINDING_TYPE", "ENTITY",
-                        "OWNER", "REVIEW_TARGET", "APPROVER", "ROLE_CAPABILITY_STATE",
+                        "OWNER", "WORKFLOW_ROUTE", "APPROVER", "ROLE_CAPABILITY_STATE",
                         "ACCESS_TICKET_ID", "REVIEW_BY_DATE", "IAM_APPROVAL_STATE",
                         "REVIEW_BLOCKERS", "REVIEW_SLA_HOURS", "TICKET_REQUIRED", "REVIEW_BY_REQUIRED", "DATABASE_CONTEXT",
                         "DATABASE_NAME", "ENVIRONMENT", "SCOPE_CONFIDENCE", "SCOPE_EVIDENCE",
@@ -1059,7 +1059,7 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
                             trend,
                             title="Security review findings still needing DBA status",
                             priority_columns=[
-                                "FINDING_TYPE", "SEVERITY", "OWNER", "REVIEW_TARGET",
+                                "FINDING_TYPE", "SEVERITY", "OWNER", "WORKFLOW_ROUTE",
                                 "REVIEW_ROWS", "TOTAL_EVENTS", "TICKET_REQUIRED_ROWS",
                                 "REVIEW_BY_REQUIRED_ROWS", "CAPABILITY_PROOF_ROWS",
                                 "REVIEW_BLOCKER_ROWS", "VERIFIED_REVIEW_ROWS",

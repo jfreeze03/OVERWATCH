@@ -8,6 +8,7 @@ workflow/render shell and re-exports these helpers for compatibility.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import pandas as pd
 import streamlit as st
 
@@ -15,6 +16,169 @@ from sections.cost_contract_advisor import _cost_action_mask, _open_cost_action_
 from sections.cost_contract_dataframes import _has_columns, _loaded_rows, _top_loaded_cost_driver
 from utils.cost import credits_to_dollars
 from utils.primitives import safe_float, safe_int
+
+
+@dataclass(frozen=True)
+class CostCorrelationFinding:
+    finding_id: str
+    headline: str
+    concise_explanation: str
+    confidence_score: int
+    confidence_label: str
+    correlation_type: str
+    driver_type: str
+    driver_name: str
+    cost_delta: float
+    cost_delta_pct: float
+    time_window_start: str
+    time_window_end: str
+    matched_signals: tuple[str, ...]
+    matched_signal_count: int
+    time_proximity_minutes: float | None
+    source_objects: tuple[str, ...]
+    caveats: str
+    recommended_workflow: str
+    details_available: bool
+
+
+def _confidence_label(score: float) -> str:
+    if score >= 80:
+        return "High"
+    if score >= 60:
+        return "Medium"
+    if score >= 35:
+        return "Low"
+    return "Directional"
+
+
+def _cost_correlation_confidence_score(
+    *,
+    cost_delta: float,
+    cost_delta_pct: float,
+    time_proximity_minutes: float | None,
+    matched_signal_count: int,
+    source_object_count: int,
+    baseline_history_days: int,
+    source_freshness_minutes: float | None = None,
+    direct_entity_match: bool = False,
+) -> int:
+    magnitude = min(25.0, abs(safe_float(cost_delta)) / 1000.0 * 8.0)
+    pct = min(15.0, abs(safe_float(cost_delta_pct)) / 50.0 * 15.0)
+    proximity = 0.0
+    if time_proximity_minutes is not None:
+        proximity = max(0.0, 20.0 - min(abs(safe_float(time_proximity_minutes)), 240.0) / 12.0)
+    match = 15.0 if direct_entity_match else 5.0
+    signals = min(15.0, max(0, int(matched_signal_count)) * 5.0)
+    freshness = 5.0 if source_freshness_minutes is None or source_freshness_minutes <= 120 else 2.0
+    history = 5.0 if baseline_history_days >= 30 else 3.0 if baseline_history_days >= 7 else 1.0
+    source_bonus = min(5.0, max(1, int(source_object_count)) * 1.5)
+    correlation_penalty = 8.0
+    score = magnitude + pct + proximity + match + signals + freshness + history + source_bonus - correlation_penalty
+    return int(max(0, min(100, round(score))))
+
+
+def _split_signal_text(value: object) -> tuple[str, ...]:
+    raw = str(value or "").replace(";", "|").replace(",", "|")
+    parts = tuple(dict.fromkeys(part.strip() for part in raw.split("|") if part.strip()))
+    return parts[:6]
+
+
+def _source_objects_for_trust(trust: object, route: object) -> tuple[str, ...]:
+    text = f"{trust or ''} {route or ''}".upper()
+    sources = ["OVERWATCH cost marts"]
+    if "WAREHOUSE" in text or "METERING" in text:
+        sources.append("WAREHOUSE_METERING_HISTORY")
+    if "QUERY" in text:
+        sources.append("QUERY_HISTORY")
+    if "CORTEX" in text or "AI" in text:
+        sources.append("CORTEX usage history")
+    if "CHANGE" in text or "SECURITY" in text:
+        sources.append("Change/security summary marts")
+    return tuple(dict.fromkeys(sources))
+
+
+def _decorate_cost_correlation_findings(
+    board: pd.DataFrame,
+    *,
+    cost_delta: float,
+    cost_delta_pct: float,
+    correlation_type: str,
+    details_available: bool,
+) -> pd.DataFrame:
+    if board is None or board.empty:
+        return board
+    decorated = board.copy()
+    rows: list[dict[str, object]] = []
+    for idx, row in decorated.iterrows():
+        driver = str(row.get("DRIVER") or row.get("CORRELATION") or "Cost driver").strip()
+        entity = str(row.get("ENTITY") or "Cost scope").strip()
+        evidence = str(row.get("EVIDENCE") or row.get("COST_SIGNAL") or row.get("CHANGE_SIGNAL") or "").strip()
+        signals = _split_signal_text(" | ".join(str(row.get(column) or "") for column in ("ROOT_CAUSE_SIGNAL", "COST_SIGNAL", "CHANGE_SIGNAL", "EVIDENCE")))
+        source_objects = _source_objects_for_trust(row.get("TRUST", ""), row.get("ROUTE", ""))
+        value = safe_float(row.get("VALUE_AT_RISK_USD", cost_delta))
+        direct_match = entity not in {"", "Details available when needed", "Cost scope", "Snowflake account"}
+        proximity = 60.0 if str(row.get("CORRELATION") or "").strip() else None
+        score = _cost_correlation_confidence_score(
+            cost_delta=value if value else cost_delta,
+            cost_delta_pct=cost_delta_pct,
+            time_proximity_minutes=proximity,
+            matched_signal_count=max(len(signals), 1),
+            source_object_count=len(source_objects),
+            baseline_history_days=30 if "30" in evidence or "YOY" in evidence.upper() else 7,
+            direct_entity_match=direct_match,
+        )
+        label = _confidence_label(score)
+        rows.append({
+            "FINDING_ID": f"cost_corr_{idx + 1}",
+            "HEADLINE": f"{driver}: {entity}",
+            "CONCISE_EXPLANATION": (
+                f"{driver} aligns with {entity} and the selected cost movement; validate in drill-through before action."
+            ),
+            "CONFIDENCE_SCORE": score,
+            "CONFIDENCE_LABEL": label,
+            "CORRELATION_TYPE": correlation_type,
+            "DRIVER_TYPE": driver,
+            "DRIVER_NAME": entity,
+            "COST_DELTA": round(value if value else cost_delta, 2),
+            "COST_DELTA_PCT": round(safe_float(cost_delta_pct), 2),
+            "TIME_WINDOW_START": "",
+            "TIME_WINDOW_END": "",
+            "MATCHED_SIGNALS": "; ".join(signals),
+            "MATCHED_SIGNAL_COUNT": max(len(signals), 1),
+            "TIME_PROXIMITY_MINUTES": proximity,
+            "SOURCE_OBJECTS": "; ".join(source_objects),
+            "CAVEATS": "Correlation only; verify workload, billing, and change telemetry before treating this as proof.",
+            "RECOMMENDED_WORKFLOW": str(row.get("ROUTE") or "Cost & Contract > Cost Explorer"),
+            "DETAILS_AVAILABLE": bool(details_available),
+        })
+    extra = pd.DataFrame(rows, index=decorated.index)
+    for column in extra.columns:
+        decorated[column] = extra[column]
+    return decorated
+
+
+def top_cost_correlation_findings(
+    board: pd.DataFrame,
+    *,
+    limit: int = 3,
+    details_available: bool = False,
+) -> pd.DataFrame:
+    if board is None or board.empty:
+        return pd.DataFrame()
+    rows = board.copy()
+    if "CONFIDENCE_SCORE" not in rows.columns:
+        rows = _decorate_cost_correlation_findings(
+            rows,
+            cost_delta=0.0,
+            cost_delta_pct=0.0,
+            correlation_type="cost signal",
+            details_available=details_available,
+        )
+    rows["DETAILS_AVAILABLE"] = bool(details_available)
+    sort_cols = [column for column in ("CONFIDENCE_SCORE", "VALUE_AT_RISK_USD") if column in rows.columns]
+    if sort_cols:
+        rows = rows.sort_values(sort_cols, ascending=[False] * len(sort_cols))
+    return rows.head(max(1, int(limit or 3))).reset_index(drop=True)
 
 
 def _loaded_cortex_state() -> tuple[float, int]:
@@ -271,7 +435,7 @@ def _build_cost_control_coverage_board(
         category = queue.get("CATEGORY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
         status = queue.get("STATUS", pd.Series(["New"] * len(queue), index=queue.index)).fillna("New").astype(str).str.title()
         open_cost_queue = queue[category.str.contains("COST|CHARGEBACK|CORTEX", na=False) & ~status.isin(["Fixed", "Ignored"])]
-    route_source = open_cost_queue.get("ROUTE_SOURCE", pd.Series(dtype=str)).fillna("").astype(str).str.strip() if not open_cost_queue.empty else pd.Series(dtype=str)
+    route_source = open_cost_queue.get("ALLOCATION_SOURCE", pd.Series(dtype=str)).fillna("").astype(str).str.strip() if not open_cost_queue.empty else pd.Series(dtype=str)
     owner_ready = int(route_source.ne("").sum()) if not route_source.empty else 0
     _add_coverage_row(
         rows,
@@ -407,7 +571,7 @@ def _build_cost_allocation_trust_board(
     owner_ready = 0
     verification_ready = 0
     if not open_cost_queue.empty:
-        owner_ready = int(open_cost_queue.get("ROUTE_SOURCE", pd.Series(dtype=str)).fillna("").astype(str).str.strip().ne("").sum())
+        owner_ready = int(open_cost_queue.get("ALLOCATION_SOURCE", pd.Series(dtype=str)).fillna("").astype(str).str.strip().ne("").sum())
         verification_ready = int(
             open_cost_queue.get("VERIFICATION_STATUS", pd.Series(dtype=str)).fillna("").astype(str).str.upper().str.contains("VERIFIED|PASSED|COMPLETE", regex=True).sum()
         )
@@ -911,6 +1075,13 @@ def _build_cost_spike_root_cause_board(
         return {"score": 0, "critical_high": 0, "top_driver": "No loaded root-cause telemetry"}, board
     board["_SEVERITY_RANK"] = board["SEVERITY"].apply(_cost_command_severity_rank)
     board = board.sort_values(["_SEVERITY_RANK", "VALUE_AT_RISK_USD", "_RANK"], ascending=[True, False, True])
+    board = _decorate_cost_correlation_findings(
+        board,
+        cost_delta=credits_to_dollars(current_credits - prior_credits, credit_price),
+        cost_delta_pct=delta_pct,
+        correlation_type="cost movement",
+        details_available=True,
+    )
     critical_high = int(board["SEVERITY"].isin(["Critical", "High"]).sum())
     candidate = int(board["CONFIDENCE"].isin(["Low", "Medium"]).sum())
     score = max(0, min(100, 100 - critical_high * 10 - candidate * 4))
@@ -1055,6 +1226,13 @@ def _build_change_cost_correlation_board(
         return {"score": 0, "high": 0, "top_correlation": "No change/cost telemetry"}, board
     board["_SEVERITY_RANK"] = board["SEVERITY"].apply(_cost_command_severity_rank)
     board = board.sort_values(["_SEVERITY_RANK", "_RANK"], ascending=[True, True])
+    board = _decorate_cost_correlation_findings(
+        board,
+        cost_delta=top_delta,
+        cost_delta_pct=pct_vs_30d_float,
+        correlation_type="change proximity",
+        details_available=True,
+    )
     high = int(board["SEVERITY"].isin(["Critical", "High"]).sum())
     medium = int(board["SEVERITY"].eq("Medium").sum())
     score = max(0, min(100, 100 - high * 16 - medium * 7))

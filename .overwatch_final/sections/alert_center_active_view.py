@@ -154,7 +154,7 @@ def render_active_alerts_pane(
                 title="Route workload and telemetry gaps",
                 priority_columns=[
                     "OWNER", "OPEN_ALERTS", "CRITICAL_HIGH", "SLA_BREACHED",
-                    "TICKETS_ATTACHED", "TOP_CATEGORY", "NEXT_ACTION", "REVIEW_GROUP",
+                    "TICKETS_ATTACHED", "TOP_CATEGORY", "NEXT_ACTION", "REVIEW_STATUS",
                 ],
                 sort_by=["SLA_BREACHED", "CRITICAL_HIGH", "OPEN_ALERTS"],
                 ascending=[False, False, False],

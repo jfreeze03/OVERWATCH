@@ -53,7 +53,7 @@ class CostContractAdvisorPanelTests(unittest.TestCase):
         self.assertEqual(table.call_args.kwargs["title"], "Cost actions that still need review, telemetry, or closure status")
         self.assertEqual(table.call_args.kwargs["priority_columns"], [
             "SEVERITY", "CLOSURE_STATE", "CATEGORY", "ENTITY_NAME", "OWNER",
-            "ROUTE_EMAIL", "REVIEW_PRIMARY", "REVIEW_GROUP", "ROUTE_SOURCE",
+            "EMAIL_TARGET", "REVIEWED_BY", "REVIEW_STATUS", "ALLOCATION_SOURCE",
             "STATUS", "REVIEW_STATUS", "TELEMETRY_STATUS",
             "BASELINE_VALUE", "CURRENT_VALUE", "MEASURED_DELTA",
             "MEASURED_IMPACT_DOLLARS", "RECOVERY_SLA_STATE",

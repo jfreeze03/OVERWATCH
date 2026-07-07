@@ -3,6 +3,15 @@
 from __future__ import annotations
 
 DIRECT_SQL_ALLOWLIST = (
+    {'boundary': 'metadata',
+ 'budget': 'metadata_probe',
+ 'call_type': 'session.sql',
+ 'expected_runtime_context': 'metadata_probe',
+ 'function': '_probe_query',
+ 'module': '.overwatch_final/sections/summary_mart_loaders.py',
+ 'owner': 'summary_mart',
+ 'reason': 'bounded_summary_probe',
+ 'review_note': 'Bounded metadata probe used only to classify summary source state after scoped summary rows are empty.'},
     {'boundary': 'admin',
  'budget': 'advanced_diagnostics',
  'call_type': 'session.sql',

@@ -93,13 +93,13 @@ def _privileged_grant_action_payload(row: pd.Series | dict, *, company: str, env
         "Entity Type": "Privileged Grant",
         "Entity": entity,
         "Owner": row.get("OWNER", "Security/DBA"),
-        "Route Email": row.get("ROUTE_EMAIL", ""),
-        "Review Primary": row.get("REVIEW_PRIMARY", ""),
-        "Review Secondary": row.get("REVIEW_SECONDARY", ""),
-        "Review Group": row.get("REVIEW_TARGET", "Security"),
-        "Review Target": row.get("REVIEW_TARGET", "DBA / Security Route"),
-        "Route Source": row.get("ROUTE_SOURCE", ""),
-        "Route Evidence": row.get("ROUTE_EVIDENCE", ""),
+        "Email Target": row.get("EMAIL_TARGET", ""),
+        "Reviewed By": row.get("REVIEWED_BY", ""),
+        "Reviewed By": row.get("REVIEWED_BY", ""),
+        "Review Status": row.get("WORKFLOW_ROUTE", "Security"),
+        "Workflow Route": row.get("WORKFLOW_ROUTE", "DBA / Security Route"),
+        "Allocation Source": row.get("ALLOCATION_SOURCE", ""),
+        "Allocation Basis": row.get("ALLOCATION_BASIS", ""),
         "Finding": finding,
         "Action": (
             "Review privileged grant before granting, revoking, or narrowing access. "
@@ -120,7 +120,7 @@ def _privileged_grant_action_payload(row: pd.Series | dict, *, company: str, env
         "Verification Query": verification_query,
         "Verification Status": "Pending",
         "Ticket ID": "",
-        "Reviewer": row.get("REVIEW_TARGET", "Security"),
+        "Reviewer": row.get("WORKFLOW_ROUTE", "Security"),
         "Review Status": "Requested",
         "Review Note": (
             f"{row.get('GRANT_REVIEW_STATE', '')}; status {row.get('GRANT_REVIEW_READINESS', '')}; "
@@ -160,13 +160,13 @@ def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
             "Entity Type": entity_type,
             "Entity": entity,
             "Owner": row.get("OWNER", "Security/DBA"),
-            "Route Email": row.get("ROUTE_EMAIL", ""),
-            "Review Primary": row.get("REVIEW_PRIMARY", ""),
-            "Review Secondary": row.get("REVIEW_SECONDARY", ""),
-            "Review Group": row.get("REVIEW_TARGET", row.get("APPROVER", "Security")),
-            "Review Target": row.get("REVIEW_TARGET", "DBA Lead"),
-            "Route Source": row.get("ROUTE_SOURCE", ""),
-            "Route Evidence": row.get("ROUTE_EVIDENCE", ""),
+            "Email Target": row.get("EMAIL_TARGET", ""),
+            "Reviewed By": row.get("REVIEWED_BY", ""),
+            "Reviewed By": row.get("REVIEWED_BY", ""),
+            "Review Status": row.get("WORKFLOW_ROUTE", row.get("APPROVER", "Security")),
+            "Workflow Route": row.get("WORKFLOW_ROUTE", "DBA Lead"),
+            "Allocation Source": row.get("ALLOCATION_SOURCE", ""),
+            "Allocation Basis": row.get("ALLOCATION_BASIS", ""),
             "Finding": finding,
             "Action": (
                 f"{action} Review with {row.get('APPROVER', 'Security')} is required; "
@@ -188,7 +188,7 @@ def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
             "Review Status": row.get("IAM_REVIEW_STATE", "Requested"),
             "Review Note": (
                 f"{row.get('ACCESS_REVIEW_STATE', '')}; status {row.get('REVIEW_READINESS', '')}; "
-                f"blockers {row.get('REVIEW_BLOCKERS', '')}; escalation {row.get('REVIEW_TARGET', 'DBA Lead')}; "
+                f"blockers {row.get('REVIEW_BLOCKERS', '')}; escalation {row.get('WORKFLOW_ROUTE', 'DBA Lead')}; "
                 f"ticket required {row.get('TICKET_REQUIRED', 'Yes')}; review-by required {row.get('REVIEW_BY_REQUIRED', 'Yes')}."
             ),
             "Recovery Evidence": (

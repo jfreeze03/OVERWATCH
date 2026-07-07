@@ -273,7 +273,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
 
         base = {
             "OWNER": "Platform DBA",
-            "ROUTE_SOURCE": "Route map",
+            "ALLOCATION_SOURCE": "Route map",
             "APPROVER": "DBA Lead",
             "APPROVAL_REQUIRED": "Yes",
             "APPROVAL_STATE": "Approved",
@@ -283,7 +283,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
             "EXECUTION_STATUS": "Not Executed",
         }
         cases = [
-            ({**base, "OWNER": "", "ROUTE_SOURCE": ""}, "Route Metadata Blocked", "escalation route"),
+            ({**base, "OWNER": "", "ALLOCATION_SOURCE": ""}, "Route Metadata Blocked", "escalation route"),
             ({**base, "APPROVAL_STATE": "Requested"}, "Pre-Change Blocked", "review status"),
             ({**base, "ROLLBACK_SQL": ""}, "Pre-Change Blocked", "rollback SQL"),
             ({**base, "EXECUTION_STATUS": "Failed"}, "Execution Failed", "None"),

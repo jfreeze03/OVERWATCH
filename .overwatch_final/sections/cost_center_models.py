@@ -54,7 +54,7 @@ def _cost_allocation_quality(row) -> dict:
     db = _row_text(row, "DATABASE_NAME").upper()
     company = _row_text(row, "COMPANY").upper()
     rollup = _environment_rollup_for_cost(row)
-    route_source = _row_text(row, "ROUTE_SOURCE").upper()
+    route_source = _row_text(row, "ALLOCATION_SOURCE").upper()
     cost_attribution = _row_text(row, "COST_ATTRIBUTION")
     has_owner_tag = "TAG" in route_source and bool(cost_attribution)
 
@@ -127,8 +127,8 @@ def _annotate_allocation_quality(df: pd.DataFrame) -> pd.DataFrame:
             ),
             axis=1,
         )
-    if "ROUTE_SOURCE" not in annotated.columns:
-        annotated["ROUTE_SOURCE"] = annotated.apply(
+    if "ALLOCATION_SOURCE" not in annotated.columns:
+        annotated["ALLOCATION_SOURCE"] = annotated.apply(
             lambda row: (
                 "QUERY_USER"
                 if _row_text(row, "USER_NAME").upper() not in {"", "UNKNOWN USER", "UNKNOWN_USER"}
@@ -136,11 +136,11 @@ def _annotate_allocation_quality(df: pd.DataFrame) -> pd.DataFrame:
             ),
             axis=1,
         )
-    if "ROUTE_EVIDENCE" not in annotated.columns:
-        annotated["ROUTE_EVIDENCE"] = annotated.apply(
+    if "ALLOCATION_BASIS" not in annotated.columns:
+        annotated["ALLOCATION_BASIS"] = annotated.apply(
             lambda row: (
                 "Query user present; review route/tag telemetry before billing."
-                if _row_text(row, "ROUTE_SOURCE").upper() == "QUERY_USER"
+                if _row_text(row, "ALLOCATION_SOURCE").upper() == "QUERY_USER"
                 else "No query user route telemetry; shared/unallocated review required."
             ),
             axis=1,
@@ -188,6 +188,118 @@ def _prepare_cost_forecast_rows(df_fc: pd.DataFrame | None, *, today: object | N
     merged = full_window.merge(rows, on="DAY", how="left")
     merged["DAILY_CREDITS"] = pd.to_numeric(merged["DAILY_CREDITS"], errors="coerce").fillna(0)
     return merged
+
+
+def _cost_forecast_projection(
+    df_fc: pd.DataFrame | None,
+    *,
+    credit_price: float,
+    today: object | None = None,
+    monthly_budget_credits: float | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    """Build a bounded monthly cost forecast from 7d, 30d, and weekday history."""
+    rows = _prepare_cost_forecast_rows(df_fc, today=today)
+    if rows.empty:
+        rows = _prepare_cost_forecast_rows(pd.DataFrame(), today=today)
+    rows = rows.copy()
+    rows["DAY"] = pd.to_datetime(rows["DAY"], errors="coerce").dt.normalize()
+    rows["DAILY_CREDITS"] = pd.to_numeric(rows["DAILY_CREDITS"], errors="coerce").fillna(0.0)
+    rows = rows.dropna(subset=["DAY"]).sort_values("DAY").reset_index(drop=True)
+    if rows.empty:
+        return {}, pd.DataFrame()
+
+    latest_day = rows.loc[rows["DAILY_CREDITS"].ne(0), "DAY"].max()
+    if pd.isna(latest_day):
+        latest_day = rows["DAY"].max()
+    latest_day = pd.Timestamp(latest_day).normalize()
+    period_start = pd.Timestamp(latest_day.year, latest_day.month, 1)
+    period_end = period_start + pd.offsets.MonthEnd(0)
+    observed = rows[rows["DAY"].le(latest_day)].copy()
+    month_observed = observed[observed["DAY"].between(period_start, latest_day)].copy()
+    history = observed[observed["DAILY_CREDITS"].gt(0)].copy()
+    observed_count = int(len(history))
+    history_series = history["DAILY_CREDITS"] if observed_count else pd.Series(dtype=float)
+    avg_30d = safe_float(history_series.tail(30).mean()) if observed_count else 0.0
+    avg_7d = safe_float(history_series.tail(7).mean()) if observed_count else avg_30d
+    weekday_history = history[history["DAY"].dt.dayofweek.eq(int(latest_day.dayofweek))]
+    weekday_avg = safe_float(weekday_history["DAILY_CREDITS"].mean()) if len(weekday_history) >= 3 else 0.0
+
+    if observed_count >= 7:
+        weighted_terms: list[tuple[float, float]] = [(avg_7d, 0.45), (avg_30d, 0.35)]
+        if weekday_avg > 0:
+            weighted_terms.append((weekday_avg, 0.20))
+        weight_sum = sum(weight for value, weight in weighted_terms if value > 0)
+        projected_daily = (
+            sum(value * weight for value, weight in weighted_terms if value > 0) / weight_sum
+            if weight_sum
+            else avg_30d
+        )
+        method_label = "Seasonal fallback"
+    else:
+        projected_daily = avg_30d
+        method_label = "Run-rate fallback"
+
+    actual_to_date_credits = safe_float(month_observed["DAILY_CREDITS"].sum())
+    remaining_days = max(int((period_end - latest_day).days), 0)
+    projected_credits = actual_to_date_credits + projected_daily * remaining_days
+    std = safe_float(history_series.tail(30).std(ddof=0)) if observed_count else 0.0
+    band_width = std * max(remaining_days, 1) ** 0.5
+    lower_credits = max(actual_to_date_credits, projected_credits - band_width)
+    upper_credits = max(lower_credits, projected_credits + band_width)
+    volatility = abs(std / avg_30d) if avg_30d else 0.0
+    if observed_count >= 21 and volatility <= 0.25:
+        confidence_label = "High"
+    elif observed_count >= 14 and volatility <= 0.45:
+        confidence_label = "Medium"
+    elif observed_count >= 7:
+        confidence_label = "Low"
+    else:
+        confidence_label = "Directional"
+
+    forecast_days = pd.date_range(period_start, period_end, freq="D")
+    forecast_frame = pd.DataFrame({"DAY": forecast_days})
+    forecast_frame = forecast_frame.merge(rows[["DAY", "DAILY_CREDITS"]], on="DAY", how="left")
+    forecast_frame["DAILY_CREDITS"] = pd.to_numeric(forecast_frame["DAILY_CREDITS"], errors="coerce").fillna(0.0)
+    forecast_frame["ACTUAL_CREDITS"] = forecast_frame.apply(
+        lambda row: safe_float(row["DAILY_CREDITS"]) if row["DAY"] <= latest_day else None,
+        axis=1,
+    )
+    forecast_frame["FORECAST_CREDITS"] = forecast_frame.apply(
+        lambda row: safe_float(row["DAILY_CREDITS"]) if row["DAY"] <= latest_day else projected_daily,
+        axis=1,
+    )
+    if monthly_budget_credits is not None and monthly_budget_credits > 0:
+        daily_budget = safe_float(monthly_budget_credits) / max(len(forecast_frame), 1)
+        forecast_frame["BUDGET_CREDITS"] = daily_budget
+    else:
+        forecast_frame["BUDGET_CREDITS"] = None
+    forecast_frame["FORECAST_COST_USD"] = forecast_frame["FORECAST_CREDITS"].apply(
+        lambda value: credits_to_dollars(safe_float(value), credit_price)
+    )
+
+    summary = {
+        "actual_to_date_credits": actual_to_date_credits,
+        "actual_to_date_cost": credits_to_dollars(actual_to_date_credits, credit_price),
+        "projected_end_period_credits": projected_credits,
+        "projected_end_period_cost": credits_to_dollars(projected_credits, credit_price),
+        "lower_bound_credits": lower_credits,
+        "upper_bound_credits": upper_credits,
+        "lower_bound_cost": credits_to_dollars(lower_credits, credit_price),
+        "upper_bound_cost": credits_to_dollars(upper_credits, credit_price),
+        "method_label": method_label,
+        "confidence_label": confidence_label,
+        "history_window": f"{observed_count} observed daily row(s)",
+        "latest_usage_date": latest_day.date().isoformat(),
+        "source_freshness": f"Latest completed usage date {latest_day.date().isoformat()}",
+        "projected_daily_credits": projected_daily,
+        "avg_daily_30d": avg_30d,
+        "avg_daily_7d": avg_7d,
+        "same_weekday_avg": weekday_avg,
+        "remaining_days": remaining_days,
+        "period_start": period_start.date().isoformat(),
+        "period_end": period_end.date().isoformat(),
+    }
+    return summary, forecast_frame
 
 
 def _annual_service_projection_metrics(data: pd.DataFrame, period_days: int) -> dict:
@@ -289,8 +401,8 @@ def _normalize_cost_explorer_detail(df: pd.DataFrame, credit_price: float) -> pd
         "WAREHOUSE_SIZE": "",
         "DEPARTMENT": "",
         "COST_ATTRIBUTION": "",
-        "ROUTE_SOURCE": "",
-        "ROUTE_EVIDENCE": "",
+        "ALLOCATION_SOURCE": "",
+        "ALLOCATION_BASIS": "",
         "ALLOCATION_CONFIDENCE": "",
         "ALLOCATION_BASIS": "",
         "CHARGEBACK_READY": "",
@@ -354,7 +466,7 @@ def _cost_explorer_summary(detail: pd.DataFrame, lens: str) -> pd.DataFrame:
             ENVIRONMENTS=("ENVIRONMENT_ROLLUP", "nunique"),
             ALLOCATION_CONFIDENCE=("ALLOCATION_CONFIDENCE", _mixed_label),
             CHARGEBACK_READY=("CHARGEBACK_READY", _chargeback_readiness_label),
-            ROUTE_TELEMETRY=("ROUTE_SOURCE", _route_telemetry_label),
+            ROUTE_TELEMETRY=("ALLOCATION_SOURCE", _route_telemetry_label),
             FIRST_USAGE_DATE=("FIRST_USAGE_DATE", "min"),
             LAST_USAGE_DATE=("LAST_USAGE_DATE", "max"),
         )
@@ -400,7 +512,7 @@ def _cost_explorer_gap_board(detail: pd.DataFrame, lens_summary: pd.DataFrame) -
         }
 
     dept = detail["DEPARTMENT"].fillna("").astype(str).str.upper()
-    route_source = detail["ROUTE_SOURCE"].fillna("").astype(str).str.upper()
+    route_source = detail["ALLOCATION_SOURCE"].fillna("").astype(str).str.upper()
     readiness = detail["CHARGEBACK_READY"].fillna("").astype(str).str.upper()
     confidence = detail["ALLOCATION_CONFIDENCE"].fillna("").astype(str).str.upper()
     database = detail["DATABASE_NAME"].fillna("").astype(str).str.upper()
@@ -845,4 +957,4 @@ def _build_explain_bill_markdown(
     return "\n".join(lines)
 
 
-__all__ = ['_row_text', '_environment_rollup_for_cost', '_cost_allocation_quality', '_annotate_allocation_quality', '_prepare_cost_forecast_rows', '_annual_service_projection_metrics', '_mixed_label', '_chargeback_readiness_label', '_route_telemetry_label', '_cost_explorer_dimension_columns', '_cost_explorer_dimension_label', '_normalize_cost_explorer_detail', '_cost_explorer_summary', '_cost_explorer_gap_board', '_annotate_cost_routes', '_bill_period_bounds', '_pct_delta', '_fmt_delta', '_first_value', '_bill_driver_summary', '_build_bill_waterfall', '_service_cost_category', '_service_period_totals', '_build_finance_movement_summary', '_build_explain_bill_markdown']
+__all__ = ['_row_text', '_environment_rollup_for_cost', '_cost_allocation_quality', '_annotate_allocation_quality', '_prepare_cost_forecast_rows', '_cost_forecast_projection', '_annual_service_projection_metrics', '_mixed_label', '_chargeback_readiness_label', '_route_telemetry_label', '_cost_explorer_dimension_columns', '_cost_explorer_dimension_label', '_normalize_cost_explorer_detail', '_cost_explorer_summary', '_cost_explorer_gap_board', '_annotate_cost_routes', '_bill_period_bounds', '_pct_delta', '_fmt_delta', '_first_value', '_bill_driver_summary', '_build_bill_waterfall', '_service_cost_category', '_service_period_totals', '_build_finance_movement_summary', '_build_explain_bill_markdown']

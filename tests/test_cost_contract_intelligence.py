@@ -115,7 +115,7 @@ class CostContractIntelligenceTests(unittest.TestCase):
         queue = pd.DataFrame([{
             "CATEGORY": "Cost Control",
             "STATUS": "New",
-            "ROUTE_SOURCE": "warehouse_scope",
+            "ALLOCATION_SOURCE": "warehouse_scope",
             "VERIFICATION_STATUS": "Pending",
         }])
         state = {

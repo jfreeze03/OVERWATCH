@@ -166,8 +166,8 @@ def annotate_alert_triage_frame(df: pd.DataFrame, *, now: Any | None = None) -> 
         view.loc[closed_mask, "SLA_STATE"] = "Closed"
     else:
         view["SLA_STATE"] = view["SLA_STATE"].fillna("Within SLA")
-    if "REVIEW_TARGET" not in view.columns:
-        view["REVIEW_TARGET"] = view.apply(
+    if "WORKFLOW_ROUTE" not in view.columns:
+        view["WORKFLOW_ROUTE"] = view.apply(
             lambda row: (
                 "DBA Lead"
                 if row.get("SLA_STATE") == "Overdue" and normalize_alert_severity(row.get("SEVERITY")) in {"Critical", "High"}
@@ -176,7 +176,7 @@ def annotate_alert_triage_frame(df: pd.DataFrame, *, now: Any | None = None) -> 
             axis=1,
         )
     else:
-        view["REVIEW_TARGET"] = view["REVIEW_TARGET"].fillna(view.get("OWNER", "DBA"))
+        view["WORKFLOW_ROUTE"] = view["WORKFLOW_ROUTE"].fillna(view.get("OWNER", "DBA"))
     view["_SLA_RANK"] = view["SLA_STATE"].map({"Overdue": 0, "Due Soon": 1, "Within SLA": 2, "Closed": 9}).fillna(5)
     if "TRIAGE_PRIORITY" in view.columns:
         view["TRIAGE_PRIORITY"] = pd.to_numeric(view["TRIAGE_PRIORITY"], errors="coerce")
@@ -510,7 +510,7 @@ def load_alert_history(
         "ALERT_ROUTE",
         "ALERT_RUNBOOK",
         "SLA_STATE",
-        "REVIEW_TARGET",
+        "WORKFLOW_ROUTE",
         "TRIAGE_PRIORITY",
     ]
     compact_table = mart_object_name("MART_ALERT_EVIDENCE_RECENT")
@@ -596,7 +596,7 @@ def load_alert_history(
             {_coalesce_sql(columns, "ALERT_ROUTE", default="''")} AS ALERT_ROUTE,
             {_coalesce_sql(columns, "ALERT_RUNBOOK", default="''")} AS ALERT_RUNBOOK,
             {_coalesce_sql(columns, "SLA_STATE", default="NULL")} AS SLA_STATE,
-            {_coalesce_sql(columns, "REVIEW_TARGET", default="NULL")} AS REVIEW_TARGET,
+            {_coalesce_sql(columns, "WORKFLOW_ROUTE", default="NULL")} AS WORKFLOW_ROUTE,
             {_coalesce_sql(columns, "TRIAGE_PRIORITY", default="NULL")} AS TRIAGE_PRIORITY
         FROM {table}
         WHERE 1 = 1

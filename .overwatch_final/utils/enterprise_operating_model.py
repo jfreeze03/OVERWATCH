@@ -315,7 +315,7 @@ def load_value_ledger_detail(company: str, environment: str, *, days: int = 180)
             FINDING,
             ENTITY_TYPE,
             ENTITY_NAME,
-            COALESCE(NULLIF(OWNER, ''), NULLIF(REVIEW_PRIMARY, ''), NULLIF(REVIEW_TARGET, ''), 'DBA / Cost attribution') AS ROUTE,
+            COALESCE(NULLIF(OWNER, ''), NULLIF(REVIEWED_BY, ''), NULLIF(WORKFLOW_ROUTE, ''), 'DBA / Cost attribution') AS ROUTE,
             STATUS,
             COALESCE(EST_MONTHLY_SAVINGS, 0) AS EXPECTED_SAVINGS_USD,
             IFF(

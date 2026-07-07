@@ -36,6 +36,14 @@ RETIRED_ACTION_QUEUE_COLUMNS = {
     _retired_column("OWNER", "APPROVAL", "AT"),
     _retired_column("OWNER", "APPROVAL", "NOTE"),
     _retired_column("OWNER", "EMAIL"),
+    _retired_column("ROUTE", "EMAIL"),
+    _retired_column("REVIEW", "PRIMARY"),
+    _retired_column("REVIEW", "SECONDARY"),
+    _retired_column("REVIEW", "GROUP"),
+    _retired_column("REVIEW", "TARGET"),
+    _retired_column("ROUTE", "SOURCE"),
+    _retired_column("ROUTE", "EVIDENCE"),
+    _retired_column("APPROVAL", "ROUTE", "READY"),
     _retired_column("ON" + "CALL", "PRIMARY"),
     _retired_column("ON" + "CALL", "SECONDARY"),
     _retired_column("APPROVAL", "GROUP"),
@@ -134,6 +142,14 @@ class OwnerRoutingRemovedTests(unittest.TestCase):
             "ESCALATION_TARGET",
             _retired_column("OWNER", "SOURCE"),
             _retired_column("OWNER", "EVIDENCE"),
+            _retired_column("ROUTE", "EMAIL"),
+            _retired_column("REVIEW", "PRIMARY"),
+            _retired_column("REVIEW", "SECONDARY"),
+            _retired_column("REVIEW", "GROUP"),
+            _retired_column("REVIEW", "TARGET"),
+            _retired_column("ROUTE", "SOURCE"),
+            _retired_column("ROUTE", "EVIDENCE"),
+            _retired_column("APPROVAL", "ROUTE", "READY"),
             _retired_column("OWNER", "ROUTE"),
             _retired_column("OWNER", "GAP"),
             "COST_OWNER",
@@ -159,6 +175,11 @@ class OwnerRoutingRemovedTests(unittest.TestCase):
             "DROP COLUMN IF EXISTS " + _retired_column("OWNER", "APPROVAL", "STATUS"),
             migration.read_text(encoding="utf-8"),
         )
+        self.assertIn(
+            "DROP COLUMN IF EXISTS " + _retired_column("ROUTE", "EMAIL"),
+            migration.read_text(encoding="utf-8"),
+        )
+        self.assertIn(_retired_column("REVIEW", "PRIMARY"), validation.read_text(encoding="utf-8"))
         self.assertIn("INFORMATION_SCHEMA.COLUMNS", validation.read_text(encoding="utf-8"))
 
 

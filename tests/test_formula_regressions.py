@@ -1743,7 +1743,7 @@ class FormulaRegressionTests(unittest.TestCase):
         queue = pd.DataFrame([{
                 "CATEGORY": "Cost Control",
                 "STATUS": "New",
-                "ROUTE_SOURCE": "MONITORING_CONTEXT:COST_CONTROL_DEFAULT",
+                "ALLOCATION_SOURCE": "MONITORING_CONTEXT:COST_CONTROL_DEFAULT",
                 "VERIFICATION_STATUS": "Pending",
             }])
         state = {
@@ -2197,11 +2197,11 @@ class FormulaRegressionTests(unittest.TestCase):
             flags=re.MULTILINE,
         )
 
-        self.assertEqual(len(tables), 127)
-        self.assertEqual(len(views), 18)
-        self.assertEqual(len(tasks), 17)
+        self.assertEqual(len(tables), 146)
+        self.assertEqual(len(views), 32)
+        self.assertEqual(len(tasks), 18)
         self.assertEqual(len(functions), 1)
-        self.assertEqual(len(procedures), 26)
+        self.assertEqual(len(procedures), 27)
 
         for table in tables:
             self.assertIn(f"DROP TABLE IF EXISTS {table}", drop_sql)
@@ -2764,7 +2764,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(command_queue.iloc[0]["COMMAND_STATE"], "Escalate Overdue")
         self.assertEqual(command_queue.iloc[0]["COMMAND_EXECUTION_GATE"], "Escalate - Overdue")
         self.assertEqual(command_queue.iloc[0]["COMMAND_ROUTE_READINESS"], "Route Needed")
-        self.assertEqual(command_queue.iloc[0]["REVIEW_PRIMARY"], "DBA")
+        self.assertEqual(command_queue.iloc[0]["REVIEWED_BY"], "DBA")
         self.assertEqual(command_queue.iloc[0]["COMMAND_AUDIT_READINESS"], "Audit Gaps")
         self.assertEqual(summary["open"], 1)
         self.assertEqual(summary["overdue"], 1)
@@ -2797,7 +2797,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "SEVERITY": "High",
                 "ENTITY_NAME": "WH_ALFA_LOAD",
                 "OWNER": "LOAD_PLATFORM_ROUTE",
-                "REVIEW_PRIMARY": "Load Platform Queue",
+                "REVIEWED_BY": "Load Platform Queue",
                 "STATUS": "Acknowledged",
                 "DUE_DATE": "2026-06-02",
                 "VERIFICATION_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
@@ -3951,8 +3951,8 @@ class FormulaRegressionTests(unittest.TestCase):
             "WAREHOUSE_NAME",
             "WAREHOUSE_SIZE",
             "COST_ATTRIBUTION",
-            "ROUTE_SOURCE",
-            "ROUTE_EVIDENCE",
+            "ALLOCATION_SOURCE",
+            "ALLOCATION_BASIS",
             "ALLOCATION_CONFIDENCE",
             "CHARGEBACK_READY",
             "COUNT(DISTINCT USAGE_DATE) AS ACTIVE_DAYS",
@@ -3990,8 +3990,8 @@ class FormulaRegressionTests(unittest.TestCase):
                 "WAREHOUSE_NAME": "WH_ALFA_BI",
                 "WAREHOUSE_SIZE": "MEDIUM",
                 "COST_ATTRIBUTION": "Claims",
-                "ROUTE_SOURCE": "WAREHOUSE_TAG",
-                "ROUTE_EVIDENCE": "COST_CENTER=Claims",
+                "ALLOCATION_SOURCE": "WAREHOUSE_TAG",
+                "ALLOCATION_BASIS": "COST_CENTER=Claims",
                 "ALLOCATION_CONFIDENCE": "Allocated / Estimated",
                 "CHARGEBACK_READY": "Ready",
                 "QUERY_COUNT": 20,
@@ -4009,8 +4009,8 @@ class FormulaRegressionTests(unittest.TestCase):
                 "WAREHOUSE_NAME": "SHARED_ETL_WH",
                 "WAREHOUSE_SIZE": "LARGE",
                 "COST_ATTRIBUTION": "",
-                "ROUTE_SOURCE": "QUERY_USER",
-                "ROUTE_EVIDENCE": "Query user only",
+                "ALLOCATION_SOURCE": "QUERY_USER",
+                "ALLOCATION_BASIS": "Query user only",
                 "ALLOCATION_CONFIDENCE": "Shared / Low Confidence",
                 "CHARGEBACK_READY": "No",
                 "QUERY_COUNT": 5,
@@ -4341,8 +4341,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_type["Object Grant"]["SCOPE_CONFIDENCE"], "Database Context")
         self.assertEqual(by_type["Failed Login"]["OWNER"], "IAM / Security Route")
         self.assertEqual(by_type["MFA Gap"]["APPROVER"], "IAM / Security")
-        self.assertEqual(by_type["Failed Login"]["REVIEW_PRIMARY"], "")
-        self.assertIn("MONITORING_CONTEXT", by_type["Recent Grant"]["ROUTE_SOURCE"])
+        self.assertEqual(by_type["Failed Login"]["REVIEWED_BY"], "")
+        self.assertIn("MONITORING_CONTEXT", by_type["Recent Grant"]["ALLOCATION_SOURCE"])
         self.assertIn("MANAGE GRANTS", by_type["Recent Grant"]["ROLE_CAPABILITY_STATE"])
 
         for _, row in review.iterrows():
@@ -4375,7 +4375,7 @@ class FormulaRegressionTests(unittest.TestCase):
         ready = _security_access_review_readiness_for_row({
             "SEVERITY": "High",
             "OWNER": "Security Owner",
-            "ROUTE_SOURCE": "MONITORING_CONTEXT exact",
+            "ALLOCATION_SOURCE": "MONITORING_CONTEXT exact",
             "ACCESS_TICKET_ID": "SEC-123",
             "REVIEW_BY_DATE": "2026-06-30",
             "REVIEW_STATUS": "Approved",
@@ -4471,7 +4471,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_entity["JDOE"]["WORKFLOW_ROUTE_READY"], "Yes")
         self.assertEqual(by_entity["ETL_RUNNER"]["GRANT_REVIEW_STATE"], "Privileged object grant")
         self.assertEqual(by_entity["ETL_RUNNER"]["SCOPE_CONFIDENCE"], "Database Context")
-        self.assertIn("MONITORING_CONTEXT", by_entity["ETL_RUNNER"]["ROUTE_SOURCE"])
+        self.assertIn("MONITORING_CONTEXT", by_entity["ETL_RUNNER"]["ALLOCATION_SOURCE"])
         self.assertEqual(summary["total"], 2)
         self.assertEqual(summary["tier0"], 1)
         self.assertEqual(summary["admin_role_grants"], 1)
@@ -4492,12 +4492,12 @@ class FormulaRegressionTests(unittest.TestCase):
             "DATABASE_NAME": "",
             "ENVIRONMENT": "No Database Context",
             "OWNER": "IAM / Security Route",
-            "ROUTE_EMAIL": "iam@example.com",
-            "REVIEW_PRIMARY": "DBA Review",
-            "REVIEW_GROUP": "Security",
-            "REVIEW_TARGET": "DBA / Security Route",
-            "ROUTE_SOURCE": "MONITORING_CONTEXT exact",
-            "ROUTE_EVIDENCE": "role route map",
+            "EMAIL_TARGET": "iam@example.com",
+            "REVIEWED_BY": "DBA Review",
+            "REVIEW_STATUS": "Security",
+            "WORKFLOW_ROUTE": "DBA / Security Route",
+            "ALLOCATION_SOURCE": "MONITORING_CONTEXT exact",
+            "ALLOCATION_BASIS": "role route map",
             "GRANT_REVIEW_STATE": "Tier 0 role grant",
             "GRANT_REVIEW_READINESS": "Telemetry Pending",
             "WORKFLOW_ROUTE_READY": "Yes",
@@ -4945,8 +4945,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(annotated.iloc[0]["APPROVAL_REQUIRED"], "Yes")
         self.assertEqual(annotated.iloc[0]["ROLLBACK_REQUIRED"], "Yes")
         self.assertEqual(annotated.iloc[0]["OWNER"], "BI Platform Route")
-        self.assertEqual(annotated.iloc[0]["REVIEW_PRIMARY"], "")
-        self.assertIn("MONITORING_CONTEXT", annotated.iloc[0]["ROUTE_SOURCE"])
+        self.assertEqual(annotated.iloc[0]["REVIEWED_BY"], "")
+        self.assertIn("MONITORING_CONTEXT", annotated.iloc[0]["ALLOCATION_SOURCE"])
         self.assertIn("DBA Lead", annotated.iloc[0]["APPROVER"])
         self.assertIn("MAX_CLUSTER_COUNT", annotated.iloc[0]["SETTING_CHANGE_CANDIDATE"])
         self.assertIn("Warehouse Settings Manager", annotated.iloc[0]["SAFE_CHANGE_PATH"])
@@ -5353,7 +5353,7 @@ class FormulaRegressionTests(unittest.TestCase):
         blocked = _warehouse_setting_audit_readiness_for_row(
             {
                 "OWNER": "BI Platform Owner",
-                "ROUTE_SOURCE": "WAREHOUSE_TAG",
+                "ALLOCATION_SOURCE": "WAREHOUSE_TAG",
                 "APPROVER": "BI Platform Owner / DBA Lead",
                 "APPROVAL_REQUIRED": "Yes",
                 "APPROVAL_STATE": "Requested",
@@ -5365,7 +5365,7 @@ class FormulaRegressionTests(unittest.TestCase):
         verified = _warehouse_setting_audit_readiness_for_row(
             {
                 "OWNER": "BI Platform Owner",
-                "ROUTE_SOURCE": "WAREHOUSE_TAG",
+                "ALLOCATION_SOURCE": "WAREHOUSE_TAG",
                 "APPROVER": "BI Platform Owner / DBA Lead",
                 "APPROVAL_REQUIRED": "Yes",
                 "APPROVAL_STATE": "Approved",
@@ -6105,9 +6105,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(float(by_task["ROOT_TASK"]["RECOVERY_HOURS"]), 7.0)
         self.assertEqual(by_task["CHILD_TASK"]["RECOVERY_STATE"], "Open Failure")
         self.assertEqual(by_task["CHILD_TASK"]["REVIEW_STATE"], "Root-cause review required")
-        self.assertEqual(by_task["CHILD_TASK"]["REVIEW_PRIMARY"], "")
-        self.assertEqual(by_task["CHILD_TASK"]["REVIEW_GROUP"], "")
-        self.assertIn("MONITORING_CONTEXT", by_task["CHILD_TASK"]["ROUTE_SOURCE"])
+        self.assertEqual(by_task["CHILD_TASK"]["REVIEWED_BY"], "")
+        self.assertEqual(by_task["CHILD_TASK"]["REVIEW_STATUS"], "")
+        self.assertIn("MONITORING_CONTEXT", by_task["CHILD_TASK"]["ALLOCATION_SOURCE"])
         self.assertIn("P", by_task["CHILD_TASK"]["INCIDENT_PRIORITY"])
 
     def test_task_recovery_command_board_prioritizes_blocked_retries(self):
@@ -6121,8 +6121,8 @@ class FormulaRegressionTests(unittest.TestCase):
             "DOWNSTREAM_TASK_COUNT": 4,
             "RECOVERY_READINESS": "Blocked - fix failure root cause first",
             "REVIEW_STATE": "Root-cause review required",
-            "REVIEW_PRIMARY": "",
-            "REVIEW_GROUP": "Pipeline Route",
+            "REVIEWED_BY": "",
+            "REVIEW_STATUS": "Pipeline Route",
             "NEXT_ACTION": "Review task error and retry after correction.",
             "VERIFY_AFTER_FIX": "Latest TASK_HISTORY run succeeds.",
         }])
@@ -6134,8 +6134,8 @@ class FormulaRegressionTests(unittest.TestCase):
             "DOWNSTREAM_TASK_COUNT": 4,
             "RECOVERY_STATE": "Open Failure",
             "REVIEW_STATE": "Root-cause review required",
-            "REVIEW_PRIMARY": "",
-            "REVIEW_GROUP": "Pipeline Route",
+            "REVIEWED_BY": "",
+            "REVIEW_STATUS": "Pipeline Route",
         }])
 
         board = _task_recovery_command_board(exceptions, recovery)
@@ -7501,8 +7501,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(action["Owner"], "TASK_OWNER_ROLE")
         self.assertEqual(action["Category"], "Task & Procedure Reliability")
         self.assertEqual(action["Approver"], "TASK_OWNER_ROLE")
-        self.assertEqual(action["Review Primary"], "")
-        self.assertIn("MONITORING_CONTEXT", action["Route Source"])
+        self.assertEqual(action["Reviewed By"], "")
+        self.assertIn("MONITORING_CONTEXT", action["Allocation Source"])
         self.assertEqual(action["Recovery Audit State"], "Audit Required")
         self.assertIn("Environment", action)
         self.assertIn("P2 - Production Risk", action["Finding"])
@@ -7546,8 +7546,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(action["Recovery SLA State"], "Procedure Cost Review Required")
         self.assertEqual(action["Recovery SLA Target Hours"], 24.0)
         self.assertEqual(action["Recovery Audit State"], "Audit Required")
-        self.assertIn("MONITORING_CONTEXT", action["Route Source"])
-        self.assertEqual(action["Review Primary"], "")
+        self.assertIn("MONITORING_CONTEXT", action["Allocation Source"])
+        self.assertEqual(action["Reviewed By"], "")
         self.assertIn("Environment", action)
         self.assertEqual(action["Verification Status"], "Requested")
         self.assertIn("QUERY_HISTORY", action["Verification Query"])
@@ -7623,7 +7623,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("LOAD_MART_TABLE", chargeback_block)
         self.assertIn("ROUTE_TELEMETRY", chargeback_block)
         self.assertIn("COST_ATTRIBUTION", chargeback_block)
-        self.assertIn("ROUTE_EVIDENCE", chargeback_block)
+        self.assertIn("ALLOCATION_BASIS", chargeback_block)
 
     def test_ask_overwatch_reads_dba_operations_priority(self):
         priority_index = pd.DataFrame([
@@ -7703,10 +7703,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("SP_OVERWATCH_SEND_ALERT_DIGEST", sql)
         self.assertIn("SYSTEM$SEND_EMAIL", sql)
         self.assertIn("EMAIL_DRY_RUN", sql)
-        self.assertIn("ROUTE_EMAIL", sql)
-        self.assertIn("REVIEW_PRIMARY", sql)
-        self.assertIn("REVIEW_GROUP", sql)
-        self.assertIn("ROUTE_SOURCE", sql)
+        self.assertIn("EMAIL_TARGET", sql)
+        self.assertIn("REVIEWED_BY", sql)
+        self.assertIn("REVIEW_STATUS", sql)
+        self.assertIn("ALLOCATION_SOURCE", sql)
         self.assertIn("STATUS_REASON", sql)
         self.assertIn("LAST_DELIVERY_AT", sql)
         self.assertIn("ESCALATION_ACK_BY", sql)
@@ -7729,9 +7729,9 @@ class FormulaRegressionTests(unittest.TestCase):
         sql = build_workload_recovery_audit_ddl().upper()
 
         self.assertIn("OVERWATCH_WORKLOAD_RECOVERY_AUDIT", sql)
-        self.assertIn("ROUTE_EMAIL", sql)
-        self.assertIn("REVIEW_PRIMARY", sql)
-        self.assertIn("REVIEW_GROUP", sql)
+        self.assertIn("EMAIL_TARGET", sql)
+        self.assertIn("REVIEWED_BY", sql)
+        self.assertIn("REVIEW_STATUS", sql)
         self.assertIn("REVIEW_STATUS", sql)
         self.assertIn("RECOVERY_SLA_STATE", sql)
         self.assertIn("VERIFICATION_QUERY", sql)
@@ -7851,7 +7851,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "SLA_TARGET_HOURS": 48,
             "ALERT_AGE_HOURS": 10,
             "SLA_STATE": "Within SLA",
-            "REVIEW_TARGET": "Pipeline Reviewer",
+            "WORKFLOW_ROUTE": "Pipeline Reviewer",
             "TRIAGE_PRIORITY": 777,
         }])
 
@@ -7860,7 +7860,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(triage["SLA_TARGET_HOURS"].iloc[0], 48)
         self.assertEqual(triage["ALERT_AGE_HOURS"].iloc[0], 10)
         self.assertEqual(triage["SLA_STATE"].iloc[0], "Within SLA")
-        self.assertEqual(triage["REVIEW_TARGET"].iloc[0], "Pipeline Reviewer")
+        self.assertEqual(triage["WORKFLOW_ROUTE"].iloc[0], "Pipeline Reviewer")
         self.assertEqual(triage["TRIAGE_PRIORITY"].iloc[0], 777)
 
     def test_alert_history_routes_task_and_procedure_alerts_with_recovery_routing(self):
@@ -7881,7 +7881,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "SUGGESTED_ACTION": "Open Workload Operations task graphs.",
                 "PROOF_QUERY": "",
                 "OWNER": "DBA / Pipeline Reviewer",
-                "REVIEW_TARGET": "Pipeline Reviewer",
+                "WORKFLOW_ROUTE": "Pipeline Reviewer",
                 "SLA_TARGET_HOURS": 4,
                 "ALERT_AGE_HOURS": 6.5,
                 "SLA_STATE": "Overdue",
@@ -7932,8 +7932,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(task["Entity Type"], "Task")
         self.assertNotIn("Telemetry Status", task)
         self.assertNotIn("Approver", task)
-        self.assertEqual(task["Review Primary"], "")
-        self.assertIn("MONITORING_CONTEXT", task["Route Source"])
+        self.assertEqual(task["Reviewed By"], "")
+        self.assertIn("MONITORING_CONTEXT", task["Allocation Source"])
         self.assertEqual(task["Recovery Audit State"], "Audit Required")
         self.assertEqual(task["Recovery SLA State"], "Recovery SLA Breach")
         self.assertEqual(task["Recovery SLA Target Hours"], 4.0)
@@ -7948,7 +7948,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(proc["Entity Type"], "Stored Procedure")
         self.assertNotIn("Telemetry Status", proc)
         self.assertNotIn("Approver", proc)
-        self.assertEqual(proc["Review Primary"], "")
+        self.assertEqual(proc["Reviewed By"], "")
         self.assertEqual(proc["Recovery SLA State"], "Open Failure")
         self.assertEqual(proc["Baseline Value"], 30.0)
         self.assertEqual(proc["Current Value"], 90.0)
@@ -7967,7 +7967,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH_ALERT_TRIAGE_V", sql)
         self.assertIn("SLA_TARGET_HOURS", sql)
         self.assertIn("SLA_STATE", sql)
-        self.assertIn("REVIEW_TARGET", sql)
+        self.assertIn("WORKFLOW_ROUTE", sql)
         self.assertIn("TRIAGE_PRIORITY", sql)
         self.assertIn("OVERWATCH_ALERT_RULES", sql)
 
@@ -8068,10 +8068,10 @@ class FormulaRegressionTests(unittest.TestCase):
             "CATEGORY": "Reliability",
             "ENTITY": "LOAD_POLICY",
             "OWNER": "Pipeline Reviewer Smith",
-            "ROUTE_EMAIL": "dba-alerts@example.com",
-            "REVIEW_PRIMARY": "DBA Review",
-            "REVIEW_TARGET": "DBA Lead",
-            "ROUTE_SOURCE": "MONITORING_CONTEXT:TASK_DEFAULT",
+            "EMAIL_TARGET": "dba-alerts@example.com",
+            "REVIEWED_BY": "DBA Review",
+            "WORKFLOW_ROUTE": "DBA Lead",
+            "ALLOCATION_SOURCE": "MONITORING_CONTEXT:TASK_DEFAULT",
             "RECOMMENDED_ACTION": "Work queued task incident.",
         }])
 
@@ -8435,7 +8435,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "STATUS": "New",
             "TICKET_ID": "",
             "EVIDENCE_GAP": "Need Cortex baseline and quota evidence.",
-            "REVIEW_GROUP": "DBA / AI cost route",
+            "REVIEW_STATUS": "DBA / AI cost route",
         }])
         incident_board = build_alert_incident_action_board(
             alerts,
@@ -8969,7 +8969,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "TICKET_ID": "INC123",
                 "DUE_STATE": "Breached",
                 "EVIDENCE_GAP": "Need retry proof after fix.",
-                "REVIEW_GROUP": "DBA CAB",
+                "REVIEW_STATUS": "DBA CAB",
             }
         ])
 
@@ -8979,7 +8979,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(board.iloc[0]["INCIDENT_KEY"], "A1")
         self.assertEqual(board.iloc[0]["SLA_STATE"], "Breached")
         self.assertEqual(board.iloc[0]["TICKET_ID"], "INC123")
-        self.assertEqual(board.iloc[0]["REVIEW_GROUP"], "DBA CAB")
+        self.assertEqual(board.iloc[0]["REVIEW_STATUS"], "DBA CAB")
         self.assertIn("before state", board.iloc[0]["FIRST_RESPONSE"])
         self.assertIn("ACCOUNT_USAGE", board.iloc[0]["SOURCE_FRESHNESS"])
         self.assertEqual(owners.iloc[0]["OWNER"], "Pipeline Reviewer")

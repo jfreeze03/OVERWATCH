@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import re
-from typing import Any
+from typing import Any, Mapping
 
 import pandas as pd
 import streamlit as st
@@ -25,11 +25,21 @@ from runtime_state import (
 from utils.company_filter import get_environment_db_patterns
 from utils.data_state import DataState, data_state_label
 from utils.performance import SUMMARY_AUTOLOAD_QUERY_BUDGET, query_budget_context
-from utils.query import run_query
+from utils.query import run_query, run_query_or_raise
 
 
 DEFAULT_SUMMARY_LIMIT = 200
 SUMMARY_TTL_SECONDS = 300
+SUMMARY_STALE_MINUTES = 90
+SUMMARY_TIMESTAMP_COLUMNS = (
+    "UPDATED_AT",
+    "LAST_REFRESHED_TS",
+    "SNAPSHOT_TS",
+    "LOAD_TS",
+    "WINDOW_END_DATE",
+    "USAGE_DATE",
+    "EVENT_DATE",
+)
 
 
 @dataclass(frozen=True)
@@ -42,6 +52,15 @@ class SummaryResult:
     row_count: int
     safe_error: str
     is_fallback: bool
+
+
+@dataclass(frozen=True)
+class SourceProbeResult:
+    object_exists: bool
+    global_row_count: int | None
+    scoped_row_count: int | None
+    latest_snapshot_ts: datetime | None
+    freshness_minutes: float | None
 
 
 def _sql_literal(value: Any) -> str:
@@ -61,6 +80,13 @@ def _source_object_from_sql(sql: str) -> str:
     if not match:
         return "summary_mart"
     return match.group(1).split(".")[-1].upper()
+
+
+def _safe_source_object(value: object) -> str:
+    text = str(value or "").strip().upper()
+    if re.fullmatch(r"[A-Z0-9_.$]+", text):
+        return text
+    return "SUMMARY_MART"
 
 
 def _safe_summary_error(exc: BaseException | None) -> str:
@@ -106,6 +132,147 @@ def _state_from_exception(exc: BaseException) -> DataState:
     if "connection" in text or "session" in text or "auth" in text:
         return DataState.CONNECTION_UNAVAILABLE
     return DataState.QUERY_FAILED
+
+
+def _first_probe_value(frame: pd.DataFrame, *columns: str) -> object:
+    if frame is None or frame.empty:
+        return None
+    lookup = {str(column).upper(): column for column in frame.columns}
+    for column in columns:
+        actual = lookup.get(column.upper())
+        if actual is not None:
+            value = frame.iloc[0].get(actual)
+            if pd.notna(value):
+                return value
+    return None
+
+
+def _int_or_none(value: object) -> int | None:
+    try:
+        if value is None or pd.isna(value):
+            return None
+        return int(value)
+    except Exception:
+        return None
+
+
+def _float_or_none(value: object) -> float | None:
+    try:
+        if value is None or pd.isna(value):
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _datetime_or_none(value: object) -> datetime | None:
+    try:
+        parsed = pd.to_datetime(value, errors="coerce", utc=True)
+    except Exception:
+        return None
+    if pd.isna(parsed):
+        return None
+    return parsed.to_pydatetime()
+
+
+def _freshness_from_frame(frame: pd.DataFrame) -> tuple[str | None, float | None]:
+    if frame is None or frame.empty:
+        return None, None
+    lookup = {str(column).upper(): column for column in frame.columns}
+    for column in SUMMARY_TIMESTAMP_COLUMNS:
+        actual = lookup.get(column)
+        if actual is None:
+            continue
+        series = pd.to_datetime(frame[actual], errors="coerce", utc=True).dropna()
+        if series.empty:
+            continue
+        latest = series.max().to_pydatetime()
+        minutes = max(0.0, (datetime.now(UTC) - latest).total_seconds() / 60.0)
+        return latest.isoformat(timespec="seconds"), minutes
+    return None, None
+
+
+def _probe_query(session: object | None, sql: str, *, ttl_key: str, section: str) -> pd.DataFrame:
+    if session is not None and callable(getattr(session, "sql", None)):
+        return session.sql(sql).to_pandas()
+    return run_query_or_raise(
+        sql,
+        ttl_key=ttl_key,
+        use_cache=True,
+        tier="section_summary",
+        section=section,
+        max_rows=1,
+        query_boundary="section_summary_autoload",
+    )
+
+
+def probe_summary_source(
+    session: object | None,
+    source_object: str,
+    scope: Mapping[str, object] | None = None,
+) -> SourceProbeResult:
+    """Boundedly probe a summary source after an empty scoped result."""
+    scope = scope or {}
+    safe_source = _safe_source_object(source_object)
+    section = str(scope.get("section") or "Summary Mart")
+    count_sql = f"SELECT COUNT(*) AS GLOBAL_ROW_COUNT FROM {safe_source}"
+    try:
+        count_frame = _probe_query(
+            session,
+            count_sql,
+            ttl_key=f"summary_probe_count_{safe_source.lower().replace('.', '_')}",
+            section=section,
+        )
+    except Exception as exc:
+        return SourceProbeResult(
+            object_exists=_state_from_exception(exc) != DataState.SETUP_REQUIRED,
+            global_row_count=None,
+            scoped_row_count=None,
+            latest_snapshot_ts=None,
+            freshness_minutes=None,
+        )
+
+    global_count = _int_or_none(_first_probe_value(count_frame, "GLOBAL_ROW_COUNT", "COUNT"))
+    latest_ts: datetime | None = None
+    freshness_minutes: float | None = None
+    freshness_sql = f"""
+        SELECT
+          MAX(UPDATED_AT) AS LATEST_SNAPSHOT_TS,
+          DATEDIFF('minute', MAX(UPDATED_AT), CURRENT_TIMESTAMP()) AS FRESHNESS_MINUTES
+        FROM {safe_source}
+    """
+    try:
+        freshness_frame = _probe_query(
+            session,
+            freshness_sql,
+            ttl_key=f"summary_probe_freshness_{safe_source.lower().replace('.', '_')}",
+            section=section,
+        )
+        latest_ts = _datetime_or_none(_first_probe_value(freshness_frame, "LATEST_SNAPSHOT_TS"))
+        freshness_minutes = _float_or_none(_first_probe_value(freshness_frame, "FRESHNESS_MINUTES"))
+    except Exception:
+        latest_ts = None
+        freshness_minutes = None
+
+    return SourceProbeResult(
+        object_exists=True,
+        global_row_count=global_count,
+        scoped_row_count=0,
+        latest_snapshot_ts=latest_ts,
+        freshness_minutes=freshness_minutes,
+    )
+
+
+def _state_from_probe(probe: SourceProbeResult) -> DataState:
+    if not probe.object_exists:
+        return DataState.SETUP_REQUIRED
+    if probe.global_row_count == 0:
+        return DataState.REFRESH_REQUIRED
+    if probe.scoped_row_count == 0:
+        return DataState.NO_ROWS_FOR_SCOPE
+    if probe.freshness_minutes is not None and probe.freshness_minutes > SUMMARY_STALE_MINUTES:
+        return DataState.LOADED_STALE
+    return DataState.LOADED_CURRENT
 
 
 def _result_frame(result: SummaryResult, *, section: str, workflow: str, max_rows: int) -> pd.DataFrame:
@@ -162,22 +329,43 @@ def _summary_result(
                 )
             if isinstance(result, pd.DataFrame) and not result.empty:
                 frame = result.head(max_rows).copy()
+                snapshot_ts, freshness_minutes = _freshness_from_frame(frame)
+                state = (
+                    DataState.LOADED_STALE
+                    if freshness_minutes is not None and freshness_minutes > SUMMARY_STALE_MINUTES
+                    else DataState.LOADED_CURRENT
+                )
                 return SummaryResult(
                     data=frame,
-                    state=DataState.LOADED_CURRENT,
+                    state=state,
                     source_object=source_object,
-                    snapshot_ts=datetime.now(UTC).isoformat(timespec="seconds"),
-                    freshness_minutes=None,
+                    snapshot_ts=snapshot_ts or datetime.now(UTC).isoformat(timespec="seconds"),
+                    freshness_minutes=freshness_minutes,
                     row_count=len(frame),
                     safe_error="",
                     is_fallback=False,
                 )
+            probe = probe_summary_source(
+                None,
+                source_object,
+                {
+                    "section": section,
+                    "workflow": workflow,
+                    "ttl_key": ttl_key,
+                    "sql": sql,
+                },
+            )
+            state = _state_from_probe(probe)
             return SummaryResult(
                 data=pd.DataFrame(),
-                state=DataState.REFRESH_REQUIRED,
+                state=state,
                 source_object=source_object,
-                snapshot_ts=datetime.now(UTC).isoformat(timespec="seconds"),
-                freshness_minutes=None,
+                snapshot_ts=(
+                    probe.latest_snapshot_ts.isoformat(timespec="seconds")
+                    if probe.latest_snapshot_ts is not None
+                    else datetime.now(UTC).isoformat(timespec="seconds")
+                ),
+                freshness_minutes=probe.freshness_minutes,
                 row_count=0,
                 safe_error="",
                 is_fallback=True,
@@ -530,6 +718,7 @@ def load_executive_packet_current(
 
 
 __all__ = [
+    "SourceProbeResult",
     "SummaryResult",
     "load_cortex_daily_usage",
     "load_executive_packet_current",
@@ -539,4 +728,5 @@ __all__ = [
     "load_task_status_daily",
     "load_user_display_dim",
     "load_warehouse_daily_credits",
+    "probe_summary_source",
 ]

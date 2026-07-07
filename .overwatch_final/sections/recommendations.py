@@ -1470,7 +1470,7 @@ def render():
                 columns=[
                     "Generated SQL Fix", "Generated SQL", "Proof Query", "Verification Query",
                     "APPROVAL_GATE", "PROOF_QUERY", "VERIFICATION_QUERY", "Generated DDL",
-                    "Owner", "Escalation Route", "Route Evidence", "Route Source",
+                    "Owner", "Escalation Route", "Allocation Basis", "Allocation Source",
                 ],
                 errors="ignore",
             )

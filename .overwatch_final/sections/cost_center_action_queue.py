@@ -25,7 +25,7 @@ from utils import (
 
 def _chargeback_action_owner(row: pd.Series) -> str:
     readiness = _row_text(row, "CHARGEBACK_READY").upper()
-    route_source = _row_text(row, "ROUTE_SOURCE").upper()
+    route_source = _row_text(row, "ALLOCATION_SOURCE").upper()
     cost_attribution = _row_text(row, "COST_ATTRIBUTION")
     if "TAG" in route_source and cost_attribution:
         return cost_attribution
@@ -60,8 +60,8 @@ def _chargeback_action_sql_note(row: pd.Series, credits: float, est_cost: float)
     database = _row_text(row, "DATABASE_NAME") or "NO_DATABASE_CONTEXT"
     env_rollup = _row_text(row, "ENVIRONMENT_ROLLUP") or _environment_rollup_for_cost(row)
     cost_attribution = _chargeback_route_text(_row_text(row, "COST_ATTRIBUTION") or "Missing")
-    route_source = _chargeback_route_text(_row_text(row, "ROUTE_SOURCE") or "Missing")
-    route_evidence = _chargeback_route_text(_row_text(row, "ROUTE_EVIDENCE"), "No route telemetry attached.")
+    route_source = _chargeback_route_text(_row_text(row, "ALLOCATION_SOURCE") or "Missing")
+    route_evidence = _chargeback_route_text(_row_text(row, "ALLOCATION_BASIS"), "No route telemetry attached.")
     return "\n".join([
         "-- Chargeback review note, no state-changing SQL.",
         "-- Do not bill from this row until allocation measurement and route telemetry are attached.",
@@ -115,8 +115,8 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
         confidence = _row_text(row, "ALLOCATION_CONFIDENCE")
         readiness = _row_text(row, "CHARGEBACK_READY")
         scope_review = _row_text(row, "SCOPE_REVIEW")
-        route_source = _row_text(row, "ROUTE_SOURCE")
-        route_evidence = _row_text(row, "ROUTE_EVIDENCE")
+        route_source = _row_text(row, "ALLOCATION_SOURCE")
+        route_evidence = _row_text(row, "ALLOCATION_BASIS")
         credits = safe_float(row.get("TOTAL_CREDITS", 0))
         est_cost = credits_to_dollars(credits, credit_price)
         if baseline > 0 and credits < baseline * 2 and est_cost < 500:
@@ -167,7 +167,7 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
         )
         action_owner = owner_context.get("OWNER") or action_owner
         approver = (
-            owner_context.get("REVIEW_GROUP")
+            owner_context.get("REVIEW_STATUS")
             or ("Cost attribution / Cost Route" if is_chargeback else "Cost attribution / Workload Route")
         )
         review_note = (
@@ -186,13 +186,13 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
             "Entity": entity,
             "Owner": action_owner,
             "Approver": approver,
-            "Route Email": owner_context.get("ROUTE_EMAIL", ""),
-            "Review Primary": owner_context.get("REVIEW_PRIMARY", ""),
-            "Review Secondary": owner_context.get("REVIEW_SECONDARY", ""),
-            "Review Group": approver,
-            "Review Target": owner_context.get("REVIEW_TARGET", ""),
-            "Route Source": owner_context.get("ROUTE_SOURCE", route_source),
-            "Route Evidence": owner_context.get("ROUTE_EVIDENCE", route_evidence),
+            "Email Target": owner_context.get("EMAIL_TARGET", ""),
+            "Reviewed By": owner_context.get("REVIEWED_BY", ""),
+            "Reviewed By": owner_context.get("REVIEWED_BY", ""),
+            "Review Status": approver,
+            "Workflow Route": owner_context.get("WORKFLOW_ROUTE", ""),
+            "Allocation Source": owner_context.get("ALLOCATION_SOURCE", route_source),
+            "Allocation Basis": owner_context.get("ALLOCATION_BASIS", route_evidence),
             "Finding": finding,
             "Action": action_text,
             "Estimated Monthly Savings": round(monthly_savings, 2),
@@ -270,7 +270,7 @@ def _warehouse_cost_control_action(
     approver = (
         f"{owner} / Cost attribution"
         if base_owner and base_owner.upper() not in {"DBA", "DBA / COST ATTRIBUTION", "UNKNOWN"}
-        else owner_context.get("REVIEW_GROUP") or "Cost attribution / Warehouse Route"
+        else owner_context.get("REVIEW_STATUS") or "Cost attribution / Warehouse Route"
     )
     review_note = (
         f"Exact warehouse metering for {period_label}. Review is required before any warehouse "
@@ -295,13 +295,13 @@ def _warehouse_cost_control_action(
         "Entity": wh,
         "Owner": owner,
         "Approver": approver,
-        "Route Email": owner_context.get("ROUTE_EMAIL", ""),
-        "Review Primary": owner_context.get("REVIEW_PRIMARY", ""),
-        "Review Secondary": owner_context.get("REVIEW_SECONDARY", ""),
-        "Review Group": approver,
-        "Review Target": owner_context.get("REVIEW_TARGET", ""),
-        "Route Source": _chargeback_route_text(owner_context.get("ROUTE_SOURCE", "")),
-        "Route Evidence": _chargeback_route_text(owner_context.get("ROUTE_EVIDENCE", "")),
+        "Email Target": owner_context.get("EMAIL_TARGET", ""),
+        "Reviewed By": owner_context.get("REVIEWED_BY", ""),
+        "Reviewed By": owner_context.get("REVIEWED_BY", ""),
+        "Review Status": approver,
+        "Workflow Route": owner_context.get("WORKFLOW_ROUTE", ""),
+        "Allocation Source": _chargeback_route_text(owner_context.get("ALLOCATION_SOURCE", "")),
+        "Allocation Basis": _chargeback_route_text(owner_context.get("ALLOCATION_BASIS", "")),
         "Finding": finding,
         "Action": f"{confidence}. {action}",
         "Estimated Monthly Savings": round(max(0.0, est_delta_cost * 0.25), 2),

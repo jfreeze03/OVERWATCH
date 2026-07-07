@@ -50,8 +50,8 @@ def build_security_access_review_ddl(
     DISTINCT_SOURCES        NUMBER,
     LAST_SEEN               VARCHAR(100),
     OWNER                   VARCHAR(200),
-    REVIEW_TARGET       VARCHAR(200),
-    ROUTE_SOURCE            VARCHAR(200),
+    WORKFLOW_ROUTE       VARCHAR(200),
+    ALLOCATION_SOURCE            VARCHAR(200),
     APPROVER                VARCHAR(200),
     REVIEW_STATUS   VARCHAR(40),
     ACCESS_REVIEW_STATE     VARCHAR(160),
@@ -252,13 +252,13 @@ def _security_owner_context(row: pd.Series | dict) -> dict:
     )
     return {
         "owner": directory_context.get("OWNER") or base["owner"],
-        "escalation": base["escalation"] or directory_context.get("REVIEW_TARGET", ""),
-        "source": f"{base['source']}; {directory_context.get('ROUTE_SOURCE', '')}".strip("; "),
-        "route_email": directory_context.get("ROUTE_EMAIL", ""),
-        "review_primary": directory_context.get("REVIEW_PRIMARY", ""),
-        "review_secondary": directory_context.get("REVIEW_SECONDARY", ""),
+        "escalation": base["escalation"] or directory_context.get("WORKFLOW_ROUTE", ""),
+        "source": f"{base['source']}; {directory_context.get('ALLOCATION_SOURCE', '')}".strip("; "),
+        "route_email": directory_context.get("EMAIL_TARGET", ""),
+        "review_primary": directory_context.get("REVIEWED_BY", ""),
+        "review_secondary": directory_context.get("REVIEWED_BY", ""),
         "review_group": "",
-        "route_evidence": directory_context.get("ROUTE_EVIDENCE", ""),
+        "route_evidence": directory_context.get("ALLOCATION_BASIS", ""),
     }
 
 def _security_review_context(row: pd.Series | dict) -> dict:
@@ -400,10 +400,10 @@ def _security_access_review_sla_hours(severity: str) -> int:
 def _security_access_review_readiness_for_row(row: pd.Series | dict) -> dict:
     """Return ticket/reference, telemetry, and blocker state for a security finding."""
     owner = str(row.get("OWNER") or "").strip()
-    route_source = str(row.get("ROUTE_SOURCE") or "").strip()
-    route_email = str(row.get("ROUTE_EMAIL") or "").strip()
-    review = str(row.get("REVIEW_PRIMARY") or "").strip()
-    escalation = str(row.get("REVIEW_TARGET") or "").strip()
+    route_source = str(row.get("ALLOCATION_SOURCE") or "").strip()
+    route_email = str(row.get("EMAIL_TARGET") or "").strip()
+    review = str(row.get("REVIEWED_BY") or "").strip()
+    escalation = str(row.get("WORKFLOW_ROUTE") or "").strip()
     owner_upper = owner.upper()
     route_ready = bool(owner) and owner_upper not in {"UNKNOWN", "N/A", "NONE"} and bool(
         route_email
@@ -478,13 +478,13 @@ def _build_security_access_review(exceptions: pd.DataFrame, environment: str = "
     owner_contexts = view.apply(_security_owner_context, axis=1)
     review_contexts = view.apply(_security_review_context, axis=1)
     view["OWNER"] = owner_contexts.apply(lambda item: item["owner"])
-    view["REVIEW_TARGET"] = owner_contexts.apply(lambda item: item["escalation"])
-    view["ROUTE_SOURCE"] = owner_contexts.apply(lambda item: item["source"])
-    view["ROUTE_EMAIL"] = owner_contexts.apply(lambda item: item.get("route_email", ""))
-    view["REVIEW_PRIMARY"] = owner_contexts.apply(lambda item: item.get("review_primary", ""))
-    view["REVIEW_SECONDARY"] = owner_contexts.apply(lambda item: item.get("review_secondary", ""))
-    view["REVIEW_GROUP"] = ""
-    view["ROUTE_EVIDENCE"] = owner_contexts.apply(lambda item: item.get("route_evidence", ""))
+    view["WORKFLOW_ROUTE"] = owner_contexts.apply(lambda item: item["escalation"])
+    view["ALLOCATION_SOURCE"] = owner_contexts.apply(lambda item: item["source"])
+    view["EMAIL_TARGET"] = owner_contexts.apply(lambda item: item.get("route_email", ""))
+    view["REVIEWED_BY"] = owner_contexts.apply(lambda item: item.get("review_primary", ""))
+    view["REVIEWED_BY"] = owner_contexts.apply(lambda item: item.get("review_secondary", ""))
+    view["REVIEW_STATUS"] = ""
+    view["ALLOCATION_BASIS"] = owner_contexts.apply(lambda item: item.get("route_evidence", ""))
     view["APPROVER"] = review_contexts.apply(lambda item: item["reviewer"])
     view["REVIEW_STATUS"] = ""
     view["ACCESS_REVIEW_STATE"] = review_contexts.apply(lambda item: item["review_state"])
@@ -580,8 +580,8 @@ def _security_access_review_insert_sql(
             f"{safe_int(row.get('DISTINCT_SOURCES'))}::NUMBER AS DISTINCT_SOURCES, "
             f"{sql_literal(row.get('LAST_SEEN', ''), 100)} AS LAST_SEEN, "
             f"{sql_literal(row.get('OWNER', ''), 200)} AS OWNER, "
-            f"{sql_literal(row.get('REVIEW_TARGET', ''), 200)} AS REVIEW_TARGET, "
-            f"{sql_literal(row.get('ROUTE_SOURCE', ''), 200)} AS ROUTE_SOURCE, "
+            f"{sql_literal(row.get('WORKFLOW_ROUTE', ''), 200)} AS WORKFLOW_ROUTE, "
+            f"{sql_literal(row.get('ALLOCATION_SOURCE', ''), 200)} AS ALLOCATION_SOURCE, "
             f"{sql_literal(row.get('APPROVER', ''), 200)} AS APPROVER, "
             f"{sql_literal(row.get('REVIEW_STATUS', ''), 40)} AS REVIEW_STATUS, "
             f"{sql_literal(row.get('ACCESS_REVIEW_STATE', ''), 160)} AS ACCESS_REVIEW_STATE, "
@@ -609,7 +609,7 @@ def _security_access_review_insert_sql(
 INSERT INTO {fqn} (
     SNAPSHOT_ID, SNAPSHOT_TS, COMPANY, ENVIRONMENT, DATABASE_CONTEXT,
     FINDING_TYPE, SEVERITY, ENTITY_TYPE, ENTITY, EVENT_COUNT, DISTINCT_SOURCES,
-    LAST_SEEN, OWNER, REVIEW_TARGET, ROUTE_SOURCE, APPROVER,
+    LAST_SEEN, OWNER, WORKFLOW_ROUTE, ALLOCATION_SOURCE, APPROVER,
     REVIEW_STATUS, ACCESS_REVIEW_STATE, ROLE_CAPABILITY_STATE,
     TICKET_REQUIRED, REVIEW_BY_REQUIRED, PROOF_REQUIRED, VERIFICATION_QUERY,
     ACCESS_TICKET_ID, REVIEW_BY_DATE, IAM_APPROVAL_STATE, REVIEW_READINESS,
@@ -634,7 +634,7 @@ SELECT
     FINDING_TYPE,
     SEVERITY,
     OWNER,
-    REVIEW_TARGET,
+    WORKFLOW_ROUTE,
     COUNT(*) AS REVIEW_ROWS,
     SUM(EVENT_COUNT) AS TOTAL_EVENTS,
     COUNT_IF(TICKET_REQUIRED = 'Yes') AS TICKET_REQUIRED_ROWS,
@@ -652,7 +652,7 @@ SELECT
     MAX_BY(NEXT_CONTROL_ACTION, SNAPSHOT_TS) AS NEXT_CONTROL_ACTION
 FROM {fqn}
 WHERE {where_clause}
-GROUP BY FINDING_TYPE, SEVERITY, OWNER, REVIEW_TARGET
+GROUP BY FINDING_TYPE, SEVERITY, OWNER, WORKFLOW_ROUTE
 ORDER BY
     REVIEW_BLOCKER_ROWS DESC,
     TICKET_REQUIRED_ROWS DESC,
@@ -930,7 +930,7 @@ def _security_control_board(
             "DATABASE_CONTEXT": bool(row.get("DATABASE_CONTEXT")),
             "SCOPE_CONFIDENCE": row.get("SCOPE_CONFIDENCE", ""),
             "OWNER": row.get("OWNER", close.get("OWNER", "")),
-            "REVIEW_TARGET": row.get("REVIEW_TARGET", ""),
+            "WORKFLOW_ROUTE": row.get("WORKFLOW_ROUTE", ""),
             "APPROVER": row.get("APPROVER", close.get("APPROVER", "")),
             "REVIEW_READINESS": review_readiness,
             "REVIEW_BLOCKERS": row.get("REVIEW_BLOCKERS", ""),

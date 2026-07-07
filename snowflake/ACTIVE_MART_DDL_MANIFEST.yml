@@ -13,6 +13,7 @@ validation_sql:
   - snowflake/validation/validate_overwatch_mart_setup.sql
   - snowflake/validation/validate_mart_first_paint_readiness.sql
   - snowflake/validation/validate_owner_routing_removed.sql
+  - snowflake/validation/validate_v2_first_paint_marts.sql
   - snowflake/OVERWATCH_MART_VALIDATION.sql
 reset_or_rollback_only:
   - snowflake/OVERWATCH_MART_DROP.sql

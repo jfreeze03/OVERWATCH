@@ -567,11 +567,12 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("REVIEW_STATUS", ddl)
         self.assertIn("RECOVERY_SLA_STATE", ddl)
         self.assertIn("RECOVERY_EVIDENCE", ddl)
-        self.assertIn("ROUTE_EMAIL", ddl)
-        self.assertIn("REVIEW_PRIMARY", ddl)
-        self.assertIn("REVIEW_GROUP", ddl)
-        self.assertIn("ROUTE_SOURCE", ddl)
+        self.assertIn("REVIEWED_BY", ddl)
+        self.assertIn("WORKFLOW_ROUTE", ddl)
         self.assertIn("RECOVERY_AUDIT_STATE", ddl)
+        self.assertNotIn("EMAIL_TARGET", ddl)
+        self.assertNotIn("ALLOCATION_SOURCE", ddl)
+        self.assertNotIn("ALLOCATION_BASIS", ddl)
         self.assertIn("COMPANY", ddl)
         queue_start = setup_sql.index("CREATE TABLE IF NOT EXISTS OVERWATCH_ACTION_QUEUE")
         queue_end = setup_sql.index(");", queue_start)
@@ -580,13 +581,14 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("VERIFIED_AT", queue_block)
         self.assertIn("REVIEW_STATUS", queue_block)
         self.assertIn("RECOVERY_EVIDENCE", queue_block)
-        self.assertIn("ROUTE_EMAIL", queue_block)
-        self.assertIn("REVIEW_PRIMARY", queue_block)
-        self.assertIn("REVIEW_GROUP", queue_block)
-        self.assertIn("ROUTE_SOURCE", queue_block)
+        self.assertIn("REVIEWED_BY", queue_block)
+        self.assertIn("WORKFLOW_ROUTE", queue_block)
         self.assertIn("RECOVERY_AUDIT_STATE", queue_block)
+        self.assertNotIn("EMAIL_TARGET", queue_block)
+        self.assertNotIn("ALLOCATION_SOURCE", queue_block)
+        self.assertNotIn("ALLOCATION_BASIS", queue_block)
         self.assertIn("ALTER TABLE IF EXISTS OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS ENVIRONMENT", setup_sql)
-        self.assertIn("ALTER TABLE IF EXISTS OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS ROUTE_EMAIL", setup_sql)
+        self.assertNotIn("ALTER TABLE IF EXISTS OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS EMAIL_TARGET", setup_sql)
         self.assertIn("ALTER TABLE IF EXISTS OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS RECOVERY_AUDIT_STATE", setup_sql)
         self.assertIn("ALTER TABLE IF EXISTS OVERWATCH_ALERTS ADD COLUMN IF NOT EXISTS WORKFLOW_ROUTE", setup_sql)
         self.assertIn("ALTER TABLE IF EXISTS OVERWATCH_ALERTS ADD COLUMN IF NOT EXISTS STATUS", setup_sql)
@@ -629,7 +631,7 @@ class AdminControlTests(unittest.TestCase):
         self.assertNotIn("PRIMARY_EVIDENCE_READY", setup_sql)
         self.assertNotIn("OVERWATCH_COST_SAVINGS_VERIFY TASK HANDLES AUTO-CLOSE", setup_sql)
         self.assertIn("WAREHOUSE_METERING_HISTORY", setup_sql)
-        self.assertIn("REVIEW_TARGET", setup_sql)
+        self.assertIn("WORKFLOW_ROUTE", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_CHANGE_CONTROL_EVIDENCE", setup_sql)
         self.assertIn("CHANGE_TICKET_ID", setup_sql)
         self.assertIn("IAC_RECONCILIATION_STATE", setup_sql)
@@ -674,7 +676,7 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("NO_DATABASE_CONTEXT_ROWS", setup_sql)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_CHARGEBACK_DAILY", setup_sql)
         self.assertIn("ALLOCATED_CREDITS", setup_sql)
-        self.assertIn("ROUTE_EVIDENCE", setup_sql)
+        self.assertIn("ALLOCATION_BASIS", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_ATTRIBUTION_TAG_NAMES", setup_sql)
         self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_DIRECTORY", setup_sql)
         self.assertNotIn("CREATE OR REPLACE VIEW OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", setup_sql)
@@ -683,8 +685,8 @@ class AdminControlTests(unittest.TestCase):
         self.assertNotIn("ALFA_EDW_PRD_DATABASE", setup_sql)
         self.assertNotIn("ALFA_EDW_DEV_DATABASES", setup_sql)
         self.assertNotIn("ARCHITECTURE_DEFAULT", setup_sql)
-        self.assertIn("REVIEW_PRIMARY", setup_sql)
-        self.assertIn("REVIEW_GROUP", setup_sql)
+        self.assertIn("REVIEWED_BY", setup_sql)
+        self.assertIn("REVIEW_STATUS", setup_sql)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS DIM_COST_ATTRIBUTION_TAG", setup_sql)
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES", setup_sql)
         self.assertIn("WAREHOUSE_TAG:", setup_sql)
@@ -781,6 +783,7 @@ class AdminControlTests(unittest.TestCase):
                 "OVERWATCH_COST_MONITORING_REFRESH",
                 "OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH",
                 "OVERWATCH_DECISION_BRIEF_FULL_REFRESH",
+                "OVERWATCH_V2_FIRST_PAINT_REFRESH",
                 "OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH",
                 "OVERWATCH_EXECUTIVE_COMMAND_CENTER_REFRESH",
                 "OVERWATCH_LOAD_DAILY",
@@ -803,6 +806,7 @@ class AdminControlTests(unittest.TestCase):
                 "OVERWATCH_COST_MONITORING_REFRESH": "WH_ALFA_OVERWATCH",
                 "OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH": "WH_ALFA_OVERWATCH",
                 "OVERWATCH_DECISION_BRIEF_FULL_REFRESH": "WH_ALFA_OVERWATCH",
+                "OVERWATCH_V2_FIRST_PAINT_REFRESH": "WH_ALFA_OVERWATCH",
                 "OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH": "WH_ALFA_OVERWATCH",
                 "OVERWATCH_EXECUTIVE_COMMAND_CENTER_REFRESH": "WH_ALFA_OVERWATCH",
                 "OVERWATCH_LOAD_DAILY": "WH_ALFA_OVERWATCH",

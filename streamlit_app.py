@@ -1,19 +1,20 @@
-"""Streamlit Community Cloud entrypoint for OVERWATCH.
-
-The Snowflake Streamlit-in-Snowflake runtime uses `.overwatch_final/app.py`
-directly. Community Cloud should use this wrapper from the repository root so
-it installs dependencies from the root `requirements.txt` instead of the
-Snowflake-specific `.overwatch_final/environment.yml`.
-"""
+"""Streamlit Community Cloud entrypoint for OVERWATCH."""
 
 from pathlib import Path
 import runpy
 import sys
 
 
-APP_DIR = Path(__file__).resolve().parent / ".overwatch_final"
+ROOT = Path(__file__).resolve().parent
+V2_DIR = ROOT / "overwatch_app"
+LEGACY_DIR = ROOT / ".overwatch_final"
 
-if str(APP_DIR) not in sys.path:
-    sys.path.insert(0, str(APP_DIR))
+if V2_DIR.exists():
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    runpy.run_module("overwatch_app.app", run_name="__main__")
+else:
+    if str(LEGACY_DIR) not in sys.path:
+        sys.path.insert(0, str(LEGACY_DIR))
 
-runpy.run_path(str(APP_DIR / "app.py"), run_name="__main__")
+    runpy.run_path(str(LEGACY_DIR / "app.py"), run_name="__main__")

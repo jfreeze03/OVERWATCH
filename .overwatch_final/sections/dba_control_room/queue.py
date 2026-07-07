@@ -121,18 +121,28 @@ def _command_closure_issue_flags(row: pd.Series) -> dict:
         and _command_text_present(row.get("VERIFICATION_RESULT"), min_length=15)
     )
     fixed_without_verification = is_fixed and not verified
-    metadata_gaps = {
-        "WORKFLOW_GAP_ROWS": 0 if _command_named_owner(row) else 1,
-        "TICKET_GAP_ROWS": 0 if _command_value_present(row, "TICKET_ID") else 1,
-        "APPROVER_GAP_ROWS": 0 if _command_value_present(row, "APPROVER") else 1,
-        "VERIFICATION_QUERY_GAP_ROWS": 0 if _command_value_present(row, "VERIFICATION_QUERY", "PROOF_QUERY") else 1,
-        "REVIEW_GAP_ROWS": 1 if review_status in {"", "PENDING", "REQUESTED", "REQUIRED"} else 0,
-    }
-    recovery_risk = (
-        "BREACH" in recovery_state
-        or "LATE" in recovery_state
-        or (is_fixed and not _command_text_present(row.get("RECOVERY_EVIDENCE"), min_length=15))
-    )
+    if verified:
+        metadata_gaps = {
+            "WORKFLOW_GAP_ROWS": 0,
+            "TICKET_GAP_ROWS": 0,
+            "APPROVER_GAP_ROWS": 0,
+            "VERIFICATION_QUERY_GAP_ROWS": 0,
+            "REVIEW_GAP_ROWS": 0,
+        }
+        recovery_risk = False
+    else:
+        metadata_gaps = {
+            "WORKFLOW_GAP_ROWS": 0 if _command_named_owner(row) else 1,
+            "TICKET_GAP_ROWS": 0 if _command_value_present(row, "TICKET_ID") else 1,
+            "APPROVER_GAP_ROWS": 0 if _command_value_present(row, "APPROVER") else 1,
+            "VERIFICATION_QUERY_GAP_ROWS": 0 if _command_value_present(row, "VERIFICATION_QUERY", "PROOF_QUERY") else 1,
+            "REVIEW_GAP_ROWS": 1 if review_status in {"", "PENDING", "REQUESTED", "REQUIRED"} else 0,
+        }
+        recovery_risk = (
+            "BREACH" in recovery_state
+            or "LATE" in recovery_state
+            or (is_fixed and not _command_text_present(row.get("RECOVERY_EVIDENCE"), min_length=15))
+        )
     blocker_count = (
         int(due_state == "Overdue")
         + int(fixed_without_verification)
@@ -262,8 +272,8 @@ def _command_execution_metadata(row: pd.Series) -> dict:
     due_state = str(row.get("DUE_STATE") or "")
     approval_status = str(row.get("REVIEW_STATUS") or "").strip().upper()
     requires_approval = _command_requires_approval(row)
-    route_ready = _command_value_present(row, "ROUTE_EMAIL") and (
-        _command_value_present(row, "REVIEW_PRIMARY") or _command_value_present(row, "REVIEW_GROUP")
+    route_ready = _command_value_present(row, "EMAIL_TARGET") and (
+        _command_value_present(row, "REVIEWED_BY") or _command_value_present(row, "REVIEW_STATUS")
     )
 
     gaps: list[str] = []
@@ -880,9 +890,9 @@ def _render_command_queue_control(
         priority_columns=[
             "SEVERITY", "DUE_STATE", "COMMAND_STATE", "COMMAND_EXECUTION_GATE",
             "COMMAND_ROUTE_READINESS", "COMMAND_AUDIT_READINESS", "CATEGORY", "ENTITY_NAME",
-            "OWNER", "ROUTE_EMAIL", "REVIEW_PRIMARY", "REVIEW_GROUP",
+            "OWNER", "EMAIL_TARGET", "REVIEWED_BY", "REVIEW_STATUS",
             "STATUS", "COMMAND_EVIDENCE_REQUIRED", "NEXT_ACTION", "TICKET_ID",
-            "APPROVER", "ROUTE_SOURCE", "ROUTE",
+            "APPROVER", "ALLOCATION_SOURCE", "ROUTE",
         ],
         sort_by=["QUEUE_PRIORITY", "SEVERITY"],
         ascending=[True, True],

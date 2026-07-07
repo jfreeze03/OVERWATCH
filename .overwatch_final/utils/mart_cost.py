@@ -157,8 +157,8 @@ def build_mart_chargeback_sql(
             CHARGEBACK_READY,
             SCOPE_REVIEW,
             COST_ATTRIBUTION,
-            ROUTE_SOURCE,
-            ROUTE_EVIDENCE,
+            ALLOCATION_SOURCE,
+            ALLOCATION_BASIS,
             MAX(LOAD_TS) AS MART_LOAD_TS
         FROM {table}
         WHERE USAGE_DATE >= DATEADD('DAY', -{int(days_back)}, CURRENT_DATE())
@@ -182,8 +182,8 @@ def build_mart_chargeback_sql(
             CHARGEBACK_READY,
             SCOPE_REVIEW,
             COST_ATTRIBUTION,
-            ROUTE_SOURCE,
-            ROUTE_EVIDENCE
+            ALLOCATION_SOURCE,
+            ALLOCATION_BASIS
         ORDER BY TOTAL_CREDITS DESC, QUERY_COUNT DESC
     """
 
@@ -217,8 +217,8 @@ def build_mart_cost_explorer_sql(
             WAREHOUSE_SIZE,
             COALESCE(NULLIF(COST_ATTRIBUTION, ''), 'Unassigned') AS DEPARTMENT,
             COST_ATTRIBUTION,
-            ROUTE_SOURCE,
-            ROUTE_EVIDENCE,
+            ALLOCATION_SOURCE,
+            ALLOCATION_BASIS,
             ALLOCATION_CONFIDENCE,
             ALLOCATION_BASIS,
             CHARGEBACK_READY,
@@ -250,8 +250,8 @@ def build_mart_cost_explorer_sql(
             WAREHOUSE_SIZE,
             COALESCE(NULLIF(COST_ATTRIBUTION, ''), 'Unassigned'),
             COST_ATTRIBUTION,
-            ROUTE_SOURCE,
-            ROUTE_EVIDENCE,
+            ALLOCATION_SOURCE,
+            ALLOCATION_BASIS,
             ALLOCATION_CONFIDENCE,
             ALLOCATION_BASIS,
             CHARGEBACK_READY,

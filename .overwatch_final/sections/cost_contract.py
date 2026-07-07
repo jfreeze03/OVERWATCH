@@ -117,6 +117,7 @@ from sections.cost_contract_monitoring import (
     _render_cost_monitoring_mart_and_incident_timeline,
 )
 from sections.cost_contract_intelligence import (
+    CostCorrelationFinding,
     _add_coverage_row,
     _add_source_health_row,
     _build_change_cost_correlation_board,
@@ -128,10 +129,12 @@ from sections.cost_contract_intelligence import (
     _build_cost_spike_root_cause_board,
     _build_service_cost_lens_summary,
     _cost_command_severity_rank,
+    _cost_correlation_confidence_score,
     _first_frame_value,
     _loaded_cortex_state,
     _source_state,
     _state_frame,
+    top_cost_correlation_findings,
 )
 from sections.cost_contract_panels import (
     _render_cost_allocation_trust_board,

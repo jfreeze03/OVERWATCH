@@ -16,6 +16,7 @@ from sections.cost_center_models import (
     _build_explain_bill_markdown,
     _build_finance_movement_summary,
     _cost_explorer_gap_board,
+    _cost_forecast_projection,
     _cost_explorer_summary,
     _first_value,
     _fmt_delta,
@@ -29,7 +30,7 @@ from sections.cost_center_sql import (
     _cost_explorer_live_sql,
     _snowflake_admin_reconciliation_sql,
 )
-from sections.chart_helpers import render_area_time_series_chart, render_ranked_bar_chart
+from sections.chart_helpers import render_area_time_series_chart, render_ranked_bar_chart, render_time_series_chart
 from sections.shell_helpers import render_escaped_bold_text, render_shell_snapshot
 from utils import (
     build_cost_reconciliation_sql,
@@ -102,35 +103,57 @@ def render_cost_forecast(session, company: str, credit_price: float, max_wh_size
 
     if st.session_state.get("df_fc") is not None and not st.session_state["df_fc"].empty:
         df_f = _prepare_cost_forecast_rows(st.session_state["df_fc"])
-        avg_daily = df_f["DAILY_CREDITS"].mean()
-        proj_30   = avg_daily * 30
-        proj_cost = credits_to_dollars(proj_30, credit_price)
-        confidence, lower_avg, upper_avg = _confidence_from_forecast(df_f)
-        latest_usage = ""
-        if "DAY" in df_f.columns:
-            latest = pd.to_datetime(df_f["DAY"], errors="coerce").max()
-            latest_usage = "" if pd.isna(latest) else latest.strftime("%Y-%m-%d")
+        forecast, forecast_frame = _cost_forecast_projection(
+            df_f,
+            credit_price=credit_price,
+        )
         render_shell_snapshot((
-            ("Avg Daily Credits", f"{avg_daily:.2f}"),
-            ("Projected 30-day", format_credits(proj_30)),
-            ("Projected 30-day Cost", f"${proj_cost:,.2f}"),
-            ("Lower Bound", format_credits(lower_avg * 30, credit_price)),
-            ("Upper Bound", format_credits(upper_avg * 30, credit_price)),
-            ("Confidence", confidence),
-            ("Method", "Deterministic run-rate"),
-            ("History Window", f"{len(df_f):,} daily row(s)"),
-            ("Latest Usage Date", latest_usage or "Current window"),
+            ("Actual-to-date Credits", format_credits(forecast.get("actual_to_date_credits", 0), credit_price)),
+            ("Actual-to-date Cost", f"${safe_float(forecast.get('actual_to_date_cost')):,.2f}"),
+            ("Projected Period-End Credits", format_credits(forecast.get("projected_end_period_credits", 0), credit_price)),
+            ("Projected Period-End Cost", f"${safe_float(forecast.get('projected_end_period_cost')):,.2f}"),
+            ("Lower Bound", format_credits(forecast.get("lower_bound_credits", 0), credit_price)),
+            ("Upper Bound", format_credits(forecast.get("upper_bound_credits", 0), credit_price)),
+            ("Method", str(forecast.get("method_label") or "Seasonal fallback")),
+            ("Confidence", str(forecast.get("confidence_label") or "Directional")),
+            ("History Window", str(forecast.get("history_window") or f"{len(df_f):,} daily row(s)")),
+            ("Latest Usage Date", str(forecast.get("latest_usage_date") or "Current window")),
+            ("Source Freshness", str(forecast.get("source_freshness") or st.session_state.get("cc_forecast_source", "Warehouse summary"))),
         ))
         defer_source_note(st.session_state.get("cc_forecast_source", freshness_note("WAREHOUSE_METERING_HISTORY")))
+        forecast_plot_columns = [
+            column
+            for column in ("ACTUAL_CREDITS", "FORECAST_CREDITS", "BUDGET_CREDITS")
+            if column in forecast_frame.columns
+        ]
+        forecast_plot = forecast_frame[["DAY", *forecast_plot_columns]].melt(
+            id_vars=["DAY"],
+            value_vars=forecast_plot_columns,
+            var_name="SERIES",
+            value_name="CREDITS",
+        ) if forecast_plot_columns else pd.DataFrame(columns=["DAY", "SERIES", "CREDITS"])
         render_chart_with_data_toggle(
-            "Projected Daily Credits",
+            "Actual and Forecast Credits",
             "cc_forecast_daily_credits",
-            lambda: render_area_time_series_chart(df_f, "DAY", "DAILY_CREDITS"),
-            df_f,
-            priority_columns=["DAY", "DAILY_CREDITS"],
+            lambda: render_time_series_chart(
+                forecast_plot,
+                "DAY",
+                "CREDITS",
+                series_column="SERIES",
+                title="Actual and Forecast Credits",
+            ),
+            forecast_frame,
+            priority_columns=[
+                "DAY",
+                "ACTUAL_CREDITS",
+                "FORECAST_CREDITS",
+                "BUDGET_CREDITS",
+                "FORECAST_COST_USD",
+            ],
             sort_by=["DAY"],
             ascending=True,
             max_rows=90,
+            raw_label="Forecast daily actuals and bounds",
         )
 
     st.divider()

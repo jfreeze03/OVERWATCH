@@ -97,13 +97,13 @@ def _queue_capacity_findings(session, exceptions: pd.DataFrame) -> int:
             "Entity Type": "Warehouse",
             "Entity": wh,
             "Route": _route_label(row.get("OWNER", "Platform DBA")),
-            "Route Email": row.get("ROUTE_EMAIL", ""),
-            "Review Primary": row.get("REVIEW_PRIMARY", ""),
-            "Review Secondary": row.get("REVIEW_SECONDARY", ""),
-            "Escalation": _route_label(row.get("REVIEW_GROUP", row.get("APPROVER", "Warehouse Route / DBA Lead"))),
-            "Review Target": row.get("REVIEW_TARGET", "DBA Lead"),
-            "Route Basis": _route_label(row.get("ROUTE_SOURCE", "")),
-            "Route Detail": _route_label(row.get("ROUTE_EVIDENCE", "")),
+            "Email Target": row.get("EMAIL_TARGET", ""),
+            "Reviewed By": row.get("REVIEWED_BY", ""),
+            "Reviewed By": row.get("REVIEWED_BY", ""),
+            "Escalation": _route_label(row.get("REVIEW_STATUS", row.get("APPROVER", "Warehouse Route / DBA Lead"))),
+            "Workflow Route": row.get("WORKFLOW_ROUTE", "DBA Lead"),
+            "Route Basis": _route_label(row.get("ALLOCATION_SOURCE", "")),
+            "Route Detail": _route_label(row.get("ALLOCATION_BASIS", "")),
             "Finding": finding,
             "Action": (
                 f"{action_text} {row.get('SAFE_CHANGE_PATH', '')} "
@@ -117,7 +117,7 @@ def _queue_capacity_findings(session, exceptions: pd.DataFrame) -> int:
             "Telemetry Status": "Requested",
             "Status Note": (
                 f"{row.get('CHANGE_RISK', '')} "
-                f"Escalation: {row.get('REVIEW_TARGET', 'DBA Lead')}. "
+                f"Escalation: {row.get('WORKFLOW_ROUTE', 'DBA Lead')}. "
                 f"Rollback required: {row.get('ROLLBACK_REQUIRED', 'Yes')}; "
                 f"impact telemetry required: {row.get('IMPACT_TELEMETRY_REQUIRED', 'No')}."
             ),
@@ -177,11 +177,11 @@ def _queue_efficiency_findings(session, df_eff: pd.DataFrame) -> None:
             "Entity Type": "Warehouse",
             "Entity": wh,
             "Route": _route_label(owner_context.get("owner", "Platform DBA")),
-            "Route Email": owner_context.get("route_email", ""),
-            "Review Primary": owner_context.get("review_primary", ""),
-            "Review Secondary": owner_context.get("review_secondary", ""),
+            "Email Target": owner_context.get("route_email", ""),
+            "Reviewed By": owner_context.get("review_primary", ""),
+            "Reviewed By": owner_context.get("review_secondary", ""),
             "Escalation": _route_label(owner_context.get("review_group", approver)),
-            "Review Target": owner_context.get("escalation", "DBA Lead"),
+            "Workflow Route": owner_context.get("escalation", "DBA Lead"),
             "Route Basis": _route_label(owner_context.get("source", "")),
             "Route Detail": _route_label(owner_context.get("route_evidence", "")),
             "Finding": finding,

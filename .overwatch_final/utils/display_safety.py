@@ -210,6 +210,8 @@ _DISPLAY_COPY_REPLACEMENTS = {
 }
 
 _OPERATOR_COPY_REPLACEMENTS = {
+    "Allocation Basis": "Route Telemetry",
+    "allocation basis": "route telemetry",
     "approval evidence": "telemetry",
     "Approval evidence": "Telemetry",
     "verification evidence": "telemetry",

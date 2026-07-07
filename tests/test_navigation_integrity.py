@@ -1080,8 +1080,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         config = (ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8")
         cloud_docs = (ROOT / "STREAMLIT_CLOUD_DEPLOY.md").read_text(encoding="utf-8")
 
-        self.assertIn('APP_DIR = Path(__file__).resolve().parent / ".overwatch_final"', wrapper)
-        self.assertIn('runpy.run_path(str(APP_DIR / "app.py"), run_name="__main__")', wrapper)
+        self.assertIn('V2_DIR = ROOT / "overwatch_app"', wrapper)
+        self.assertIn('LEGACY_DIR = ROOT / ".overwatch_final"', wrapper)
+        self.assertIn('runpy.run_module("overwatch_app.app", run_name="__main__")', wrapper)
+        self.assertIn('runpy.run_path(str(LEGACY_DIR / "app.py"), run_name="__main__")', wrapper)
         self.assertIn("showSidebarNavigation = false", config)
         self.assertIn("gatherUsageStats = false", config)
         self.assertIn("Main file path: `streamlit_app.py`", cloud_docs)

@@ -48,7 +48,7 @@ def render_alert_history_pane(
             priority_columns=[
                 "LIFECYCLE_STATE", "SLA_STATE", "SEVERITY", "STATUS",
                 "CATEGORY", "ALERT_TYPE", "ENTITY_NAME", "OWNER",
-                "REVIEW_TARGET", "DELIVERY_STATUS", "ACTION_QUEUE_STATE",
+                "WORKFLOW_ROUTE", "DELIVERY_STATUS", "ACTION_QUEUE_STATE",
                 "NEXT_ACTION",
             ],
             sort_by=["LIFECYCLE_STATE", "SEVERITY", "ALERT_TS"],
@@ -101,7 +101,7 @@ def render_alert_history_pane(
             "ALERT_TS", "ALERT_AGE_HOURS", "SLA_TARGET_HOURS", "SLA_STATE",
             "SEVERITY", "STATUS", "CATEGORY", "ALERT_TYPE",
             "ENTITY_NAME", "ENVIRONMENT", "MESSAGE", "SUGGESTED_ACTION",
-            "OWNER", "REVIEW_TARGET", "ESCALATED_AT", "ESCALATION_ACK_AT",
+            "OWNER", "WORKFLOW_ROUTE", "ESCALATED_AT", "ESCALATION_ACK_AT",
             "DELIVERY_STATUS", "LAST_DELIVERY_AT",
         ],
         sort_by=["TRIAGE_PRIORITY", "ALERT_TS"],

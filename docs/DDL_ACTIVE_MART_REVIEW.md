@@ -42,6 +42,7 @@ This review records the active OVERWATCH mart deployment contract. The active se
 | `snowflake/validation/validate_mart_first_paint_readiness.sql` | ACTIVE_VALIDATION_SQL | keep | Operator validation or launch-gate validation, not runtime setup DDL. |
 | `snowflake/validation/validate_overwatch_mart_setup.sql` | ACTIVE_VALIDATION_SQL | keep | Operator validation or launch-gate validation, not runtime setup DDL. |
 | `snowflake/validation/validate_owner_routing_removed.sql` | ACTIVE_VALIDATION_SQL | keep | Operator validation or launch-gate validation, not runtime setup DDL. |
+| `snowflake/validation/validate_v2_first_paint_marts.sql` | ACTIVE_VALIDATION_SQL | keep | V2 first-paint mart validation, source isolation, and freshness checks. |
 
 ## Active Object Inventory
 | Object | Type | Creating file | Runtime category | Keep/delete decision | Reason |
@@ -63,6 +64,11 @@ This review records the active OVERWATCH mart deployment contract. The active se
 | `OVERWATCH_WAREHOUSE_SETTING_REVIEW` | TABLE | `snowflake/mart_setup/03_config_and_audit_tables.sql` | app state / alerting | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `OVERWATCH_SECURITY_ACCESS_REVIEW` | TABLE | `snowflake/mart_setup/03_config_and_audit_tables.sql` | app state / alerting | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `OVERWATCH_ALERTS` | TABLE | `snowflake/mart_setup/03_config_and_audit_tables.sql` | app state / alerting | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
+| `OVERWATCH_APP_AUDIT_LOG` | TABLE | `snowflake/mart_setup/03_config_and_audit_tables.sql` | v2 app state / audit | keep | Records V2 app actions without blocking first-paint rendering. |
+| `OVERWATCH_ALLOCATION_RULES` | TABLE | `snowflake/mart_setup/03_config_and_audit_tables.sql` | v2 app state / cost allocation | keep | Supports tag-free V2 chargeback/showback allocation rules. |
+| `OVERWATCH_ALERT_SLA` | TABLE | `snowflake/mart_setup/03_config_and_audit_tables.sql` | v2 app state / alerting | keep | Stores severity SLA minutes so alert overdue policy is configurable without DDL rewrites. |
+| `OVERWATCH_ALERT_STATE` | TABLE | `snowflake/mart_setup/03_config_and_audit_tables.sql` | v2 app state / alerting | keep | Stores acknowledged, resolved, suppressed, and reopened alert state. |
+| `OVERWATCH_ALERT_STATE_HISTORY` | TABLE | `snowflake/mart_setup/03_config_and_audit_tables.sql` | v2 app state / audit | keep | Preserves alert state transitions for V2 auditability. |
 | `ALERT_CONFIG` | TABLE | `snowflake/mart_setup/03_config_and_audit_tables.sql` | app state / alerting | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `ALERT_THRESHOLDS` | TABLE | `snowflake/mart_setup/03_config_and_audit_tables.sql` | app state / alerting | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `ALERT_EVENTS` | TABLE | `snowflake/mart_setup/03_config_and_audit_tables.sql` | app state / alerting | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
@@ -181,6 +187,20 @@ This review records the active OVERWATCH mart deployment contract. The active se
 | `OVERWATCH_TASK_STATUS_DAILY` | TABLE | `snowflake/mart_setup/04_mart_tables.sql` | fact/mart/first-paint/evidence | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `OVERWATCH_SECURITY_POSTURE_DAILY` | TABLE | `snowflake/mart_setup/04_mart_tables.sql` | fact/mart/first-paint/evidence | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `OVERWATCH_EXECUTIVE_PACKET_CURRENT` | TABLE | `snowflake/mart_setup/04_mart_tables.sql` | fact/mart/first-paint/evidence | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
+| `MART_V2_EXECUTIVE_SUMMARY` | TABLE | `snowflake/mart_setup/04_mart_tables.sql` | v2 first-paint mart | keep | Drives the V2 Executive Landing first viewport. |
+| `MART_V2_DBA_MORNING_COCKPIT` | TABLE | `snowflake/mart_setup/04_mart_tables.sql` | v2 first-paint mart | keep | Drives the V2 DBA Morning Cockpit first viewport. |
+| `MART_V2_SOURCE_FRESHNESS` | TABLE | `snowflake/mart_setup/04_mart_tables.sql` | v2 first-paint mart | keep | Exposes scoped source freshness for V2 workflows. |
+| `MART_V2_ALERT_INTELLIGENCE` | TABLE | `snowflake/mart_setup/04_mart_tables.sql` | v2 first-paint mart | keep | Drives V2 Alert Center inbox/detail evidence. |
+| `MART_V2_TASK_STATUS_DAILY` | TABLE | `snowflake/mart_setup/04_mart_tables.sql` | v2 first-paint mart | keep | Supports V2 task and workload status summaries. |
+| `MART_V2_WAREHOUSE_DAILY_CREDITS` | TABLE | `snowflake/mart_setup/04_mart_tables.sql` | v2 first-paint mart | keep | Supports V2 cost drivers and warehouse spend. |
+| `MART_V2_COST_FORECAST` | TABLE | `snowflake/mart_setup/04_mart_tables.sql` | v2 first-paint mart | keep | Supports V2 cost forecast and confidence bands. |
+| `MART_V2_CONTRACT_BURN_DOWN` | TABLE | `snowflake/mart_setup/04_mart_tables.sql` | v2 first-paint mart | keep | Supports V2 contract burn-down telemetry. |
+| `MART_V2_LOGIN_SECURITY_DAILY` | TABLE | `snowflake/mart_setup/04_mart_tables.sql` | v2 first-paint mart | keep | Supports V2 suspicious-login heuristics. |
+| `MART_V2_QUERY_ERROR_SUMMARY` | TABLE | `snowflake/mart_setup/04_mart_tables.sql` | v2 first-paint mart | keep | Supports V2 workload and error summaries. |
+| `MART_V2_STORAGE_DAILY` | TABLE | `snowflake/mart_setup/04_mart_tables.sql` | v2 first-paint mart | keep | Supports V2 storage cost telemetry. |
+| `MART_V2_CORTEX_CODE_USAGE_DAILY` | TABLE | `snowflake/mart_setup/04_mart_tables.sql` | v2 first-paint mart | keep | Supports V2 Cortex usage telemetry. |
+| `MART_V2_COST_ALLOCATION_DAILY` | TABLE | `snowflake/mart_setup/04_mart_tables.sql` | v2 first-paint mart | keep | Supports V2 chargeback/showback allocation. |
+| `MART_V2_OVERWATCH_APP_SELF_COST_DAILY` | TABLE | `snowflake/mart_setup/04_mart_tables.sql` | v2 first-paint mart | keep | Tracks OVERWATCH app self-cost separately from customer workloads. |
 | `V_QUERY_DAILY_SUMMARY` | VIEW | `snowflake/mart_setup/04_mart_tables.sql` | fact/mart/first-paint/evidence | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `V_WAREHOUSE_DAILY_CREDITS` | VIEW | `snowflake/mart_setup/04_mart_tables.sql` | fact/mart/first-paint/evidence | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `V_CORTEX_DAILY_USAGE` | VIEW | `snowflake/mart_setup/04_mart_tables.sql` | fact/mart/first-paint/evidence | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
@@ -196,6 +216,17 @@ This review records the active OVERWATCH mart deployment contract. The active se
 | `V_LEADERSHIP_STORAGE_DAILY` | VIEW | `snowflake/mart_setup/04_mart_tables.sql` | fact/mart/first-paint/evidence | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `V_LEADERSHIP_CORTEX_CODE_USAGE` | VIEW | `snowflake/mart_setup/04_mart_tables.sql` | fact/mart/first-paint/evidence | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `V_LEADERSHIP_ROLE_GRANT_AUDIT` | VIEW | `snowflake/mart_setup/04_mart_tables.sql` | fact/mart/first-paint/evidence | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
+| `V_EXECUTIVE_SUMMARY` | VIEW | `snowflake/mart_setup/04_mart_tables.sql` | v2 app-facing view | keep | App-facing secure view over V2 executive first-paint mart. |
+| `V_DBA_MORNING_COCKPIT` | VIEW | `snowflake/mart_setup/04_mart_tables.sql` | v2 app-facing view | keep | App-facing secure view over V2 DBA first-paint mart. |
+| `V_SOURCE_FRESHNESS` | VIEW | `snowflake/mart_setup/04_mart_tables.sql` | v2 app-facing view | keep | App-facing secure view over V2 freshness state. |
+| `V_ALERT_INTELLIGENCE` | VIEW | `snowflake/mart_setup/04_mart_tables.sql` | v2 app-facing view | keep | App-facing secure view over V2 alert intelligence. |
+| `V_COST_FORECAST` | VIEW | `snowflake/mart_setup/04_mart_tables.sql` | v2 app-facing view | keep | App-facing secure view over V2 forecast telemetry. |
+| `V_CONTRACT_BURN_DOWN` | VIEW | `snowflake/mart_setup/04_mart_tables.sql` | v2 app-facing view | keep | App-facing secure view over V2 contract burn-down telemetry. |
+| `V_QUERY_ERROR_SUMMARY` | VIEW | `snowflake/mart_setup/04_mart_tables.sql` | v2 app-facing view | keep | App-facing secure view over V2 query error telemetry. |
+| `V_STORAGE_DAILY` | VIEW | `snowflake/mart_setup/04_mart_tables.sql` | v2 app-facing view | keep | App-facing secure view over V2 storage telemetry. |
+| `V_CORTEX_CODE_USAGE_DAILY` | VIEW | `snowflake/mart_setup/04_mart_tables.sql` | v2 app-facing view | keep | App-facing secure view over V2 Cortex usage telemetry. |
+| `V_COST_ALLOCATION_DAILY` | VIEW | `snowflake/mart_setup/04_mart_tables.sql` | v2 app-facing view | keep | App-facing secure view over V2 allocation telemetry. |
+| `V_OVERWATCH_APP_SELF_COST_DAILY` | VIEW | `snowflake/mart_setup/04_mart_tables.sql` | v2 app-facing view | keep | App-facing secure view over V2 app self-cost telemetry. |
 | `SP_OVERWATCH_PRUNE` | PROCEDURE | `snowflake/mart_setup/05_load_procedures.sql` | refresh procedure | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `SP_OVERWATCH_LOAD_HOURLY_UNIT` | PROCEDURE | `snowflake/mart_setup/05_load_procedures.sql` | refresh procedure | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `SP_OVERWATCH_LOAD_HOURLY` | PROCEDURE | `snowflake/mart_setup/05_load_procedures.sql` | refresh procedure | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
@@ -221,6 +252,7 @@ This review records the active OVERWATCH mart deployment contract. The active se
 | `SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS` | PROCEDURE | `snowflake/mart_setup/05_load_procedures.sql` | refresh procedure | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY` | PROCEDURE | `snowflake/mart_setup/05_load_procedures.sql` | refresh procedure | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `SP_OVERWATCH_APPLY_OPTIONAL_PERFORMANCE_OPTIMIZATION` | PROCEDURE | `snowflake/mart_setup/05_load_procedures.sql` | refresh procedure | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
+| `SP_OVERWATCH_REFRESH_V2_FIRST_PAINT_MARTS` | PROCEDURE | `snowflake/mart_setup/05_load_procedures.sql` | v2 refresh procedure | keep | Refreshes V2 first-paint marts from compact active marts. |
 | `OVERWATCH_ANOMALY_CHECK` | TASK | `snowflake/mart_setup/06_alert_framework.sql` | task graph | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `OVERWATCH_LOAD_HOURLY` | TASK | `snowflake/mart_setup/07_tasks.sql` | task graph | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `OVERWATCH_LOAD_QUERY_HOURLY` | TASK | `snowflake/mart_setup/07_tasks.sql` | task graph | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
@@ -235,6 +267,7 @@ This review records the active OVERWATCH mart deployment contract. The active se
 | `OVERWATCH_COST_MONITORING_REFRESH` | TASK | `snowflake/mart_setup/07_tasks.sql` | task graph | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH` | TASK | `snowflake/mart_setup/07_tasks.sql` | fact/mart/first-paint/evidence | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `OVERWATCH_DECISION_BRIEF_FULL_REFRESH` | TASK | `snowflake/mart_setup/07_tasks.sql` | task graph | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
+| `OVERWATCH_V2_FIRST_PAINT_REFRESH` | TASK | `snowflake/mart_setup/07_tasks.sql` | v2 task graph | keep | Refreshes V2 first-paint marts after the decision brief refresh. |
 | `OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH` | TASK | `snowflake/mart_setup/07_tasks.sql` | task graph | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 | `OVERWATCH_LOAD_DAILY` | TASK | `snowflake/mart_setup/07_tasks.sql` | fact/mart/first-paint/evidence | keep | Supports active mart setup, refresh graph, first-paint packet, compact evidence, alert/action state, or admin validation. |
 
@@ -245,6 +278,6 @@ This review records the active OVERWATCH mart deployment contract. The active se
 - `perf_tests/sql/*` remains test-only and is not part of production deployment.
 
 ## Validation and Reset
-- Post-deploy validation: `snowflake/validation/validate_overwatch_mart_setup.sql`, `snowflake/validation/validate_mart_first_paint_readiness.sql`, and `snowflake/OVERWATCH_MART_VALIDATION.sql`.
+- Post-deploy validation: `snowflake/validation/validate_overwatch_mart_setup.sql`, `snowflake/validation/validate_mart_first_paint_readiness.sql`, `snowflake/validation/validate_v2_first_paint_marts.sql`, and `snowflake/OVERWATCH_MART_VALIDATION.sql`.
 - Reset/rollback: `snowflake/OVERWATCH_MART_DROP.sql`, which drops active table/view/procedure/task objects and retired compatibility objects.
 - Monolith regeneration: `python tools/build_mart_setup_monolith.py`; check mode: `python tools/build_mart_setup_monolith.py --check`.

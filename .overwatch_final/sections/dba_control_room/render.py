@@ -1622,9 +1622,9 @@ def render() -> None:
                 priority_columns = [
                     "SEVERITY", "DUE_STATE", "COMMAND_STATE", "COMMAND_EXECUTION_GATE",
                     "COMMAND_ROUTE_READINESS", "CATEGORY", "ENTITY_NAME",
-                    "OWNER", "ROUTE_EMAIL", "REVIEW_PRIMARY", "REVIEW_GROUP",
+                    "OWNER", "EMAIL_TARGET", "REVIEWED_BY", "REVIEW_STATUS",
                     "STATUS", "CONTROL_GAP", "NEXT_ACTION", "TICKET_ID",
-                    "APPROVER", "ROUTE_SOURCE", "VERIFICATION_STATUS", "ROUTE",
+                    "APPROVER", "ALLOCATION_SOURCE", "VERIFICATION_STATUS", "ROUTE",
                 ]
                 sort_by = ["QUEUE_PRIORITY", "SEVERITY"]
                 ascending = [True, True]

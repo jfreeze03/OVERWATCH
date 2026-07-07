@@ -559,7 +559,7 @@ def _cards_from_queue(df: pd.DataFrame, cards: list[dict], *, surface: str) -> N
             "proof": proof or "Record telemetry before closure.",
             "do_not": "Do not mark Fixed until the telemetry status is measured.",
             "route": _text(row, "ROUTE", default="Action Queue"),
-            "owner": _text(row, "OWNER", "ROUTE_EMAIL", "REVIEW_GROUP"),
+            "owner": _text(row, "OWNER", "EMAIL_TARGET", "REVIEW_STATUS"),
         })
 
 

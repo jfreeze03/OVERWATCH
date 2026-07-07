@@ -91,11 +91,14 @@ def build_tag_free_chargeback(
 
 def build_cost_view_model(forecast: pd.DataFrame, burn_down: pd.DataFrame, drivers: pd.DataFrame) -> dict:
     chart = build_forecast_chart_frame(forecast)
+    budget_configured = bool("BUDGET_CREDITS" in chart.columns and chart["BUDGET_CREDITS"].notna().any())
     return {
         "first_viewport_order": COST_FIRST_VIEWPORT_ORDER,
         "forecast_chart": chart,
-        "forecast_has_budget_line": "BUDGET_CREDITS" in chart.columns,
+        "forecast_has_budget_line": budget_configured,
         "forecast_has_bounds_band": {"LOWER_BOUND_CREDITS", "UPPER_BOUND_CREDITS"}.issubset(chart.columns),
+        "forecast_budget_setup_required": not budget_configured,
+        "budget_setup_message": "Set MONTHLY_BUDGET_USD in OVERWATCH_SETTINGS to activate the budget line.",
         "contract_burn_down": burn_down if burn_down is not None else pd.DataFrame(),
         "top_cost_drivers": top_cost_drivers(drivers),
     }
@@ -107,6 +110,8 @@ def render_cost_overview(model: dict | None = None) -> None:
     section_header(st, "Cost Intelligence", "overview")
     model = model or build_cost_view_model(pd.DataFrame(), pd.DataFrame(), pd.DataFrame())
     st.dataframe(model["contract_burn_down"], hide_index=True)
+    if model["forecast_budget_setup_required"]:
+        st.warning(model["budget_setup_message"])
     st.dataframe(model["forecast_chart"], hide_index=True)
     st.dataframe(model["top_cost_drivers"], hide_index=True)
     st.caption("Dollar figures use the configured credit rate (OVERWATCH_SETTINGS: CREDIT_PRICE_USD).")

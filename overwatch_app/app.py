@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from overwatch_app.data.access_control import is_admin
+from overwatch_app.data.repositories.scope import ScopeOptions, fetch_scope_options
 from overwatch_app.registry import SECTIONS, Workflow, visible_workflows
 from overwatch_app.security.rbac import context_from_session
 
@@ -40,14 +41,15 @@ def _set_query_param(name: str, value: str) -> None:
         return
 
 
-def _scope_controls() -> dict[str, object]:
+def _scope_controls(session: object | None = None) -> dict[str, object]:
+    options: ScopeOptions = fetch_scope_options(session)
     st.sidebar.divider()
     st.sidebar.caption("APP CONTROLS")
     with st.sidebar.expander("Advanced Scope", expanded=False):
-        company = st.selectbox("Company", ("ALL", "ALFA", "Trexis"), index=0)
-        environment = st.selectbox("Environment", ("ALL", "PROD", "NONPROD"), index=0)
+        company = st.selectbox("Company", options.companies, index=0)
+        environment = st.selectbox("Environment", options.environments, index=0)
         window = st.selectbox("Window", (7, 30, 90), index=1)
-        warehouse = st.text_input("Warehouse", value="ALL")
+        warehouse = st.selectbox("Warehouse", options.warehouses, index=0)
     with st.sidebar.expander("Settings", expanded=False):
         st.caption("Admin workflows are controlled by Snowflake role.")
     st.sidebar.caption("OVERWATCH v2")
@@ -167,7 +169,7 @@ def main() -> None:
     )
     _set_query_param("section", section_key)
     _set_query_param("workflow", workflow_labels[selected_workflow])
-    scope = _scope_controls()
+    scope = _scope_controls(session)
     workflow = next(item for item in workflows if item.key == workflow_labels[selected_workflow])
     _render_workflow(section_key, workflow, rbac_context, scope)
 

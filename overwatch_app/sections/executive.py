@@ -34,15 +34,18 @@ def platform_score_decomposition(row: dict[str, Any] | pd.Series) -> pd.DataFram
     return frame
 
 
-def build_contract_burn_down(row: dict[str, Any] | pd.Series) -> dict[str, float | str]:
+def build_contract_burn_down(row: dict[str, Any] | pd.Series) -> dict[str, float | str | bool]:
     committed = float(row.get("COMMITTED_CREDITS", 0) or 0)
     consumed = float(row.get("CONSUMED_CREDITS", 0) or 0)
     elapsed = float(row.get("YEAR_ELAPSED_PCT", 0) or 0)
     projected = float(row.get("PROJECTED_PERIOD_END_CREDITS", consumed) or consumed)
+    setup_required = committed <= 0
     return {
+        "setup_required": setup_required,
+        "setup_message": "Set ANNUAL_COMMITTED_CREDITS in OVERWATCH_SETTINGS to activate contract burn-down.",
         "committed_credits": committed,
         "consumed_credits": consumed,
-        "annual_commit_burn_pct": round((consumed / committed) * 100, 2) if committed else 0.0,
+        "annual_commit_burn_pct": round((consumed / committed) * 100, 2) if committed else None,
         "year_elapsed_pct": elapsed,
         "projected_period_end_credits": projected,
         "projected_over_under_credits": projected - committed,
@@ -94,5 +97,8 @@ def render_executive_overview(model: dict[str, Any] | None = None) -> None:
     section_header(st, "Executive Landing", "overview")
     st.write(model["narrative"])
     st.dataframe(model["platform_score_components"], hide_index=True)
-    st.json(model["contract_burn_down"])
+    burn_down = model["contract_burn_down"]
+    if burn_down.get("setup_required"):
+        st.warning(burn_down["setup_message"])
+    st.dataframe(pd.DataFrame([burn_down]), hide_index=True)
     st.dataframe(model["open_work_items"], hide_index=True)

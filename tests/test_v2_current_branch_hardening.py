@@ -28,11 +28,31 @@ class _RoleSession:
         return _Rows([{"SETTING_VALUE": '["SNOW_ACCOUNTADMINS","SNOW_SYSADMINS"]'}])
 
 
+class _ScopeRow:
+    COMPANY = "ALFA"
+    ENVIRONMENT = "PROD"
+    WAREHOUSE_NAME = "WH_ALFA_LOAD"
+
+
+class _ScopeSession:
+    def __init__(self):
+        self.sql_texts = []
+
+    def sql(self, sql_text):
+        self.sql_texts.append(sql_text)
+        return _Rows([
+            _ScopeRow(),
+            {"COMPANY": "Trexis", "ENVIRONMENT": "NONPROD", "WAREHOUSE_NAME": "WH_TRXS_QUERY"},
+        ])
+
+
 class V2CurrentBranchHardeningTests(unittest.TestCase):
     def setUp(self):
         from overwatch_app.data.repositories import _common
+        from overwatch_app.data.repositories.scope import clear_scope_options_cache
 
         _common.clear_first_paint_cache()
+        clear_scope_options_cache()
 
     def test_dataframe_cache_copies_hits_and_retries_failure_states(self):
         from overwatch_app.data.repositories import _common
@@ -85,6 +105,21 @@ class V2CurrentBranchHardeningTests(unittest.TestCase):
         self.assertNotIn("live", dba_visible)
         self.assertIn("live", dba_admin)
 
+    def test_scope_options_use_data_when_session_exists_and_defaults_offline(self):
+        from overwatch_app.data.repositories.scope import fetch_scope_options
+
+        offline = fetch_scope_options(None)
+        self.assertEqual(offline.companies, ("ALL", "ALFA", "Trexis"))
+        self.assertEqual(offline.warehouses, ("ALL",))
+
+        session = _ScopeSession()
+        loaded = fetch_scope_options(session)
+        self.assertEqual(loaded.state, "loaded")
+        self.assertEqual(loaded.companies, ("ALL", "ALFA", "Trexis"))
+        self.assertEqual(loaded.environments, ("ALL", "NONPROD", "PROD"))
+        self.assertEqual(loaded.warehouses, ("ALL", "WH_ALFA_LOAD", "WH_TRXS_QUERY"))
+        self.assertIn("V_WAREHOUSE_DAILY_CREDITS", session.sql_texts[0])
+
     def test_alert_detail_panel_model_has_product_fields(self):
         from overwatch_app.sections.alerts import build_alert_detail
 
@@ -119,6 +154,24 @@ class V2CurrentBranchHardeningTests(unittest.TestCase):
         self.assertIn("DATEDIFF('MINUTE', SNAPSHOT_TS, CURRENT_TIMESTAMP()) AS AGE_MINUTES", setup_04)
         self.assertIn("DELIVERY_STATUS", setup_04)
         self.assertIn("IS_OVERDUE", setup_04)
+
+    def test_missing_budget_and_contract_config_render_as_setup_required(self):
+        from overwatch_app.sections.cost import build_cost_view_model
+        from overwatch_app.sections.executive import build_contract_burn_down, render_executive_overview
+        import inspect
+
+        burn = build_contract_burn_down({"COMMITTED_CREDITS": None, "CONSUMED_CREDITS": 10})
+        self.assertTrue(burn["setup_required"])
+        self.assertIsNone(burn["annual_commit_burn_pct"])
+
+        model = build_cost_view_model(
+            pd.DataFrame([{"DAY": "2026-07-01", "FORECAST_CREDITS": 10, "BUDGET_CREDITS": None}]),
+            pd.DataFrame(),
+            pd.DataFrame(),
+        )
+        self.assertFalse(model["forecast_has_budget_line"])
+        self.assertTrue(model["forecast_budget_setup_required"])
+        self.assertNotIn("st.json", inspect.getsource(render_executive_overview))
 
 
 if __name__ == "__main__":

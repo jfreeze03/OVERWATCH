@@ -392,7 +392,7 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
 
 
 def _cost_command_lanes(splash: dict, *, credit_price: float, days: int) -> list[dict[str, str]]:
-    """Return Cost & Contract first-paint lanes from loaded state or honest placeholders."""
+    """Return Cost & Contract first-paint lanes from loaded or unloaded state."""
     if not splash.get("loaded"):
         return [
             {

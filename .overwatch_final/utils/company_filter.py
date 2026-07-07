@@ -714,10 +714,10 @@ def company_scoped_query(
     extra_cache_parts: tuple = (),
 ):
     """
-    Execute SQL with a consistent company/global filter placeholder and cache key.
+    Execute SQL with a consistent company/global filter token and cache key.
 
     Put `{company_scope}` or `{global_scope}` in the SQL where a WHERE fragment
-    should be injected. If no placeholder is present, the query is left unchanged.
+    should be injected. If no scope token is present, the query is left unchanged.
     """
     from .query import run_query
 

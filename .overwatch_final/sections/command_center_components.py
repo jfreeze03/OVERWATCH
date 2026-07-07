@@ -116,7 +116,7 @@ def render_coco_ai_summary(model: ExecutiveCommandCenterModel) -> None:
     headline = clean_display_text(model.summary_headline)
     detail = clean_display_text(model.summary_detail)
     if not detail or "connection unavailable" in detail.lower():
-        detail = "Loading the current packet for the selected scope."
+        detail = "Current packet is not available for the selected scope."
     if headline and headline.lower() not in {"refresh required", "operating summary loaded"}:
         body = f"{headline}. {detail}"
     else:

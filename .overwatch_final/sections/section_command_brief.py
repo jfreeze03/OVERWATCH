@@ -660,14 +660,6 @@ def _offline_brief(
     )
 
 
-def _query_callable_is_mocked() -> bool:
-    return "unittest.mock" in type(run_query).__module__
-
-
-def _availability_callable_is_mocked() -> bool:
-    return "unittest.mock" in type(snowflake_entry_available).__module__
-
-
 def _scoped_where(section: str, company: str, environment: str, window_days: int) -> str:
     lookup_window_days = _normalize_packet_window_days(window_days)
     return f"""
@@ -1016,7 +1008,7 @@ def autoload_section_command_brief(
         _record_telemetry(brief)
         return brief
 
-    if (_availability_callable_is_mocked() or not _query_callable_is_mocked()) and not snowflake_entry_available():
+    if not snowflake_entry_available():
         brief = _offline_brief(
             contract,
             company=str(company),

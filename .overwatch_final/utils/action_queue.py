@@ -275,22 +275,29 @@ def _queue_series(df: pd.DataFrame, column: str, default: object = "") -> pd.Ser
     return pd.Series([default] * len(df), index=df.index)
 
 
-def _text_present(value: object) -> bool:
+def _is_missing_scalar(value: object) -> bool:
     try:
-        if pd.isna(value):
-            return False
+        missing = pd.isna(value)
     except Exception:
-        pass
+        return False
+    if hasattr(missing, "__len__") and not isinstance(missing, (str, bytes)):
+        return False
+    try:
+        return bool(missing)
+    except Exception:
+        return False
+
+
+def _text_present(value: object) -> bool:
+    if _is_missing_scalar(value):
+        return False
     text = str(value or "").strip()
     return bool(text and text.upper() not in {"N/A", "NONE", "NULL", "NAN", "<NA>"})
 
 
 def _status_text(value: object) -> str:
-    try:
-        if pd.isna(value):
-            return ""
-    except Exception:
-        pass
+    if _is_missing_scalar(value):
+        return ""
     return str(value or "").strip().upper()
 
 

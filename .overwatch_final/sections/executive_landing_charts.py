@@ -315,7 +315,7 @@ def _render_executive_observability_board(
             ("Freshness", "Details available when needed"),
         ))
         _render_executive_command_summary(pd.DataFrame(), advisor_rows, days=int(days))
-        _render_executive_pressure_board(_executive_pressure_placeholder_rows(), advisor_rows=advisor_rows)
+        _render_executive_pressure_board(_executive_pressure_unloaded_rows(), advisor_rows=advisor_rows)
         _render_executive_priority_board(pd.DataFrame(), days=int(days), advisor_rows=advisor_rows)
         _render_loaded_advisor_overlay(advisor_rows)
         _render_observability_source_status(board)

@@ -195,14 +195,14 @@ def _trend_detail(metric: object) -> str:
         if numeric_points > 0:
             parts.append(f"{int(numeric_points)} trend point{'s' if int(numeric_points) != 1 else ''}")
         else:
-            parts.append("Loading trend")
+            parts.append("Trend unavailable")
     elif "run-rate" in detail.lower() or quality.lower() in {"run_rate", "run-rate", "run-rate only"}:
         parts.append("Run-rate only")
     if quality:
         parts.append(f"Quality: {quality}")
     if zero_policy:
         parts.append(f"Zero policy: {zero_policy}")
-    return " - ".join(parts) if parts else "Loading trend"
+    return " - ".join(parts) if parts else "Trend unavailable"
 
 
 def render_change_panel(model: object, *, title: object = "What changed") -> str:
@@ -227,8 +227,8 @@ def render_change_panel(model: object, *, title: object = "What changed") -> str
     if not rows:
         rows.append(
             '<article class="ow-kit-change-row ow-decision-trend-tile">'
-            "<span>Trend</span><strong>Loading trend</strong>"
-            "<small>Trend loads with the current packet.</small></article>"
+            "<span>Trend</span><strong>Trend unavailable</strong>"
+            "<small>No governed trend metadata in this packet.</small></article>"
         )
     return (
         '<section class="ow-kit-change-panel ow-decision-trend-band" aria-label="What changed">'

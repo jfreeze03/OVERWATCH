@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 import re
 import sys
-from typing import Iterable
+from typing import Iterable, Mapping
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -113,6 +113,13 @@ def _read_text(path: Path) -> str:
         return ""
 
 
+def _artifact_label(path: Path) -> Path:
+    try:
+        return path.resolve().relative_to(REPO_ROOT)
+    except ValueError:
+        return path.resolve()
+
+
 def _section_source_files(section: str) -> list[Path]:
     files: list[Path] = []
     for pattern in SECTION_SOURCE_GLOBS.get(section, ()):
@@ -142,7 +149,7 @@ def _route_state(section: str, workflow: str) -> dict[str, str]:
     return state
 
 
-def _recommendation(section: str, metrics: dict[str, bool | int]) -> str:
+def _recommendation(section: str, metrics: Mapping[str, bool]) -> str:
     fixes: list[str] = []
     if metrics["standalone_leadership_monitor"]:
         fixes.append("remove standalone leadership-monitor panel and fold metrics into owning section cards")
@@ -225,14 +232,12 @@ def _write_csv(path: Path, rows: Iterable[AuditRow]) -> None:
 
 
 def _write_markdown(path: Path, rows: list[AuditRow], artifact_dir: Path) -> None:
-    totals = {
-        "workflows": len(rows),
-        "sections": len({row.section for row in rows}),
-        "leadership_sections": sorted({row.section for row in rows if row.standalone_leadership_monitor}),
-        "duplicate_action_sections": sorted({row.section for row in rows if row.duplicate_recommended_actions}),
-        "old_layout_sections": sorted({row.section for row in rows if row.old_decision_workspace_layout}),
-        "kanban_risk_sections": sorted({row.section for row in rows if row.kanban_lane_default_risk}),
-    }
+    workflow_count = len(rows)
+    section_count = len({row.section for row in rows})
+    leadership_sections = sorted({row.section for row in rows if row.standalone_leadership_monitor})
+    duplicate_action_sections = sorted({row.section for row in rows if row.duplicate_recommended_actions})
+    old_layout_sections = sorted({row.section for row in rows if row.old_decision_workspace_layout})
+    kanban_risk_sections = sorted({row.section for row in rows if row.kanban_lane_default_risk})
     lines = [
         "# UI Snapshot Audit",
         "",
@@ -241,12 +246,12 @@ def _write_markdown(path: Path, rows: list[AuditRow], artifact_dir: Path) -> Non
         "",
         "## Summary",
         "",
-        f"- Sections inventoried: {totals['sections']}",
-        f"- Workflows inventoried: {totals['workflows']}",
-        f"- Sections with standalone leadership monitor risk: {', '.join(totals['leadership_sections']) or 'None'}",
-        f"- Sections with duplicate Recommended Action marker risk: {', '.join(totals['duplicate_action_sections']) or 'None'}",
-        f"- Sections still using old Decision Workspace layout markers: {', '.join(totals['old_layout_sections']) or 'None'}",
-        f"- Sections with Kanban/lane default risk: {', '.join(totals['kanban_risk_sections']) or 'None'}",
+        f"- Sections inventoried: {section_count}",
+        f"- Workflows inventoried: {workflow_count}",
+        f"- Sections with standalone leadership monitor risk: {', '.join(leadership_sections) or 'None'}",
+        f"- Sections with duplicate Recommended Action marker risk: {', '.join(duplicate_action_sections) or 'None'}",
+        f"- Sections still using old Decision Workspace layout markers: {', '.join(old_layout_sections) or 'None'}",
+        f"- Sections with Kanban/lane default risk: {', '.join(kanban_risk_sections) or 'None'}",
         "",
         "## Screenshot Status",
         "",
@@ -311,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
         encoding="utf-8",
     )
     _write_csv(out_dir / "ui_snapshot_audit.csv", rows)
-    _write_markdown(REPO_ROOT / "docs" / "UI_SNAPSHOT_AUDIT.md", rows, out_dir.relative_to(REPO_ROOT))
+    _write_markdown(REPO_ROOT / "docs" / "UI_SNAPSHOT_AUDIT.md", rows, _artifact_label(out_dir))
     (out_dir / "README.md").write_text(
         "# UI Snapshot Audit Artifacts\n\n"
         "This directory contains route-registry driven audit JSON/CSV. Screenshot capture was not run in this pass; "

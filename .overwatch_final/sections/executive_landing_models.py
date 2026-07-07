@@ -1094,7 +1094,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
     out = pd.DataFrame(rows, columns=columns)
     return out.sort_values(["PRESSURE_SCORE", "LANE"], ascending=[False, True]).reset_index(drop=True)
 
-def _executive_pressure_placeholder_rows() -> pd.DataFrame:
+def _executive_pressure_unloaded_rows() -> pd.DataFrame:
     """Return the executive pressure frame when the mart has not loaded yet."""
     return pd.DataFrame(
         [
@@ -1380,4 +1380,4 @@ def _executive_command_summary_rows(board: pd.DataFrame, advisor_rows: pd.DataFr
     return pd.DataFrame(rows).sort_values(["PRIORITY", "AREA"]).reset_index(drop=True)
 
 
-__all__ = ['_open_action_mask', '_platform_score_state', '_pressure_level', '_score_driver', '_build_platform_operating_score', '_with_platform_operating_score', '_persist_platform_summary', '_snapshot_state', '_default_platform_summary', '_decision_rows', '_executive_action_brief', '_snapshot_matches_scope', '_source_health_rows', '_executive_snapshot_scope', '_obs_rows', '_obs_value', '_has_observability_kpis', '_obs_metric_loaded', '_obs_money_label', '_obs_count_label', '_state_payload', '_state_frame', '_sum_first_numeric', '_count_high_priority', '_advisor_state_label', '_append_advisor_row', '_executive_loaded_advisor_rows', '_advisor_overlay_totals', '_summary_from_observability', '_executive_priority_rows', '_executive_pressure_rows', '_executive_pressure_placeholder_rows', '_executive_summary_lanes', '_advisor_lane', '_executive_command_summary_rows']
+__all__ = ['_open_action_mask', '_platform_score_state', '_pressure_level', '_score_driver', '_build_platform_operating_score', '_with_platform_operating_score', '_persist_platform_summary', '_snapshot_state', '_default_platform_summary', '_decision_rows', '_executive_action_brief', '_snapshot_matches_scope', '_source_health_rows', '_executive_snapshot_scope', '_obs_rows', '_obs_value', '_has_observability_kpis', '_obs_metric_loaded', '_obs_money_label', '_obs_count_label', '_state_payload', '_state_frame', '_sum_first_numeric', '_count_high_priority', '_advisor_state_label', '_append_advisor_row', '_executive_loaded_advisor_rows', '_advisor_overlay_totals', '_summary_from_observability', '_executive_priority_rows', '_executive_pressure_rows', '_executive_pressure_unloaded_rows', '_executive_summary_lanes', '_advisor_lane', '_executive_command_summary_rows']

@@ -52,7 +52,7 @@ def _make_action_id(*args):
     if make_action_id is not _DEFAULT_MAKE_ACTION_ID:
         return make_action_id(*args)
     facade_make_action_id = _facade_callable("make_action_id")
-    if facade_make_action_id is not None and hasattr(facade_make_action_id, "mock_calls"):
+    if facade_make_action_id is not None:
         return facade_make_action_id(*args)
     return make_action_id(*args)
 
@@ -61,7 +61,7 @@ def _upsert_actions(session, actions):
     if upsert_actions is not _DEFAULT_UPSERT_ACTIONS:
         return upsert_actions(session, actions)
     facade_upsert_actions = _facade_callable("upsert_actions")
-    if facade_upsert_actions is not None and hasattr(facade_upsert_actions, "mock_calls"):
+    if facade_upsert_actions is not None:
         return facade_upsert_actions(session, actions)
     return upsert_actions(session, actions)
 

@@ -501,7 +501,7 @@ def _render_model_trend_band(model: DecisionWorkspaceViewModel) -> str:
         return (
             '<section class="ow-decision-trend-band ow-decision-trend-empty">'
             '<h4>What changed</h4>'
-            '<p>Loading trend. Trend loads with the current packet.</p>'
+            '<p>Trend unavailable. No governed trend metadata in this packet.</p>'
             '</section>'
         )
     return (

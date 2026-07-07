@@ -321,6 +321,10 @@ class SectionCommandBriefTests(unittest.TestCase):
 
         with patch.object(brief_module.st, "session_state", {}), patch.object(
             brief_module,
+            "snowflake_entry_available",
+            return_value=True,
+        ), patch.object(
+            brief_module,
             "run_query",
             return_value=packet_rows,
         ) as run_query:
@@ -439,6 +443,10 @@ class SectionCommandBriefTests(unittest.TestCase):
         session_state = {}
         with patch.object(brief_module.st, "session_state", session_state), patch.object(
             brief_module,
+            "snowflake_entry_available",
+            return_value=True,
+        ), patch.object(
+            brief_module,
             "run_query",
             return_value=packet_rows,
         ) as run_query:
@@ -455,6 +463,10 @@ class SectionCommandBriefTests(unittest.TestCase):
         from sections import section_command_brief as brief_module
 
         with patch.object(brief_module.st, "session_state", {}), patch.object(
+            brief_module,
+            "snowflake_entry_available",
+            return_value=True,
+        ), patch.object(
             brief_module,
             "run_query",
             side_effect=RuntimeError("table missing"),

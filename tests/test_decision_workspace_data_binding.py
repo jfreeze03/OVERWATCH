@@ -526,6 +526,10 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         state_a: dict[str, object] = {}
         with patch.object(brief_module.st, "session_state", state_a), patch.object(
             brief_module,
+            "snowflake_entry_available",
+            return_value=True,
+        ), patch.object(
+            brief_module,
             "run_query",
             return_value=packet_a,
         ) as run_query:
@@ -541,7 +545,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertIn(">9<", markup_a)
         self.assertIn("$987", markup_a)
         self.assertIn("Packet A headline", markup_a)
-        self.assertIn("Loading trend", markup_a)
+        self.assertIn("Trend unavailable", markup_a)
         self.assertNotIn("ow-trend-unavailable", markup_a)
 
         packet_b = _packet(
@@ -555,6 +559,10 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             headline="Packet B headline",
         )
         with patch.object(brief_module.st, "session_state", {}), patch.object(
+            brief_module,
+            "snowflake_entry_available",
+            return_value=True,
+        ), patch.object(
             brief_module,
             "run_query",
             return_value=packet_b,
@@ -608,6 +616,10 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         }
         for section, metrics in cases.items():
             with self.subTest(section=section), patch.object(brief_module.st, "session_state", {}), patch.object(
+                brief_module,
+                "snowflake_entry_available",
+                return_value=True,
+            ), patch.object(
                 brief_module,
                 "run_query",
                 return_value=_packet(section, metrics, headline=f"{section} packet headline"),
@@ -2376,7 +2388,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             ),
         )
         markup = _render_markup(brief)
-        self.assertEqual(markup.count("Loading trend"), 1)
+        self.assertEqual(markup.count("Trend unavailable"), 1)
         self.assertNotIn("ow-trend-unavailable", markup)
 
     def test_decision_window_uses_completed_packet_days(self):

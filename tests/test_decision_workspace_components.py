@@ -116,7 +116,7 @@ class DecisionWorkspaceComponentsTests(unittest.TestCase):
         self.assertIn("Spend movement", html)
         self.assertIn("Run-rate only", html)
         self.assertIn("Period: 7d", html)
-        self.assertIn("Loading trend", html)
+        self.assertIn("Trend unavailable", html)
         self.assertIn("Zero policy: explicit zero only", html)
         self.assertIn("partial source history", html)
 
@@ -125,8 +125,8 @@ class DecisionWorkspaceComponentsTests(unittest.TestCase):
 
         html = render_change_panel(SimpleNamespace(trends=()))
 
-        self.assertIn("Loading trend", html)
-        self.assertIn("Trend loads with the current packet", html)
+        self.assertIn("Trend unavailable", html)
+        self.assertIn("No governed trend metadata in this packet", html)
 
     def test_command_view_model_treats_nan_packet_values_as_unavailable(self):
         from sections.decision_workspace_view_model import build_decision_workspace_view_model

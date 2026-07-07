@@ -32,7 +32,7 @@ def _render_security_ownership_coverage(company: str, environment: str) -> None:
         days=35,
     )
     if coverage is None or getattr(coverage, "empty", True):
-        st.caption("Security ownership coverage is pending. Refresh the enterprise operating model mart to show access route gaps.")
+        st.caption("Security workflow route coverage is pending. Refresh the enterprise operating model mart to show access route gaps.")
         return
     gaps = safe_int(pd.to_numeric(coverage.get("GAP_ITEMS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
     routed = safe_int(pd.to_numeric(coverage.get("ROUTED_ITEMS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
@@ -85,20 +85,20 @@ def _render_security_score_explanation(company: str, environment: str) -> None:
             st.info("No Security Score driver rows are available for this scope yet.")
             return
         latest = detail.iloc[0]
-        owner_gap = str(latest.get("OWNER_GAP") or "").strip().lower() in {"true", "1", "yes", "y"}
+        workflow_gap = str(latest.get("WORKFLOW_GAP") or "").strip().lower() in {"true", "1", "yes", "y"}
         render_shell_snapshot((
             ("Score", f"{safe_float(latest.get('CURRENT_SCORE')):.0f}/100"),
             ("Status", str(latest.get("STATUS") or "Unknown")),
             ("Trend", str(latest.get("TREND") or "Stable")),
-            ("Owner Gap", "Yes" if owner_gap else "No"),
+            ("Workflow Gap", "Yes" if workflow_gap else "No"),
         ))
         render_priority_dataframe(
             detail,
             title="Security Score drivers",
             priority_columns=[
                 "SNAPSHOT_TS", "CURRENT_SCORE", "STATUS", "TREND",
-                "TOP_DRIVER", "RECOMMENDED_ACTION", "OWNER_ROUTE",
-                "OWNER_GAP", "CONFIDENCE", "SOURCE_OBJECTS", "LAST_REFRESHED_TS",
+                "TOP_DRIVER", "RECOMMENDED_ACTION", "WORKFLOW_ROUTE",
+                "WORKFLOW_GAP", "CONFIDENCE", "SOURCE_OBJECTS", "LAST_REFRESHED_TS",
             ],
             sort_by=["SNAPSHOT_TS"],
             ascending=False,
@@ -150,7 +150,7 @@ def _render_security_action_approval(company: str, environment: str) -> None:
                 title="Security action approval workflow",
                 priority_columns=[
                     "FINDING", "ENTITY_TYPE", "ENTITY_NAME", "RISK_LEVEL",
-                    "OWNER_ROUTE", "OWNER_GAP", "APPROVAL_STATUS",
+                    "WORKFLOW_ROUTE", "WORKFLOW_GAP", "APPROVAL_STATUS",
                     "APPROVED_BY", "APPROVAL_TS", "EXECUTION_MODE",
                     "VERIFICATION_STATUS", "RECOMMENDED_ACTION",
                     "LAST_REFRESHED_TS",
@@ -185,7 +185,7 @@ def _render_security_action_approval(company: str, environment: str) -> None:
 def _render_security_command_findings(company: str, environment: str) -> None:
     """Expose security-risk correlated findings behind an explicit Load."""
     st.markdown("**Security Investigation Findings**")
-    st.caption("Loads security-risk root-cause candidates, owner gaps, related changes, and review-gated recommendations.")
+    st.caption("Loads security-risk root-cause candidates, workflow gaps, related changes, and review-gated recommendations.")
     types = ("Security Risk",)
     if st.button("Load Security Investigation Findings", key="security_load_command_center", width="stretch"):
         with query_budget_context(
@@ -222,7 +222,7 @@ def _render_security_command_findings(company: str, environment: str) -> None:
                 priority_columns=[
                     "QUESTION_TEXT", "ROOT_CAUSE_CANDIDATE", "CAUSALITY_LABEL",
                     "EVIDENCE_SUMMARY", "CONFIDENCE", "BUSINESS_IMPACT",
-                    "OWNER_ROUTE", "OWNER_GAP", "RELATED_CHANGES",
+                    "WORKFLOW_ROUTE", "WORKFLOW_GAP", "RELATED_CHANGES",
                     "RELATED_ALERTS", "RELATED_SCORECARD_DRIVERS",
                     "RECOMMENDED_ACTION", "RISK_LEVEL", "EXECUTION_PLAN_REF",
                     "VERIFICATION_PATH",
@@ -238,7 +238,7 @@ def _render_security_command_findings(company: str, environment: str) -> None:
             recommendations,
             title="Security command recommendations",
             priority_columns=[
-                "RECOMMENDED_ACTION", "RISK_LEVEL", "OWNER_ROUTE",
+                "RECOMMENDED_ACTION", "RISK_LEVEL", "WORKFLOW_ROUTE",
                 "EXECUTION_PLAN_REF", "REVIEW_REQUIRED", "VERIFICATION_PATH",
                 "SAFETY_NOTE", "LAST_REFRESHED_TS",
             ],

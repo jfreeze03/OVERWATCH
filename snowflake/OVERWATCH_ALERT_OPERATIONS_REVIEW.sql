@@ -70,9 +70,9 @@ SELECT
     SAFETY_NOTE,
     CASE
         WHEN COALESCE(ENABLED_BY_DEFAULT, FALSE) THEN 'Set ENABLED_BY_DEFAULT to false and repeat review.'
-        WHEN UPPER(COALESCE(STATUS, 'CANDIDATE')) IN ('APPROVED', 'READY', 'READY_TO_DEPLOY') THEN 'Review owner, threshold, warehouse, route, and rollback evidence before manual promotion.'
+        WHEN UPPER(COALESCE(STATUS, 'CANDIDATE')) IN ('APPROVED', 'READY', 'READY_TO_DEPLOY') THEN 'Review reviewer, threshold, warehouse, route, and rollback evidence before manual promotion.'
         WHEN UPPER(COALESCE(STATUS, 'CANDIDATE')) IN ('DEPLOYED', 'ACTIVE') THEN 'Compare event volume, delivery log, dry-run status, and false-positive rate.'
-        ELSE 'Tune threshold and owner route before marking ready.'
+        ELSE 'Tune threshold and workflow route before marking ready.'
     END AS NEXT_OPERATOR_STEP
 FROM ALERT_NATIVE_OBJECT_REGISTRY
 ORDER BY
@@ -283,8 +283,8 @@ SELECT
     END AS REVIEW_STATE,
     CASE
         WHEN CURRENT_VALUE IS NULL THEN 'Keep current threshold; no recent scoped rows in the mart.'
-        WHEN THRESHOLD_KEY LIKE 'COST_%' THEN 'Compare ALFA/Trexis split, Snowflake Admin cost view, and owner route before threshold changes.'
-        ELSE 'Compare current rows with owner expectations before threshold changes.'
+        WHEN THRESHOLD_KEY LIKE 'COST_%' THEN 'Compare ALFA/Trexis split, Snowflake Admin cost view, and workflow route before threshold changes.'
+        ELSE 'Compare current rows with workflow expectations before threshold changes.'
     END AS NEXT_OPERATOR_STEP
 FROM tuning_rows
 ORDER BY REVIEW_STATE, CATEGORY, THRESHOLD_KEY, COMPANY;

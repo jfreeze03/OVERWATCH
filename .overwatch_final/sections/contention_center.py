@@ -609,7 +609,7 @@ def _contention_fix_fields(signal: str, row: dict | pd.Series | None = None) -> 
 
     fields = {
         "BOTTLENECK_TYPE": "Contention investigation",
-        "OWNER_ROUTE": "Contention Center",
+        "WORKFLOW_ROUTE": "Contention Center",
         "FIRST_MOVE": "Load active locks, identify the blocker, and confirm whether this is lock wait, task overlap, or queueing.",
         "SAFE_FIX": "Capture telemetry before canceling work; change one scheduling or write-path control at a time.",
         "COMPUTE_DECISION": "Do not resize until blocked seconds are separated from queued load.",
@@ -628,7 +628,7 @@ def _contention_fix_fields(signal: str, row: dict | pd.Series | None = None) -> 
     if "TASK-OWNED" in signal_text or "TASK OVERLAP" in signal_text:
         fields.update({
             "BOTTLENECK_TYPE": "Task graph overlap / blocked task write",
-            "OWNER_ROUTE": "Pipeline & Task Health",
+            "WORKFLOW_ROUTE": "Pipeline & Task Health",
             "FIRST_MOVE": "Open Pipeline & Task Health, find the overlapping root task/window, and pause or reschedule only the colliding graph.",
             "SAFE_FIX": "Set OVERLAP_POLICY = NO_OVERLAP on the root task or widen the schedule; keep parallel reads/transforms but serialize the final shared-table publish.",
             "COMPUTE_DECISION": "Task overlap is a scheduling/write-path problem first; bigger compute can make overlap happen faster.",
@@ -637,7 +637,7 @@ def _contention_fix_fields(signal: str, row: dict | pd.Series | None = None) -> 
     elif "HOT LOCKED OBJECT" in signal_text:
         fields.update({
             "BOTTLENECK_TYPE": "Repeated table/object lock hotspot",
-            "OWNER_ROUTE": "Contention Center",
+            "WORKFLOW_ROUTE": "Contention Center",
             "FIRST_MOVE": "Name the shared target object and identify every writer touching it in the same window.",
             "SAFE_FIX": "Move parallel writers into isolated staging tables and use one downstream publish/MERGE task for the shared target.",
             "COMPUTE_DECISION": "Repeated object waits are lock telemetry; bigger warehouse will not release a blocker transaction.",
@@ -646,7 +646,7 @@ def _contention_fix_fields(signal: str, row: dict | pd.Series | None = None) -> 
     elif "LOCK WAIT" in signal_text or "BLOCKED" in signal_text:
         fields.update({
             "BOTTLENECK_TYPE": "Lock wait / blocked transaction",
-            "OWNER_ROUTE": "Active Locks",
+            "WORKFLOW_ROUTE": "Active Locks",
             "FIRST_MOVE": "Run Check Active Locks Now, identify blocker transaction/session, then stop overlapping writers to the same object.",
             "SAFE_FIX": "Shorten the write transaction, stage transforms before the final write, and batch large MERGE/UPDATE/DELETE work by date, hash bucket, tenant, or batch id.",
             "COMPUTE_DECISION": "Blocked seconds are transaction wait; do not resize solely because a query is blocked.",
@@ -655,7 +655,7 @@ def _contention_fix_fields(signal: str, row: dict | pd.Series | None = None) -> 
     elif "WAREHOUSE QUEUE" in signal_text or "QUEUEING" in signal_text:
         fields.update({
             "BOTTLENECK_TYPE": "Warehouse queue pressure",
-            "OWNER_ROUTE": "Cost & Contract",
+            "WORKFLOW_ROUTE": "Cost & Contract",
             "FIRST_MOVE": "Check active query concurrency and WAREHOUSE_LOAD_HISTORY before changing SQL or task ordering.",
             "SAFE_FIX": "Use workload isolation, multi-cluster, or right-sized compute only when queued load is present and blocked seconds are not the dominant signal.",
             "COMPUTE_DECISION": "This is compute concurrency telemetry; resizing or isolation may help if lock waits are not driving the delay.",
@@ -664,7 +664,7 @@ def _contention_fix_fields(signal: str, row: dict | pd.Series | None = None) -> 
     elif "LONG DML" in signal_text:
         fields.update({
             "BOTTLENECK_TYPE": "Long DML lock window",
-            "OWNER_ROUTE": "Query Investigation",
+            "WORKFLOW_ROUTE": "Query Investigation",
             "FIRST_MOVE": "Open Query Investigation for the DML query ID and identify the target table plus longest write step.",
             "SAFE_FIX": "Do heavy transforms outside the transaction, then run a smaller final write; split large MERGE/UPDATE/DELETE into bounded batches.",
             "COMPUTE_DECISION": "Long elapsed DML can hold locks; check queue time separately before treating this as compute.",
@@ -887,7 +887,7 @@ def build_contention_safe_action_contract(row: dict | pd.Series | None, signal: 
     """Return the guarded action contract for a contention row without executing SQL."""
     row = row if row is not None else {}
     signal_text = str(signal or _first_value(row, "SIGNAL", "ROOT_CAUSE", default="")).upper()
-    route = str(_first_value(row, "OWNER_ROUTE", default="Contention Center") or "Contention Center")
+    route = str(_first_value(row, "WORKFLOW_ROUTE", default="Contention Center") or "Contention Center")
     query_id = str(_first_value(row, "QUERY_ID", "WAITER_QUERY_ID", default="")).strip()
     blocker_tx = str(_first_value(row, "BLOCKER_TRANSACTION_ID", default="")).strip()
     transaction_id = str(_first_value(row, "TRANSACTION_ID", "TRANSACTION", "ID", default="")).strip()
@@ -916,7 +916,7 @@ def build_contention_safe_action_contract(row: dict | pd.Series | None, signal: 
         "query/transaction identity."
     )
     approval_gate = (
-        "DBA on-call acknowledgement, current telemetry, and incident/ticket reference required "
+        "DBA review acknowledgement, current telemetry, and incident/ticket reference required "
         "before any guarded cleanup SQL."
     )
     audit_evidence = (
@@ -976,7 +976,7 @@ def build_contention_safe_action_contract(row: dict | pd.Series | None, signal: 
         manual_sql = f"SELECT SYSTEM$ABORT_TRANSACTION({sql_literal(blocker_tx, 120)});"
         confirmation = "Type ABORT TRANSACTION in the guarded DBA flow."
         approval_gate = (
-            "Application/data review, DBA on-call acknowledgement, and incident ticket required; "
+            "Application/data review, DBA review acknowledgement, and incident ticket required; "
             "confirm rollback impact before abort."
         )
         recovery_plan = (
@@ -1008,7 +1008,7 @@ def build_contention_safe_action_contract(row: dict | pd.Series | None, signal: 
         manual_sql = f"SELECT SYSTEM$ABORT_TRANSACTION({sql_literal(transaction_id, 120)});"
         confirmation = "Type ABORT TRANSACTION in the guarded DBA flow."
         approval_gate = (
-            "Application/data review, DBA on-call acknowledgement, and incident ticket required; "
+            "Application/data review, DBA review acknowledgement, and incident ticket required; "
             "confirm the transaction is the blocker before abort."
         )
         recovery_plan = (
@@ -1061,7 +1061,7 @@ def build_contention_safe_action_contract(row: dict | pd.Series | None, signal: 
         manual_sql = f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(query_id, 120)});"
         confirmation = "Type CANCEL QUERY in the guarded DBA flow."
         approval_gate = (
-            "Query route or application review and DBA on-call acknowledgement required; confirm whether "
+            "Query route or application review and DBA review acknowledgement required; confirm whether "
             "the query is a waiter or blocker before cancel."
         )
         recovery_plan = (
@@ -1136,7 +1136,7 @@ def build_contention_solution_summary(decision: pd.DataFrame | None) -> pd.DataF
         "PRIMARY_ENTITY",
         "FIRST_ACTION",
         "PROOF_REQUIRED",
-        "OWNER_ROUTE",
+        "WORKFLOW_ROUTE",
     ]
     if work.empty:
         return pd.DataFrame(columns=columns)
@@ -1161,7 +1161,7 @@ def build_contention_solution_summary(decision: pd.DataFrame | None) -> pd.DataF
         ),
         (
             "Fix warehouse pressure",
-            work.get("OWNER_ROUTE", pd.Series([""] * len(work))).astype(str).str.contains("Cost & Contract|Warehouse", case=False, regex=True)
+            work.get("WORKFLOW_ROUTE", pd.Series([""] * len(work))).astype(str).str.contains("Cost & Contract|Warehouse", case=False, regex=True)
             | work.get("SIGNAL", pd.Series([""] * len(work))).astype(str).str.contains("queue", case=False, regex=False),
         ),
     )
@@ -1180,7 +1180,7 @@ def build_contention_solution_summary(decision: pd.DataFrame | None) -> pd.DataF
             "PRIMARY_ENTITY": str(top.get("TARGET_OBJECT") or top.get("ENTITY") or ""),
             "FIRST_ACTION": str(top.get("FIRST_MOVE") or top.get("NEXT_ACTION") or ""),
             "PROOF_REQUIRED": str(top.get("PROOF_REQUIRED") or top.get("VERIFY_AFTER_FIX") or ""),
-            "OWNER_ROUTE": str(top.get("OWNER_ROUTE") or "Contention Center"),
+            "WORKFLOW_ROUTE": str(top.get("WORKFLOW_ROUTE") or "Contention Center"),
         })
     remainder = work[~used]
     if not remainder.empty:
@@ -1192,7 +1192,7 @@ def build_contention_solution_summary(decision: pd.DataFrame | None) -> pd.DataF
             "PRIMARY_ENTITY": str(top.get("TARGET_OBJECT") or top.get("ENTITY") or ""),
             "FIRST_ACTION": str(top.get("FIRST_MOVE") or top.get("NEXT_ACTION") or ""),
             "PROOF_REQUIRED": str(top.get("PROOF_REQUIRED") or top.get("VERIFY_AFTER_FIX") or ""),
-            "OWNER_ROUTE": str(top.get("OWNER_ROUTE") or "Contention Center"),
+            "WORKFLOW_ROUTE": str(top.get("WORKFLOW_ROUTE") or "Contention Center"),
         })
     summary = pd.DataFrame(rows, columns=columns)
     if summary.empty:
@@ -1231,7 +1231,7 @@ def build_contention_top_fix_path(decision: pd.DataFrame | None) -> pd.DataFrame
     precheck_sql = str(top.get("PRECHECK_SQL") or "").strip()
     verify_sql = str(top.get("VERIFY_SQL") or "").strip()
     rows = [{
-        "TOP_ROUTE": str(top.get("OWNER_ROUTE") or "Contention Center"),
+        "TOP_ROUTE": str(top.get("WORKFLOW_ROUTE") or "Contention Center"),
         "TOP_SEVERITY": str(top.get("SEVERITY") or "Watch"),
         "ENTITY": str(top.get("TARGET_OBJECT") or top.get("ENTITY") or top.get("WAREHOUSE_NAME") or ""),
         "BLOCKER": _incident_blocker(top),
@@ -1424,7 +1424,7 @@ def _live_incident_rows(
             "SAFE_FIX": "Coordinate with the owning session; pause overlapping writers and shorten the final shared-table write window.",
             "COMPUTE_DECISION": "An active lock is transaction contention; resize only after blocked seconds are ruled out.",
             "PROOF_REQUIRED": "SHOW LOCKS, SHOW TRANSACTIONS, blocker owner, target object, and post-fix blocked seconds.",
-            "OWNER_ROUTE": "Active Locks",
+            "WORKFLOW_ROUTE": "Active Locks",
             "QUERY_ID": "",
             "WAREHOUSE_NAME": "",
             "TARGET_OBJECT": str(target or ""),
@@ -1443,7 +1443,7 @@ def _live_incident_rows(
         if blocked <= 0 and queued <= 0 and str(_first_value(row_dict, "EXECUTION_STATUS", default="")).upper() not in {"RUNNING", "QUEUED", "BLOCKED"}:
             continue
         severity = "Critical" if blocked >= 300 else "High" if blocked >= 60 else "Medium" if queued > 0 else "Watch"
-        owner_route = "Active Locks" if blocked > 0 else "Cost & Contract" if queued > 0 else "Query Investigation"
+        workflow_route = "Active Locks" if blocked > 0 else "Cost & Contract" if queued > 0 else "Query Investigation"
         first_move = (
             "Run active locks, identify blocker transaction/session, and stop overlapping writers to the same target."
             if blocked > 0
@@ -1478,7 +1478,7 @@ def _live_incident_rows(
                 if queued > 0 else "Need profile telemetry before compute decision."
             ),
             "PROOF_REQUIRED": proof,
-            "OWNER_ROUTE": owner_route,
+            "WORKFLOW_ROUTE": workflow_route,
             "QUERY_ID": query_id,
             "WAREHOUSE_NAME": warehouse,
             "TARGET_OBJECT": _contention_target_object(row_dict),
@@ -1497,7 +1497,7 @@ def _live_incident_rows(
             "SAFE_FIX": "Pause or reschedule only the colliding graph; set OVERLAP_POLICY = NO_OVERLAP when graph instances collide.",
             "COMPUTE_DECISION": "Task graph overlap is scheduling/write-path first, not compute first.",
             "PROOF_REQUIRED": "CURRENT_TASK_GRAPHS, TASK_HISTORY run windows, root task, final target table, and next clean run.",
-            "OWNER_ROUTE": "Pipeline & Task Health",
+            "WORKFLOW_ROUTE": "Pipeline & Task Health",
             "QUERY_ID": str(_first_value(row_dict, "QUERY_ID", "GRAPH_RUN_GROUP_ID", default="")),
             "WAREHOUSE_NAME": "",
             "TARGET_OBJECT": "",
@@ -1519,7 +1519,7 @@ def _live_incident_rows(
             "SAFE_FIX": "Use warehouse isolation or multi-cluster for queue pressure; use lock/task remediation when blocked load is present.",
             "COMPUTE_DECISION": "Queue pressure can justify compute changes only when lock waits are not the primary signal.",
             "PROOF_REQUIRED": "WAREHOUSE_LOAD_HISTORY AVG_BLOCKED/AVG_QUEUED_LOAD and matching live query blocked/queued seconds.",
-            "OWNER_ROUTE": "Cost & Contract",
+            "WORKFLOW_ROUTE": "Cost & Contract",
             "QUERY_ID": "",
             "WAREHOUSE_NAME": warehouse,
             "TARGET_OBJECT": "",
@@ -1535,7 +1535,7 @@ def _live_incident_rows(
             "SAFE_FIX": "Coordinate with the owning sessions before canceling transactions.",
             "COMPUTE_DECISION": "No compute decision without blocked or queued evidence.",
             "PROOF_REQUIRED": "SHOW TRANSACTIONS plus matching query IDs or lock rows.",
-            "OWNER_ROUTE": "Active Locks",
+            "WORKFLOW_ROUTE": "Active Locks",
             "QUERY_ID": "",
             "WAREHOUSE_NAME": "",
             "TARGET_OBJECT": "",
@@ -1683,8 +1683,8 @@ def _check_active_locks() -> None:
     st.session_state["contention_active_locks"] = locks
 
 
-def _open_contention_owner_route(row: pd.Series | dict) -> None:
-    route = str(row.get("OWNER_ROUTE") or "Contention Center")
+def _open_contention_workflow_route(row: pd.Series | dict) -> None:
+    route = str(row.get("WORKFLOW_ROUTE") or "Contention Center")
     query_id = str(row.get("QUERY_ID") or "").strip()
     warehouse = str(row.get("WAREHOUSE_NAME") or "").strip()
     target_object = str(row.get("TARGET_OBJECT") or "").strip()
@@ -1718,7 +1718,7 @@ def _render_fix_plan_actions(decision: pd.DataFrame) -> None:
     top = decision.head(3)
     cols = st.columns(len(top))
     for idx, (_, row) in enumerate(top.iterrows()):
-        route = str(row.get("OWNER_ROUTE") or "Contention Center")
+        route = str(row.get("WORKFLOW_ROUTE") or "Contention Center")
         label = f"Open {route}"
         help_text = "\n".join(
             part for part in [
@@ -1741,7 +1741,7 @@ def _render_fix_plan_actions(decision: pd.DataFrame) -> None:
         )
         with cols[idx]:
             if st.button(label, key=f"contention_fix_plan_open_{idx}_{route}", help=help_text, width="stretch"):
-                _open_contention_owner_route(row)
+                _open_contention_workflow_route(row)
 
 
 def _cleanup_contract_view(decision: pd.DataFrame, max_rows: int = 3) -> pd.DataFrame:
@@ -1776,21 +1776,21 @@ def _cleanup_contract_view(decision: pd.DataFrame, max_rows: int = 3) -> pd.Data
     return view[available].head(max_rows).copy()
 
 
-def _incident_owner_route(route: str) -> str:
+def _incident_workflow_route(route: str) -> str:
     route_text = str(route or "").strip()
     if route_text == "Active Locks":
-        return "DBA on-call + blocker route"
+        return "DBA review + blocker route"
     if route_text in {"Task graphs", "Pipeline & Task Health"}:
         return "Task route / scheduler"
     if route_text in {"Warehouse Health", "Cost & Contract"}:
         return "Warehouse route"
     if route_text in {"Query diagnosis", "Query Investigation"}:
         return "Query route / DBA performance reviewer"
-    return "DBA on-call"
+    return "DBA review"
 
 
 def _incident_blocker(row: dict | pd.Series) -> str:
-    route = str(_first_value(row, "OWNER_ROUTE", default=""))
+    route = str(_first_value(row, "WORKFLOW_ROUTE", default=""))
     blocker_tx = str(_first_value(row, "BLOCKER_TRANSACTION_ID", default="")).strip()
     transaction_id = str(_first_value(row, "TRANSACTION_ID", "TRANSACTION", "ID", default="")).strip()
     signal = str(_first_value(row, "SIGNAL", "BOTTLENECK_TYPE", default="")).upper()
@@ -1813,7 +1813,7 @@ def _incident_blocker(row: dict | pd.Series) -> str:
 
 
 def _incident_waiter(row: dict | pd.Series) -> str:
-    route = str(_first_value(row, "OWNER_ROUTE", default=""))
+    route = str(_first_value(row, "WORKFLOW_ROUTE", default=""))
     waiter_query = str(_first_value(row, "WAITER_QUERY_ID", "QUERY_ID", default="")).strip()
     waiter_tx = str(_first_value(row, "WAITER_TRANSACTION_ID", default="")).strip()
     if waiter_query:
@@ -1829,7 +1829,7 @@ def _incident_waiter(row: dict | pd.Series) -> str:
 
 def _incident_decision_gate(row: dict | pd.Series) -> str:
     manual_sql = str(_first_value(row, "MANUAL_ACTION_SQL", default="")).strip()
-    route = str(_first_value(row, "OWNER_ROUTE", default=""))
+    route = str(_first_value(row, "WORKFLOW_ROUTE", default=""))
     if manual_sql:
         return "Run the precheck, confirm current telemetry, then use the guarded action only if blocker/waiter details match."
     if route in {"Warehouse Health", "Cost & Contract"}:
@@ -1853,7 +1853,7 @@ def _incident_cockpit_view(decision: pd.DataFrame, max_rows: int = 5) -> pd.Data
             "WAITER": _incident_waiter(row),
             "LOCKED_OBJECT": row.get("TARGET_OBJECT") or row.get("ENTITY", ""),
             "WAREHOUSE_NAME": row.get("WAREHOUSE_NAME", ""),
-            "INCIDENT_OWNER": _incident_owner_route(str(row.get("OWNER_ROUTE") or "")),
+            "INCIDENT_OWNER": _incident_workflow_route(str(row.get("WORKFLOW_ROUTE") or "")),
             "EXACT_NEXT_MOVE": row.get("FIRST_MOVE") or row.get("NEXT_ACTION", ""),
             "DECISION_GATE": _incident_decision_gate(row),
             "APPROVAL_GATE": row.get("APPROVAL_GATE", ""),
@@ -2031,7 +2031,7 @@ def _render_brief() -> None:
                 "PRIMARY_ENTITY",
                 "FIRST_ACTION",
                 "PROOF_REQUIRED",
-                "OWNER_ROUTE",
+                "WORKFLOW_ROUTE",
             ],
             sort_by=["TOP_SEVERITY", "OPEN_SIGNALS"],
             ascending=[True, False],
@@ -2059,7 +2059,7 @@ def _render_brief() -> None:
             "CLEANUP_READINESS",
             "PROOF_REQUIRED",
             "VERIFY_AFTER_FIX",
-            "OWNER_ROUTE",
+            "WORKFLOW_ROUTE",
         ],
         sort_by=["HANDOFF_MATCH", "SEVERITY", "SIGNAL"],
         ascending=[False, True, False],
@@ -2151,7 +2151,7 @@ def _render_live_incident() -> None:
                 "CLEANUP_DECISION",
                 "CLEANUP_READINESS",
                 "PROOF_REQUIRED",
-                "OWNER_ROUTE",
+                "WORKFLOW_ROUTE",
                 "QUERY_ID",
                 "WAREHOUSE_NAME",
                 "TARGET_OBJECT",

@@ -156,9 +156,9 @@ def build_mart_chargeback_sql(
             ALLOCATION_BASIS,
             CHARGEBACK_READY,
             SCOPE_REVIEW,
-            COST_OWNER,
-            OWNER_SOURCE,
-            OWNER_EVIDENCE,
+            COST_ATTRIBUTION,
+            ROUTE_SOURCE,
+            ROUTE_EVIDENCE,
             MAX(LOAD_TS) AS MART_LOAD_TS
         FROM {table}
         WHERE USAGE_DATE >= DATEADD('DAY', -{int(days_back)}, CURRENT_DATE())
@@ -181,9 +181,9 @@ def build_mart_chargeback_sql(
             ALLOCATION_BASIS,
             CHARGEBACK_READY,
             SCOPE_REVIEW,
-            COST_OWNER,
-            OWNER_SOURCE,
-            OWNER_EVIDENCE
+            COST_ATTRIBUTION,
+            ROUTE_SOURCE,
+            ROUTE_EVIDENCE
         ORDER BY TOTAL_CREDITS DESC, QUERY_COUNT DESC
     """
 
@@ -204,7 +204,7 @@ def build_mart_cost_explorer_sql(
     user_filter = _mart_text_filter("USER_NAME", user_contains)
     role_filter = _mart_text_filter("ROLE_NAME", role_contains)
     db_filter = _mart_text_filter("DATABASE_NAME", database_contains)
-    dept_filter = _mart_text_filter("COALESCE(COST_OWNER, 'Unassigned')", department_contains)
+    dept_filter = _mart_text_filter("COALESCE(COST_ATTRIBUTION, 'Unassigned')", department_contains)
     return f"""
         SELECT
             COMPANY,
@@ -215,10 +215,10 @@ def build_mart_cost_explorer_sql(
             ROLE_NAME,
             WAREHOUSE_NAME,
             WAREHOUSE_SIZE,
-            COALESCE(NULLIF(COST_OWNER, ''), 'Unassigned') AS DEPARTMENT,
-            COST_OWNER,
-            OWNER_SOURCE,
-            OWNER_EVIDENCE,
+            COALESCE(NULLIF(COST_ATTRIBUTION, ''), 'Unassigned') AS DEPARTMENT,
+            COST_ATTRIBUTION,
+            ROUTE_SOURCE,
+            ROUTE_EVIDENCE,
             ALLOCATION_CONFIDENCE,
             ALLOCATION_BASIS,
             CHARGEBACK_READY,
@@ -248,10 +248,10 @@ def build_mart_cost_explorer_sql(
             ROLE_NAME,
             WAREHOUSE_NAME,
             WAREHOUSE_SIZE,
-            COALESCE(NULLIF(COST_OWNER, ''), 'Unassigned'),
-            COST_OWNER,
-            OWNER_SOURCE,
-            OWNER_EVIDENCE,
+            COALESCE(NULLIF(COST_ATTRIBUTION, ''), 'Unassigned'),
+            COST_ATTRIBUTION,
+            ROUTE_SOURCE,
+            ROUTE_EVIDENCE,
             ALLOCATION_CONFIDENCE,
             ALLOCATION_BASIS,
             CHARGEBACK_READY,

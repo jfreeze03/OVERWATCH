@@ -152,7 +152,7 @@ The setup procedures now map to current facts only:
 | --- | --- |
 | `SP_OVERWATCH_LOAD_HOURLY_UNIT` | `FACT_WAREHOUSE_HOURLY`, `FACT_QUERY_HOURLY`, `FACT_QUERY_DETAIL_RECENT`, `FACT_OBJECT_CHANGE`, `FACT_TASK_RUN`, `DIM_TASK_SNAPSHOT`, `DIM_PROCEDURE_SNAPSHOT`, `FACT_TASK_CRITICAL_PATH`, `FACT_PROCEDURE_RUN` |
 | `SP_OVERWATCH_LOAD_HOURLY` | Compatibility wrapper that calls the hourly units with the configured recent lookback. |
-| `SP_OVERWATCH_LOAD_DAILY` | `FACT_COST_DAILY`, `FACT_COST_SOURCE_HEALTH_DAILY`, `FACT_LOGIN_DAILY`, `FACT_GRANT_DAILY`, `FACT_STORAGE_DAILY`, `FACT_COPY_LOAD_DAILY`, `DIM_COST_OWNER_TAG`, role-aware `FACT_CHARGEBACK_DAILY`, operability facts |
+| `SP_OVERWATCH_LOAD_DAILY` | `FACT_COST_DAILY`, `FACT_COST_SOURCE_HEALTH_DAILY`, `FACT_LOGIN_DAILY`, `FACT_GRANT_DAILY`, `FACT_STORAGE_DAILY`, `FACT_COPY_LOAD_DAILY`, `DIM_COST_ATTRIBUTION_TAG`, role-aware `FACT_CHARGEBACK_DAILY`, operability facts |
 | `SP_OVERWATCH_LOAD_CORTEX` | `FACT_CORTEX_DAILY` |
 | `SP_OVERWATCH_REFRESH_COST_MONITORING` | `FACT_COST_MONITORING_SIGNAL`, `FACT_COST_INCIDENT_TIMELINE` |
 | `SP_OVERWATCH_REFRESH_CONTROL_ROOM` | `MART_DBA_CONTROL_ROOM` |
@@ -170,7 +170,7 @@ tests, or setup logic still need them.
 | Object | Current purpose |
 | --- | --- |
 | `OVERWATCH_SETTINGS`, `OVERWATCH_SCHEMA_MIGRATION`, `OVERWATCH_USAGE_LOG` | Settings, deployment/version state, and optional app usage bookkeeping. |
-| `OVERWATCH_OWNER_TAG_NAMES`, `DIM_COST_OWNER_TAG` | Owner tag configuration and snapshot used in chargeback fact construction. Candidate to remove only if owner-tag chargeback is removed from scope. |
+| `OVERWATCH_ATTRIBUTION_TAG_NAMES`, `DIM_COST_ATTRIBUTION_TAG` | Owner tag configuration and snapshot used in chargeback fact construction. Candidate to remove only if owner-tag chargeback is removed from scope. |
 | `OVERWATCH_DBA_CHECKLIST_HISTORY`, `OVERWATCH_CHANGE_CONTROL_EVIDENCE` | Referenced by app code/tests today. Review separately if those remaining workflows are retired from the admin monitoring product. |
 
 ## Pruned Metadata Objects
@@ -192,7 +192,7 @@ be removed by table count alone.
 
 | Object | Recommendation |
 | --- | --- |
-| `OVERWATCH_OWNER_TAG_NAMES`, `DIM_COST_OWNER_TAG` | Candidate only if owner-tag chargeback is intentionally retired. Otherwise keep as setup support. |
+| `OVERWATCH_ATTRIBUTION_TAG_NAMES`, `DIM_COST_ATTRIBUTION_TAG` | Candidate only if owner-tag chargeback is intentionally retired. Otherwise keep as setup support. |
 | `OVERWATCH_DBA_CHECKLIST_HISTORY`, `OVERWATCH_CHANGE_CONTROL_EVIDENCE` | Candidate only after confirming the remaining app/test references are intentionally out of scope. |
 
 ## Retired In Latest Review
@@ -210,14 +210,14 @@ These 15 objects do not have direct `.overwatch_final` references in the static 
 
 | Object | Disposition |
 | --- | --- |
-| `DIM_COST_OWNER_TAG` | Setup support. |
+| `DIM_COST_ATTRIBUTION_TAG` | Setup support. |
 | `OVERWATCH_DATABASE_ENVIRONMENT` | Shared setup function used by mart SQL. |
 | `OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH` | Refresh task. |
 | `OVERWATCH_LOAD_AUDIT` | Refresh bookkeeping. |
 | `OVERWATCH_LOAD_CORTEX` | Refresh task. |
 | `OVERWATCH_LOAD_DAILY` | Refresh task. |
 | `OVERWATCH_LOAD_HOURLY` | Refresh task. |
-| `OVERWATCH_OWNER_TAG_NAMES` | Setup support. |
+| `OVERWATCH_ATTRIBUTION_TAG_NAMES` | Setup support. |
 | `OVERWATCH_REFRESH_CONTROL_ROOM` | Refresh task. |
 | `SP_OVERWATCH_LOAD_CORTEX` | Refresh procedure. |
 | `SP_OVERWATCH_LOAD_DAILY` | Refresh procedure. |

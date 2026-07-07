@@ -84,7 +84,7 @@ class AlertCenterSplitTests(unittest.TestCase):
         for view in expected_admin:
             with self.subTest(admin_view=view):
                 self.assertTrue(callable(alert_center.ALERT_CENTER_ADMIN_RENDERERS[view]))
-        legacy_aliases = {"Command Center", "Issue Inbox", "Triage Digest", "Cost / Cortex", "Pipeline", "Security"}
+        legacy_aliases = {"Issue Inbox", "Triage Digest", "Cost / Cortex", "Pipeline", "Security"}
         self.assertFalse(legacy_aliases & set(alert_center.ALERT_CENTER_RENDERERS))
         self.assertFalse(legacy_aliases & set(alert_center.ALERT_CENTER_ADMIN_RENDERERS))
         self.assertIs(
@@ -144,7 +144,6 @@ class AlertCenterSplitTests(unittest.TestCase):
 
     def test_alert_center_legacy_aliases_normalize_to_current_panes(self):
         aliases = {
-            "Command Center": "Active Alerts",
             "Issue Inbox": "Active Alerts",
             "Cost / Cortex": "Cost Alerts",
             "Pipeline": "Reliability Alerts",
@@ -318,7 +317,7 @@ class AlertCenterSplitTests(unittest.TestCase):
         spec = render_shell.call_args.args[0]
         self.assertEqual(spec.section, "Alert Center")
         self.assertEqual(spec.state, "Explicit action")
-        self.assertIn(("Critical / High", "Loading current summary"), spec.metrics)
+        self.assertIn(("Critical / High", "Refresh required"), spec.metrics)
         self.assertIn(("Window", "7 days / 200 rows"), spec.snapshot)
         self.assertEqual(spec.view, "Active Alerts")
         self.assertEqual(spec.load_cta, "Load Active Alerts")
@@ -348,14 +347,14 @@ class AlertCenterSplitTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertEqual(combined.count(token), 1)
 
-    def test_alert_center_first_paint_summary_cold_state_is_unavailable(self):
+    def test_alert_center_first_paint_summary_cold_state_requires_refresh(self):
         summary = alert_center._alert_center_first_paint_summary(None, "Active Alerts")
 
-        self.assertEqual(summary["critical_high"], "Loading current summary")
-        self.assertEqual(summary["overdue"], "Loading current summary")
-        self.assertEqual(summary["open_queue"], "Loading current summary")
+        self.assertEqual(summary["critical_high"], "Refresh required")
+        self.assertEqual(summary["overdue"], "Refresh required")
+        self.assertEqual(summary["open_queue"], "Refresh required")
         self.assertEqual(summary["top_lane"], "Selected view")
-        self.assertEqual(summary["freshness"], "Summary mart unavailable")
+        self.assertEqual(summary["freshness"], "Refresh required")
 
     def test_alert_center_first_paint_summary_uses_cached_summary(self):
         cached_summary = {

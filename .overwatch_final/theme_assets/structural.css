@@ -2501,9 +2501,4 @@ div[class*="st-key-"][class*="_decision_workspace_shell"],
     }
 }
 
-/* SNOWFLAKE WHITE theme extras */
-.terminal-extra [data-testid="stMetric"] {
-    border-top: 3px solid rgba(41,181,232,0.75) !important;
-}
-
 </style>

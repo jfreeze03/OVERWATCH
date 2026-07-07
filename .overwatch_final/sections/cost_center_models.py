@@ -54,9 +54,9 @@ def _cost_allocation_quality(row) -> dict:
     db = _row_text(row, "DATABASE_NAME").upper()
     company = _row_text(row, "COMPANY").upper()
     rollup = _environment_rollup_for_cost(row)
-    owner_source = _row_text(row, "OWNER_SOURCE").upper()
-    cost_owner = _row_text(row, "COST_OWNER")
-    has_owner_tag = "TAG" in owner_source and bool(cost_owner)
+    route_source = _row_text(row, "ROUTE_SOURCE").upper()
+    cost_attribution = _row_text(row, "COST_ATTRIBUTION")
+    has_owner_tag = "TAG" in route_source and bool(cost_attribution)
 
     if db in NO_DATABASE_CONTEXT_VALUES or rollup == "No Database Context":
         return {
@@ -118,17 +118,17 @@ def _annotate_allocation_quality(df: pd.DataFrame) -> pd.DataFrame:
     )
     for column in quality.columns:
         annotated[column] = quality[column]
-    if "COST_OWNER" not in annotated.columns:
-        annotated["COST_OWNER"] = annotated.apply(
+    if "COST_ATTRIBUTION" not in annotated.columns:
+        annotated["COST_ATTRIBUTION"] = annotated.apply(
             lambda row: (
                 _row_text(row, "USER_NAME")
                 if _row_text(row, "USER_NAME").upper() not in {"", "UNKNOWN USER", "UNKNOWN_USER"}
-                else "DBA / Cost owner"
+                else "DBA / Cost attribution"
             ),
             axis=1,
         )
-    if "OWNER_SOURCE" not in annotated.columns:
-        annotated["OWNER_SOURCE"] = annotated.apply(
+    if "ROUTE_SOURCE" not in annotated.columns:
+        annotated["ROUTE_SOURCE"] = annotated.apply(
             lambda row: (
                 "QUERY_USER"
                 if _row_text(row, "USER_NAME").upper() not in {"", "UNKNOWN USER", "UNKNOWN_USER"}
@@ -136,11 +136,11 @@ def _annotate_allocation_quality(df: pd.DataFrame) -> pd.DataFrame:
             ),
             axis=1,
         )
-    if "OWNER_EVIDENCE" not in annotated.columns:
-        annotated["OWNER_EVIDENCE"] = annotated.apply(
+    if "ROUTE_EVIDENCE" not in annotated.columns:
+        annotated["ROUTE_EVIDENCE"] = annotated.apply(
             lambda row: (
                 "Query user present; review route/tag telemetry before billing."
-                if _row_text(row, "OWNER_SOURCE").upper() == "QUERY_USER"
+                if _row_text(row, "ROUTE_SOURCE").upper() == "QUERY_USER"
                 else "No query user route telemetry; shared/unallocated review required."
             ),
             axis=1,
@@ -288,9 +288,9 @@ def _normalize_cost_explorer_detail(df: pd.DataFrame, credit_price: float) -> pd
         "WAREHOUSE_NAME": "Unknown warehouse",
         "WAREHOUSE_SIZE": "",
         "DEPARTMENT": "",
-        "COST_OWNER": "",
-        "OWNER_SOURCE": "",
-        "OWNER_EVIDENCE": "",
+        "COST_ATTRIBUTION": "",
+        "ROUTE_SOURCE": "",
+        "ROUTE_EVIDENCE": "",
         "ALLOCATION_CONFIDENCE": "",
         "ALLOCATION_BASIS": "",
         "CHARGEBACK_READY": "",
@@ -312,7 +312,7 @@ def _normalize_cost_explorer_detail(df: pd.DataFrame, credit_price: float) -> pd
     detail["DEPARTMENT"] = detail.apply(
         lambda row: (
             _row_text(row, "DEPARTMENT")
-            or _row_text(row, "COST_OWNER")
+            or _row_text(row, "COST_ATTRIBUTION")
             or "Unassigned"
         ),
         axis=1,
@@ -354,7 +354,7 @@ def _cost_explorer_summary(detail: pd.DataFrame, lens: str) -> pd.DataFrame:
             ENVIRONMENTS=("ENVIRONMENT_ROLLUP", "nunique"),
             ALLOCATION_CONFIDENCE=("ALLOCATION_CONFIDENCE", _mixed_label),
             CHARGEBACK_READY=("CHARGEBACK_READY", _chargeback_readiness_label),
-            ROUTE_TELEMETRY=("OWNER_SOURCE", _route_telemetry_label),
+            ROUTE_TELEMETRY=("ROUTE_SOURCE", _route_telemetry_label),
             FIRST_USAGE_DATE=("FIRST_USAGE_DATE", "min"),
             LAST_USAGE_DATE=("LAST_USAGE_DATE", "max"),
         )
@@ -400,7 +400,7 @@ def _cost_explorer_gap_board(detail: pd.DataFrame, lens_summary: pd.DataFrame) -
         }
 
     dept = detail["DEPARTMENT"].fillna("").astype(str).str.upper()
-    owner_source = detail["OWNER_SOURCE"].fillna("").astype(str).str.upper()
+    route_source = detail["ROUTE_SOURCE"].fillna("").astype(str).str.upper()
     readiness = detail["CHARGEBACK_READY"].fillna("").astype(str).str.upper()
     confidence = detail["ALLOCATION_CONFIDENCE"].fillna("").astype(str).str.upper()
     database = detail["DATABASE_NAME"].fillna("").astype(str).str.upper()
@@ -408,7 +408,7 @@ def _cost_explorer_gap_board(detail: pd.DataFrame, lens_summary: pd.DataFrame) -
     rows = [
         _gap_row(
             "Missing department / cost-center telemetry",
-            dept.isin({"", "UNASSIGNED", "UNKNOWN", "NONE", "NULL"}) | ~owner_source.str.contains("TAG", na=False),
+            dept.isin({"", "UNASSIGNED", "UNKNOWN", "NONE", "NULL"}) | ~route_source.str.contains("TAG", na=False),
             "Tag warehouses with COST_CENTER or DEPARTMENT and keep escalation routing current.",
         ),
         _gap_row(

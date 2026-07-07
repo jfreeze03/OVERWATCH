@@ -1,4 +1,4 @@
-﻿# COCO v3 App Hardening Audit
+# COCO v3 App Hardening Audit
 
 Generated for the COCO v3 hardening sprint. This audit records the first-pass
 findings before and during the data-state/summary-loader cleanup.
@@ -39,7 +39,7 @@ Reset/drop remains `snowflake/OVERWATCH_MART_DROP.sql`.
 | Forecast buttons gate core forecast output | Fixed now | fix now | Forecast/burn views were changed to autoload deterministic forecast/burn calculations without `Open Run-Rate Projection`, `Open Annual Service Projection`, or `Load Burn Rate & Forecast` buttons. |
 | First-paint placeholders in active app source | Fixed now | fix now | `utils.data_state` now defines canonical states, packet parsing maps generic placeholders to explicit states, and the active `.overwatch_final` placeholder search is clean. Historical docs/tests still keep audit assertions. |
 | Executive command-center summary data | Partially fixed | fix now | Executive Landing now reads compact warehouse summary through `get_cost_summary()` and consumes the `SummaryResult` frame. Other primary sections still need equivalent wiring. |
-| Owner-routing terms in active app | Blocker | delete | Active modules still reference owner route/source/evidence/approval/on-call fields. These should be replaced by section/workflow/status/verification terminology. |
+| Owner-routing terms in active app | Blocker | delete | Active modules still reference workflow route/source/evidence/approval/review fields. These should be replaced by section/workflow/status/verification terminology. |
 | Owner-routing objects in active DDL | Blocker | delete | `03_config_and_audit_tables.sql` and `04_mart_tables.sql` still create or alter owner-routing tables/columns. Allowed only in migration/drop/validation files. |
 | Owner-routing removal migration/drop | Allowed | migration/drop/validation only | `snowflake/migrations/2026_07_remove_owner_routing.sql` and drop/reset scripts may reference retired objects to remove them. |
 | Alert Kanban/lane source markers | Follow-up | delete/rename | Search hits are in docs/tests; active Alert Center source still needs default inbox proof and cleanup scans. |

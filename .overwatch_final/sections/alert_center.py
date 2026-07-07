@@ -96,7 +96,7 @@ from sections.alert_center_boards import (
     _alert_open_statuses,
     _alert_operations_review_rows,
     _alert_operator_workflow_rows,
-    _alert_owner_route_board,
+    _alert_workflow_route_board,
     _alert_threshold_tuning_rows,
     _open_alert_mask,
     _status_key,
@@ -220,7 +220,7 @@ def _apply_alert_center_brief_first_default() -> None:
             st.session_state.get("alert_center_active_view")
         )
         return
-    if st.session_state.get("alert_center_active_view") in (None, "Alert Brief", "Command Center"):
+    if st.session_state.get("alert_center_active_view") in (None, "Alert Brief"):
         st.session_state["alert_center_active_view"] = ALERT_CENTER_DEFAULT_VIEW
     else:
         admin_view = _alert_admin_view_for_route(st.session_state.get("alert_center_active_view"))
@@ -311,7 +311,7 @@ def _summary_count_label(summary: dict, *keys: str) -> tuple[str, int | None]:
             return f"{count:,}", count
         except (TypeError, ValueError):
             return str(value), None
-    return "Loading current summary", None
+    return "Refresh required", None
 
 
 def _alert_center_cached_summary_for_scope(
@@ -361,11 +361,11 @@ def _alert_center_first_paint_summary(
                 "freshness": str(cached_summary.get("freshness") or cached_summary.get("loaded_at") or "Cached summary"),
             }
         return dict(
-            critical_high="Loading current summary",
-            overdue="Loading current summary",
-            open_queue="Loading current summary",
+            critical_high="Refresh required",
+            overdue="Refresh required",
+            open_queue="Refresh required",
             top_lane="Selected view",
-            freshness="Summary mart unavailable",
+            freshness="Refresh required",
         )
     meta = _alert_center_loaded_meta(data, source_view)
     freshness = str(meta.get("loaded_at") or data.get("loaded_at") or "Loaded previously")

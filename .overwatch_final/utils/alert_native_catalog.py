@@ -64,7 +64,7 @@ def build_alert_threshold_seed_rows() -> list[dict[str, object]]:
             "THRESHOLD_VALUE": 1.5,
             "BASELINE_WINDOW_DAYS": 30,
             "CURRENT_WINDOW_MINUTES": 1440,
-            "OWNER": "DBA / Cost owner",
+            "OWNER": "DBA / Cost attribution",
             "NOTIFICATION_CHANNEL": "COST",
         },
         {
@@ -87,7 +87,7 @@ def build_alert_threshold_seed_rows() -> list[dict[str, object]]:
             "BASELINE_WINDOW_DAYS": 14,
             "CURRENT_WINDOW_MINUTES": 120,
             "OWNER": "DBA / Workload reviewer",
-            "NOTIFICATION_CHANNEL": "DBA_ONCALL",
+            "NOTIFICATION_CHANNEL": "DBA_REVIEW",
         },
         {
             "THRESHOLD_KEY": "PERF_QUEUE_PRESSURE",
@@ -98,7 +98,7 @@ def build_alert_threshold_seed_rows() -> list[dict[str, object]]:
             "BASELINE_WINDOW_DAYS": 14,
             "CURRENT_WINDOW_MINUTES": 60,
             "OWNER": "DBA / Platform",
-            "NOTIFICATION_CHANNEL": "DBA_ONCALL",
+            "NOTIFICATION_CHANNEL": "DBA_REVIEW",
         },
         {
             "THRESHOLD_KEY": "PIPELINE_TASK_FAILURE",
@@ -109,7 +109,7 @@ def build_alert_threshold_seed_rows() -> list[dict[str, object]]:
             "BASELINE_WINDOW_DAYS": 7,
             "CURRENT_WINDOW_MINUTES": 1440,
             "OWNER": "DBA / Pipeline Route",
-            "NOTIFICATION_CHANNEL": "PIPELINE_ONCALL",
+            "NOTIFICATION_CHANNEL": "PIPELINE_REVIEW",
         },
         {
             "THRESHOLD_KEY": "DQ_FRESHNESS_SLA",
@@ -130,7 +130,7 @@ def build_alert_threshold_seed_rows() -> list[dict[str, object]]:
             "THRESHOLD_VALUE": 14,
             "BASELINE_WINDOW_DAYS": 30,
             "CURRENT_WINDOW_MINUTES": 1440,
-            "OWNER": "DBA / Cost owner",
+            "OWNER": "DBA / Cost attribution",
             "NOTIFICATION_CHANNEL": "COST",
         },
     ]
@@ -356,7 +356,7 @@ def build_alert_native_object_registry_seed_rows(
       )
       GROUP BY COMPANY, WAREHOUSE_NAME
     )
-    SELECT COALESCE(c.COMPANY, 'Shared/Unclassified'), 'ALL', 'COST_WAREHOUSE_CREDIT_SPIKE', 'Cost', 'High', 'New', 'DBA / Cost owner',
+    SELECT COALESCE(c.COMPANY, 'Shared/Unclassified'), 'ALL', 'COST_WAREHOUSE_CREDIT_SPIKE', 'Cost', 'High', 'New', 'DBA / Cost attribution',
            'Explain the warehouse credit spike with run-rate, top query, setting, and company-scope telemetry before changing capacity.',
            'WAREHOUSE', c.WAREHOUSE_NAME, c.WAREHOUSE_NAME, c.CURRENT_CREDITS, COALESCE(b.BASELINE_DAILY_CREDITS, 0), 'RECOMMEND',
            'Native candidate detected warehouse credits above baseline.',
@@ -428,7 +428,7 @@ def build_alert_native_object_registry_seed_rows(
   ))
   THEN INSERT INTO {event_table}
     (COMPANY, ENVIRONMENT, ALERT_KEY, CATEGORY, SEVERITY, STATUS, OWNER, RECOMMENDED_ACTION, ENTITY_TYPE, ENTITY_NAME, DATABASE_NAME, SCHEMA_NAME, QUERY_ID, REMEDIATION_MODE, EVIDENCE, DEDUPE_KEY)
-    SELECT COALESCE(COMPANY, 'Shared/Unclassified'), COALESCE(ENVIRONMENT, 'No Database Context'), 'PIPELINE_TASK_FAILURE', 'Task / Pipeline', 'Critical', 'New', 'DBA / Pipeline Owner',
+    SELECT COALESCE(COMPANY, 'Shared/Unclassified'), COALESCE(ENVIRONMENT, 'No Database Context'), 'PIPELINE_TASK_FAILURE', 'Task / Pipeline', 'Critical', 'New', 'DBA / Pipeline Reviewer',
            'Identify root task, failed child, last success, downstream SLA, and safe rerun conditions.',
            'TASK', DATABASE_NAME || '.' || SCHEMA_NAME || '.' || TASK_NAME, DATABASE_NAME, SCHEMA_NAME, QUERY_ID, 'STATUS_REVIEW',
            COALESCE(ERROR_MESSAGE, STATE),
@@ -508,7 +508,7 @@ def build_alert_remediation_policy_seed_rows() -> list[dict[str, object]]:
             "ACTION_TYPE": "Warehouse auto-suspend timeout review",
             "REMEDIATION_MODE": "STATUS_REVIEW",
             "AUTO_ELIGIBLE": False,
-            "REQUIRED_REVIEW": "DBA / Cost owner",
+            "REQUIRED_REVIEW": "DBA / Cost attribution",
             "BEFORE_STATE_SQL": "SHOW WAREHOUSES;",
             "DRY_RUN_SQL": "-- Generate ALTER WAREHOUSE <name> SET AUTO_SUSPEND = <seconds> after route review.",
             "EXECUTION_SQL_TEMPLATE": "ALTER WAREHOUSE IDENTIFIER('<warehouse_name>') SET AUTO_SUSPEND = <seconds>;",
@@ -522,7 +522,7 @@ def build_alert_remediation_policy_seed_rows() -> list[dict[str, object]]:
             "ACTION_TYPE": "Warehouse cost spike review",
             "REMEDIATION_MODE": "RECOMMEND",
             "AUTO_ELIGIBLE": False,
-            "REQUIRED_REVIEW": "DBA / Cost owner plus workload owner",
+            "REQUIRED_REVIEW": "DBA / Cost attribution plus workload reviewer",
             "BEFORE_STATE_SQL": "SELECT * FROM FACT_WAREHOUSE_HOURLY WHERE WAREHOUSE_NAME = '<warehouse_name>' ORDER BY HOUR_START DESC LIMIT 168;",
             "DRY_RUN_SQL": "-- Compare current/prior run-rate, top query hashes, warehouse settings, and company scope; no ALTER WAREHOUSE from Alert Center.",
             "EXECUTION_SQL_TEMPLATE": "-- No automatic warehouse change. Use guarded Admin workflow if a setting change is approved.",
@@ -540,7 +540,7 @@ def build_alert_remediation_policy_seed_rows() -> list[dict[str, object]]:
             "BEFORE_STATE_SQL": "SELECT USER_NAME, ROLE_NAME, WAREHOUSE_NAME, QUERY_ID, EXECUTION_STATUS, TOTAL_ELAPSED_TIME, QUERY_TEXT FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY WHERE USER_NAME = '<user_name>' ORDER BY START_TIME DESC LIMIT 100;",
             "DRY_RUN_SQL": "-- Compare repeated query hash, failures, role, warehouse, and recent coaching/change source before any control action.",
             "EXECUTION_SQL_TEMPLATE": "-- No automatic cancel, disable, revoke, or warehouse change from behavior alerts.",
-            "ROLLBACK_GUIDANCE": "If a manual control was applied, restore access/settings only after verified query behavior and owner approval.",
+            "ROLLBACK_GUIDANCE": "If a manual control was applied, restore access/settings only after verified query behavior and review status.",
             "VERIFICATION_SQL": "SELECT USER_NAME, ROLE_NAME, WAREHOUSE_NAME, COUNT(*) AS QUERY_COUNT FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY WHERE START_TIME >= DATEADD('day', -1, CURRENT_TIMESTAMP()) GROUP BY 1,2,3 ORDER BY QUERY_COUNT DESC;",
         },
         {
@@ -550,7 +550,7 @@ def build_alert_remediation_policy_seed_rows() -> list[dict[str, object]]:
             "ACTION_TYPE": "Task rerun review",
             "REMEDIATION_MODE": "STATUS_REVIEW",
             "AUTO_ELIGIBLE": False,
-            "REQUIRED_REVIEW": "DBA / Pipeline Owner",
+            "REQUIRED_REVIEW": "DBA / Pipeline Reviewer",
             "BEFORE_STATE_SQL": "SELECT * FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY()) ORDER BY SCHEDULED_TIME DESC LIMIT 100;",
             "DRY_RUN_SQL": "-- Confirm root cause, dependency state, and downstream idempotency before EXECUTE TASK.",
             "EXECUTION_SQL_TEMPLATE": "EXECUTE TASK IDENTIFIER('<database.schema.task_name>');",
@@ -779,7 +779,7 @@ def build_alert_native_deployment_review_rows(
     rows["DEPLOYMENT_SQL_PRESENT"] = rows["GENERATED_CREATE_SQL"].fillna("").astype(str).str.contains("CREATE OR REPLACE ALERT", case=False, regex=False)
     rows["ROLLBACK_SQL_PRESENT"] = rows["GENERATED_DROP_SQL"].fillna("").astype(str).str.contains("DROP ALERT", case=False, regex=False)
     rows["DEPLOYMENT_NEXT_STEP"] = rows["DEPLOYMENT_STATE"].map({
-        "READY_FOR_MANUAL_DEPLOY": "Run generated CREATE ALERT SQL manually in Snowflake after owner, threshold, and warehouse review.",
+        "READY_FOR_MANUAL_DEPLOY": "Run generated CREATE ALERT SQL manually in Snowflake after reviewer, threshold, and warehouse review.",
         "DEPLOYED_MONITOR": "Monitor ALERT_EVENTS, ALERT_RUN_HISTORY, notification logs, and remediation dry-runs.",
         "BLOCKED_ENABLED_BY_DEFAULT": "Set ENABLED_BY_DEFAULT to false before deployment review can continue.",
     }).fillna("Review threshold, schedule, owner, route, safety note, and generated SQL before marking approved.")
@@ -842,9 +842,9 @@ SELECT
   IFF(GENERATED_DROP_SQL ILIKE '%DROP ALERT%', TRUE, FALSE) AS ROLLBACK_SQL_PRESENT,
   CASE
     WHEN COALESCE(ENABLED_BY_DEFAULT, FALSE) THEN 'Set ENABLED_BY_DEFAULT to FALSE before review can continue.'
-    WHEN UPPER(COALESCE(STATUS, 'CANDIDATE')) IN ('APPROVED', 'READY', 'READY_TO_DEPLOY') THEN 'Run GENERATED_CREATE_SQL manually after owner, threshold, schedule, and warehouse approval.'
+    WHEN UPPER(COALESCE(STATUS, 'CANDIDATE')) IN ('APPROVED', 'READY', 'READY_TO_DEPLOY') THEN 'Run GENERATED_CREATE_SQL manually after reviewer, threshold, schedule, and warehouse approval.'
     WHEN UPPER(COALESCE(STATUS, 'CANDIDATE')) IN ('DEPLOYED', 'ACTIVE') THEN 'Monitor ALERT_EVENTS and dry-run outcomes; use GENERATED_DROP_SQL only for rollback.'
-    ELSE 'Review owner, threshold, route, safety note, and generated SQL before marking approved.'
+    ELSE 'Review reviewer, threshold, route, safety note, and generated SQL before marking approved.'
   END AS DEPLOYMENT_NEXT_STEP,
   'SHOW ALERTS LIKE ''' || ALERT_OBJECT_NAME || ''';' AS VALIDATION_SQL,
   SAFETY_NOTE,

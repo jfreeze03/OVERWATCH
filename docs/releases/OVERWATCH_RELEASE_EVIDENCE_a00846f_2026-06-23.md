@@ -85,5 +85,5 @@
 ## Deferred Items
 - Item: New live Snowflake regression run for this release evidence pass
 - Reason: Not rerun; existing credentialed PASS evidence is linked and local validation plus section smoke were rerun.
-- Owner: release operator
+- Workflow: release operator
 - Follow-up: rerun `perf_tests/full_app_snowflake_regression.py` only when a fresh credentialed release gate is required.

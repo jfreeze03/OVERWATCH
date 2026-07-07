@@ -72,7 +72,7 @@ def build_alert_command_center_summary(
     category = _alert_col(df, "CATEGORY", "DOMAIN", default="Alert").fillna("Alert").astype(str)
     signal = _alert_col(df, "ALERT_TYPE", "SIGNAL", "MESSAGE", default="Alert").fillna("Alert").astype(str)
     entity = _alert_col(df, "ENTITY_NAME", "ENTITY", default="Snowflake account").fillna("Snowflake account").astype(str)
-    owner = _alert_col(df, "OWNER", "ROUTED_OWNER", "ESCALATION_TARGET", default="DBA").fillna("DBA").astype(str)
+    owner = _alert_col(df, "OWNER", "ROUTED_OWNER", "REVIEW_TARGET", default="DBA").fillna("DBA").astype(str)
     action = _alert_col(df, "SUGGESTED_ACTION", "NEXT_ACTION", "RECOMMENDED_ACTION", default="Review alert telemetry and assign route.").fillna("Review alert telemetry and assign route.").astype(str)
     event_ts = pd.to_datetime(_alert_col(df, "ALERT_TS", "EVENT_TS", "FIRST_SEEN_AT", default=current_time), errors="coerce").fillna(current_time)
     first_seen = pd.to_datetime(_alert_col(df, "FIRST_SEEN_AT", "ALERT_TS", "EVENT_TS", default=current_time), errors="coerce").fillna(event_ts)
@@ -280,8 +280,8 @@ def _queue_lookup(queue: pd.DataFrame | None) -> dict[tuple[str, str], dict[str,
             "TICKET_ID": _row_value(row, "TICKET_ID", default=""),
             "DUE_STATE": _row_value(row, "DUE_STATE", default=""),
             "EVIDENCE_GAP": _row_value(row, "EVIDENCE_GAP", default=""),
-            "ONCALL_PRIMARY": _row_value(row, "ONCALL_PRIMARY", default=""),
-            "APPROVAL_GROUP": _row_value(row, "APPROVAL_GROUP", default=""),
+            "REVIEW_PRIMARY": _row_value(row, "REVIEW_PRIMARY", default=""),
+            "REVIEW_GROUP": _row_value(row, "REVIEW_GROUP", default=""),
         }
     return lookup
 
@@ -316,7 +316,7 @@ def build_alert_incident_action_board(
         "TICKET_ID",
         "QUEUE_STATE",
         "EVIDENCE_GAP",
-        "APPROVAL_GROUP",
+        "REVIEW_GROUP",
         "ROUTE",
     ]
     source = alerts
@@ -348,7 +348,7 @@ def build_alert_incident_action_board(
     severity = _alert_col(work, "SEVERITY", default="Medium").apply(normalize_alert_severity)
     signal = _alert_col(work, "ALERT_TYPE", "SIGNAL", "MESSAGE", default="Alert").fillna("Alert").astype(str)
     entity = _alert_col(work, "ENTITY_NAME", "ENTITY", default="Snowflake account").fillna("Snowflake account").astype(str)
-    owner = _alert_col(work, "OWNER", "ROUTED_OWNER", "ESCALATION_TARGET", default="DBA").fillna("DBA").astype(str)
+    owner = _alert_col(work, "OWNER", "ROUTED_OWNER", "REVIEW_TARGET", default="DBA").fillna("DBA").astype(str)
     action = _alert_col(work, "SUGGESTED_ACTION", "NEXT_ACTION", "RECOMMENDED_ACTION", default="Review alert telemetry and assign route.").fillna("Review alert telemetry and assign route.").astype(str)
     proof = _alert_col(work, "PROOF_QUERY", default="Open source telemetry and record status.").fillna("Open source telemetry and record status.").astype(str)
     route = _alert_col(work, "ROUTE", "WORKFLOW", default="Alert Center").fillna("Alert Center").astype(str)
@@ -398,7 +398,7 @@ def build_alert_incident_action_board(
             "TICKET_ID": queue_context.get("TICKET_ID", _row_value(row, "TICKET_ID", default="")),
             "QUEUE_STATE": queue_context.get("QUEUE_STATUS", _row_value(row, "QUEUE_STATE", default="Route to action queue")),
             "EVIDENCE_GAP": queue_context.get("EVIDENCE_GAP", _row_value(row, "EVIDENCE_GAP", default="Telemetry, route, and closure status required.")),
-            "APPROVAL_GROUP": queue_context.get("APPROVAL_GROUP", _row_value(row, "APPROVAL_GROUP", default="DBA Review")),
+            "REVIEW_GROUP": queue_context.get("REVIEW_GROUP", _row_value(row, "REVIEW_GROUP", default="DBA Review")),
             "ROUTE": str(route.loc[idx]),
             "_SORT_SCORE": int(score_map.get(row_severity, 15)) + (40 if breached else 0) + min(int(row_age), 24),
             "_SEVERITY_RANK": alert_severity_rank(row_severity),
@@ -536,7 +536,7 @@ def _alert_route_for_focus(section: str, focus: str) -> tuple[str, str, str, str
             "Query Investigation",
             "Reliability Alerts",
             "Open Workload Operations > Query Investigation.",
-            "Review query ID, warehouse pressure, queue/spill/lock evidence, and workload owner route.",
+            "Review query ID, warehouse pressure, queue/spill/lock evidence, and workload workflow route.",
         )
     if "WORKLOAD" in section_key:
         return (
@@ -798,7 +798,7 @@ def build_alert_owner_workload_board(
         "TICKETS_ATTACHED",
         "TOP_CATEGORY",
         "NEXT_ACTION",
-        "APPROVAL_GROUP",
+        "REVIEW_GROUP",
     ]
     if incident_board.empty:
         return pd.DataFrame(columns=columns)
@@ -816,7 +816,7 @@ def build_alert_owner_workload_board(
             "TICKETS_ATTACHED": int(tickets.ne("").sum()),
             "TOP_CATEGORY": str(category_counts.index[0]) if not category_counts.empty else "Alert",
             "NEXT_ACTION": str(next_action),
-            "APPROVAL_GROUP": next((str(value) for value in group["APPROVAL_GROUP"] if str(value).strip()), "DBA Review"),
+            "REVIEW_GROUP": next((str(value) for value in group["REVIEW_GROUP"] if str(value).strip()), "DBA Review"),
         })
     return pd.DataFrame(rows).sort_values(["SLA_BREACHED", "CRITICAL_HIGH", "OPEN_ALERTS"], ascending=[False, False, False])[columns]
 
@@ -854,7 +854,7 @@ def build_alert_morning_brief_rows(alerts: pd.DataFrame, *, limit: int = 12) -> 
     entity = _alert_col(work, "ENTITY_NAME", "ENTITY", default="Snowflake account").fillna("Snowflake account").astype(str)
     signal = _alert_col(work, "ALERT_TYPE", "MESSAGE", default="Alert").fillna("Alert").astype(str)
     action = _alert_col(work, "SUGGESTED_ACTION", "NEXT_ACTION", default="Review alert telemetry and assign route.").fillna("Review alert telemetry and assign route.").astype(str)
-    owner = _alert_col(work, "OWNER", "ESCALATION_TARGET", default="DBA").fillna("DBA").astype(str)
+    owner = _alert_col(work, "OWNER", "REVIEW_TARGET", default="DBA").fillna("DBA").astype(str)
     proof = _alert_col(work, "PROOF_QUERY", default="Open the alert row and record source telemetry.").fillna("Open the alert row and record source telemetry.").astype(str)
     event_ts = pd.to_datetime(_alert_col(work, "ALERT_TS", "EVENT_TS", default=pd.Timestamp.now()), errors="coerce").fillna(pd.Timestamp.now())
     priority_frame = pd.DataFrame({

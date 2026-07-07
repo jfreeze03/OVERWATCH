@@ -51,7 +51,7 @@ def _brief(**overrides) -> SectionCommandBrief:
                 severity="High",
                 signal="Warehouse suspended unexpectedly",
                 detail="Investigate resume policy.",
-                owner_name="DBA On-Call",
+                route_workflow="DBA Control Room",
                 sla_state="Due today",
                 age_minutes=2,
             ),

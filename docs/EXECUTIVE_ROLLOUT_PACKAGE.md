@@ -136,7 +136,7 @@ Supported workflows:
 | Capability | Purpose | Primary Users | Business Value | Operational Value |
 |---|---|---|---|---|
 | Data Trust Layer | Shows freshness, source health, and confidence. | DBA, Data Engineering, Leadership | Prevents decisions based on stale or incomplete data. | Identifies missing or stale telemetry before action is taken. |
-| Ownership Mapping | Identifies who owns warehouses, users, schemas, tasks, alerts, and actions. | DBA, Directors, Operators | Reduces accountability gaps. | Speeds routing and escalation. |
+| Workflow Route Mapping | Identifies who owns warehouses, users, schemas, tasks, alerts, and actions. | DBA, Directors, Operators | Reduces accountability gaps. | Speeds routing and escalation. |
 | Production Readiness | Measures deployment, privilege, freshness, validation, drift, and environment readiness. | Leadership, Governance, DBA | Enables clear go/no-go decisions. | Keeps operational blockers visible. |
 | Executive Scorecards | Summarizes health, cost, security, operational risk, trust, and readiness. | CIO, CTO, VP, Directors | Gives leadership a trendable operating picture. | Highlights top drivers and actions. |
 | Forecasting | Projects spend, storage, warehouse pressure, and SLA risk. | Leadership, Finance, DBA | Enables earlier budget and capacity decisions. | Identifies pressure before incidents occur. |
@@ -238,7 +238,7 @@ governance, security, or change-control expectations.
 | Data trust issues | Labels freshness, source status, confidence, and missing telemetry. |
 | Configuration drift | Shows required settings and environment readiness. |
 | Change-related incidents | Correlates recent changes with alerts, cost movement, workload issues, and security signals. |
-| Monitoring blind spots | Identifies missing telemetry, stale marts, and owner gaps. |
+| Monitoring blind spots | Identifies missing telemetry, stale marts, and workflow gaps. |
 
 ### 7. Value Creation
 
@@ -281,7 +281,7 @@ Measurable value framework:
 | Verified savings realized | Measures actual value delivered. | Increase |
 | Alert response time | Measures operational responsiveness. | Decrease |
 | Freshness compliance | Measures trust in telemetry. | Increase |
-| Ownership coverage | Measures accountable routing. | Increase |
+| Workflow route coverage | Measures accountable routing. | Increase |
 | Production readiness score | Measures deployment and operating maturity. | Increase to Ready |
 | Executive scorecard trends | Measures leadership health signals. | Improve |
 | Repeat incidents | Measures whether root causes are being addressed. | Decrease |
@@ -338,7 +338,7 @@ Current schema drift posture:
   OVERWATCH_ADMIN.
 - Move routine access away from interim admin roles.
 - Operationalize Command Center findings in DBA workflows.
-- Increase ownership coverage.
+- Increase workflow route coverage.
 - Begin recurring value-ledger reporting.
 
 #### 180-Day Plan
@@ -431,7 +431,7 @@ Leadership recommendation:
 | Verified savings realized | Savings confirmed by post-action telemetry. | Increase |
 | MTTR | Time to resolve Snowflake operational incidents. | Decrease |
 | Alert response time | Time from alert creation to acknowledgement or action. | Decrease |
-| Ownership coverage | Percentage of monitored entities with an accountable owner. | Increase |
+| Workflow route coverage | Percentage of monitored entities with an accountable owner. | Increase |
 | Security drift findings | Open privilege, grant, or sensitive change findings. | Decrease |
 | Repeat incidents | Recurring issues after action or closure. | Decrease |
 | Forecast accuracy | Accuracy of cost, storage, workload, and SLA projections. | Improve |

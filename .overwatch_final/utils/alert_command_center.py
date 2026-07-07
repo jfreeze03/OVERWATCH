@@ -43,7 +43,7 @@ ALERT_COMMAND_CENTER_TABLES = (
     "ALERT_REMEDIATION_LOG",
     "ALERT_NOTIFICATION_LOG",
     "ALERT_THRESHOLDS",
-    "ALERT_OWNER_ROUTING",
+    "ALERT_WORKFLOW_ROUTING",
 )
 ALERT_COMMAND_CENTER_CATEGORIES = (
     "Security",
@@ -239,7 +239,7 @@ USING (
       'ALERT_ID', a.ALERT_ID,
       'SLA_STATE', a.SLA_STATE,
       'ALERT_ROUTE', a.ALERT_ROUTE,
-      'ESCALATION_TARGET', a.ESCALATION_TARGET
+      'REVIEW_TARGET', a.REVIEW_TARGET
     ) AS RAW_EVENT
   FROM {triage_view} a
   LEFT JOIN {config_table} cfg
@@ -474,17 +474,17 @@ CREATE TABLE IF NOT EXISTS {_command_center_fqn("ALERT_REMEDIATION_LOG", db, sch
   VERIFICATION_RESULT       VARCHAR(8000)
 );
 
-CREATE TABLE IF NOT EXISTS {_command_center_fqn("ALERT_OWNER_ROUTING", db, schema)} (
+CREATE TABLE IF NOT EXISTS {_command_center_fqn("ALERT_WORKFLOW_ROUTING", db, schema)} (
   ROUTE_KEY                 VARCHAR(200) PRIMARY KEY,
   CATEGORY                  VARCHAR(100),
   ENTITY_TYPE               VARCHAR(100),
   ENTITY_PATTERN            VARCHAR(500),
   OWNER_NAME                VARCHAR(200),
-  OWNER_EMAIL               VARCHAR(500),
-  ONCALL_PRIMARY            VARCHAR(200),
-  ONCALL_SECONDARY          VARCHAR(200),
-  APPROVAL_GROUP            VARCHAR(200),
-  ESCALATION_TARGET         VARCHAR(200),
+  ROUTE_EMAIL               VARCHAR(500),
+  REVIEW_PRIMARY            VARCHAR(200),
+  REVIEW_SECONDARY          VARCHAR(200),
+  REVIEW_GROUP            VARCHAR(200),
+  REVIEW_TARGET         VARCHAR(200),
   NOTIFICATION_CHANNEL      VARCHAR(200),
   SEVERITY_MIN              VARCHAR(20) DEFAULT 'Medium',
   SERVICE_TIER              VARCHAR(40) DEFAULT 'Tier 2',
@@ -638,7 +638,7 @@ LIMIT 100;
             "SEVERITY": "High",
             "TELEMETRY": "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
             "FRESHNESS": "Finalized metering windows can lag",
-            "OWNER": "DBA / Cost owner",
+            "OWNER": "DBA / Cost attribution",
             "WHY_THIS_MATTERS": "Warehouse metering is the official compute source of truth; spikes need route, workload, and contract-burn context.",
             "RECOMMENDED_ACTION": "Compare current credits to 30-day baseline, then inspect query drivers and warehouse setting changes.",
             "SQL": f"""
@@ -830,7 +830,7 @@ LIMIT 100;
             "SEVERITY": "Medium",
             "TELEMETRY": "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSES / QUERY_HISTORY / TABLES",
             "FRESHNESS": "Delayed ACCOUNT_USAGE telemetry",
-            "OWNER": "DBA / Cost owner",
+            "OWNER": "DBA / Cost attribution",
             "WHY_THIS_MATTERS": "Optimization alerts should be telemetry-ranked candidates, not generic tune-the-query advice.",
             "RECOMMENDED_ACTION": "Route only with before/after telemetry, review status, rollback path, and expected savings or reliability gain.",
             "SQL": f"""
@@ -853,7 +853,7 @@ def build_alert_required_privileges() -> pd.DataFrame:
     rows = [
         ("Imported privileges on SNOWFLAKE database", "ACCOUNT_USAGE views: QUERY_HISTORY, WAREHOUSE_METERING_HISTORY, LOGIN_HISTORY, ACCESS_HISTORY, TASK_HISTORY, ALERT_HISTORY, GRANTS views"),
         ("USAGE on monitored databases/schemas", "INFORMATION_SCHEMA checks and task/pipe metadata where ACCOUNT_USAGE lag is too slow"),
-        ("SELECT on OVERWATCH schema tables", "ALERT_CONFIG, ALERT_EVENTS, ALERT_THRESHOLDS, ALERT_OWNER_ROUTING, notification/remediation logs"),
+        ("SELECT on OVERWATCH schema tables", "ALERT_CONFIG, ALERT_EVENTS, ALERT_THRESHOLDS, ALERT_WORKFLOW_ROUTING, notification/remediation logs"),
         ("OPERATE for reviewed remediation", "Only needed for reviewed task/warehouse/query/user actions; detection works without it"),
         ("Notification integration usage", "Only needed when sending Snowflake email/webhook/cloud notifications from procedures or alerts"),
     ]
@@ -863,7 +863,7 @@ def build_alert_required_privileges() -> pd.DataFrame:
 def build_alert_optional_integrations() -> pd.DataFrame:
     rows = [
         ("Snowflake ALERT objects", "Periodic condition evaluation and SQL action execution", "Recommended for reviewed scheduled detection"),
-        ("Email notification integration", "SYSTEM$SEND_EMAIL alert digests and escalations", "Optional but useful for DBA on-call"),
+        ("Email notification integration", "SYSTEM$SEND_EMAIL alert digests and escalations", "Optional but useful for DBA review"),
         ("Webhook / Slack / Teams integration", "External routing when account and network policies allow it", "Optional; keep payloads logged"),
         ("Event tables with LOG_LEVEL >= ERROR", "Task graph and stored procedure error events", "Recommended for near-real-time pipeline failures"),
         ("Status/Snowflake task bridge", "Incident tickets, route assignment, workflow handoff", "Optional; use action queue until reviewed"),

@@ -34,6 +34,10 @@ def _classify_sql_path(path: Path, root: Path) -> dict[str, Any]:
         family = "deployment_validation"
         admin_only = True
         frequency = "release_validation"
+    elif "/MIGRATIONS/" in upper:
+        family = "deployment_validation"
+        admin_only = True
+        frequency = "release_validation"
     elif "DROP" in upper:
         family = "drop_rollback"
         admin_only = True

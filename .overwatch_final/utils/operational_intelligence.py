@@ -28,7 +28,7 @@ def build_capability_register_rows() -> list[dict[str, object]]:
             "WHY_IT_MATTERS": "Finds the shared cause behind cost, query, task, login, and object-change symptoms.",
             "NEXT_ACTION": "Materialize signal correlation and route one incident, not five disconnected alerts.",
             "SNOWFLAKE_SOURCES": "QUERY_HISTORY, TASK_HISTORY, LOGIN_HISTORY, ACCESS_HISTORY, WAREHOUSE_METERING_HISTORY",
-            "OWNER": "DBA On-Call",
+            "OWNER": "DBA Review",
             "PRODUCTION_GUARDRAIL": "Correlation is telemetry ranking only; remediation remains review-gated.",
         },
         {
@@ -61,7 +61,7 @@ def build_capability_register_rows() -> list[dict[str, object]]:
             "WHY_IT_MATTERS": "Forecasts burn, ranks cost drivers, and keeps leadership out of raw ACCOUNT_USAGE scans.",
             "NEXT_ACTION": "Use run-rate facts, top-driver movement, and action queue telemetry before changing warehouses.",
             "SNOWFLAKE_SOURCES": "WAREHOUSE_METERING_HISTORY, METERING_DAILY_HISTORY, OVERWATCH_ACTION_QUEUE",
-            "OWNER": "DBA / Cost owner",
+            "OWNER": "DBA / Cost attribution",
             "PRODUCTION_GUARDRAIL": "Run-rate projections are monitoring signals, not automatic remediation authority.",
         },
         {

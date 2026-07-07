@@ -23,7 +23,7 @@ explicit Load only.
 | Object | Purpose |
 | --- | --- |
 | `OVERWATCH_COMMAND_CENTER_QUESTION` | Investigation catalog for cost spike, warehouse slow, recent change, failure/SLA, security risk, and executive risk questions. |
-| `OVERWATCH_COMMAND_CENTER_FINDING` | Deterministic root-cause candidate findings with evidence summary, owner route, related changes, alerts, scorecard drivers, forecasts, action refs, value/risk, and verification path. |
+| `OVERWATCH_COMMAND_CENTER_FINDING` | Deterministic root-cause candidate findings with evidence summary, workflow route, related changes, alerts, scorecard drivers, forecasts, action refs, value/risk, and verification path. |
 | `OVERWATCH_COMMAND_CENTER_EVIDENCE` | Evidence rows tied to each finding and source object. |
 | `OVERWATCH_COMMAND_CENTER_RECOMMENDATION` | Review-gated recommended actions tied to closed-loop execution plan references when available. |
 | `MART_COMMAND_CENTER_SUMMARY` | Compact first-paint summary by investigation type. |
@@ -65,7 +65,7 @@ deterministic and uses compact marts:
 - forecasts,
 - change intelligence,
 - closed-loop operations,
-- ownership coverage,
+- workflow route coverage,
 - value ledger,
 - production readiness,
 - data trust.

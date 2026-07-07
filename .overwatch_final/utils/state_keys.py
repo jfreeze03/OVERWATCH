@@ -18,7 +18,6 @@ PRESERVE_STATE_EXACT = {
     "_credit_price",
     "storage_cost",
     "rt_interval",
-    "theme_picker_radio",
     "exceptions_only_mode",
     "triage_view_mode",
 }
@@ -27,7 +26,6 @@ PRESERVE_STATE_PREFIXES = (
     "nav_",
     "_prev_nav_",
     "global_",
-    "theme_",
     "company_",
     "exceptions_only",
     "triage_",

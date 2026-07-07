@@ -123,8 +123,8 @@ def render_task_failure_console(session) -> None:
                         "PROCEDURE_NAME", "QUERY_ID",
                         "FAILURE_CATEGORY", "PROBABLE_CAUSE", "RECOMMENDED_ACTION",
                         "RECOVERY_STATE", "RECOVERY_HOURS", "RECOVERY_SLA_TARGET_HOURS",
-                        "OWNER_APPROVAL_STATE", "ONCALL_PRIMARY", "APPROVAL_GROUP",
-                        "OWNER_SOURCE", "RECOVERY_READINESS", "VERIFY_AFTER_FIX",
+                        "REVIEW_STATE", "REVIEW_PRIMARY", "REVIEW_GROUP",
+                        "ROUTE_SOURCE", "RECOVERY_READINESS", "VERIFY_AFTER_FIX",
                         "STATE", "DURATION_SEC", "QUERY_ELAPSED_SEC", "WAREHOUSE_NAME",
                         "IMPACT_OBJECTS", "ERROR_SIGNATURE", "RETRY_SQL"
                     ] if col in view.columns
@@ -136,8 +136,8 @@ def render_task_failure_console(session) -> None:
                     priority_columns=[
                         "INCIDENT_PRIORITY", "TASK_NAME", "ROOT_TASK_NAME", "GRAPH_ROLE",
                         "DOWNSTREAM_TASK_COUNT", "PROCEDURE_NAME", "FAILURE_CATEGORY",
-                        "RECOVERY_STATE", "OWNER_APPROVAL_STATE", "ONCALL_PRIMARY",
-                        "APPROVAL_GROUP", "RECOVERY_READINESS",
+                        "RECOVERY_STATE", "REVIEW_STATE", "REVIEW_PRIMARY",
+                        "REVIEW_GROUP", "RECOVERY_READINESS",
                         "PROBABLE_CAUSE", "RECOMMENDED_ACTION", "QUERY_ID",
                         "DURATION_SEC", "QUERY_ELAPSED_SEC", "WAREHOUSE_NAME",
                     ],
@@ -164,7 +164,7 @@ def render_task_failure_console(session) -> None:
                             st.markdown("**Recovery SLA**")
                             st.write(row.get("RECOVERY_STATE", ""))
                             st.markdown("**Review Status**")
-                            st.write(row.get("OWNER_APPROVAL_STATE", ""))
+                            st.write(row.get("REVIEW_STATE", ""))
                         with c2:
                             st.markdown("**Retry Precheck After Fix**")
                             render_shell_snapshot((

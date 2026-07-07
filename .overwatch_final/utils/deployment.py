@@ -40,12 +40,10 @@ STREAMLIT_SNOWFLAKE_ARTIFACTS = (
 )
 STREAMLIT_THEME_ASSETS = (
     "carbon.vars.css",
-    "terminal.vars.css",
     "structural.css",
     "command_center.css",
     "streamlit_icon_fix.css",
     "carbon.extra.css",
-    "terminal.extra.css",
 )
 STREAMLIT_ROOT_MANIFEST_ARTIFACTS = tuple(
     {

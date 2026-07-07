@@ -154,7 +154,7 @@ def render_active_alerts_pane(
                 title="Route workload and telemetry gaps",
                 priority_columns=[
                     "OWNER", "OPEN_ALERTS", "CRITICAL_HIGH", "SLA_BREACHED",
-                    "TICKETS_ATTACHED", "TOP_CATEGORY", "NEXT_ACTION", "APPROVAL_GROUP",
+                    "TICKETS_ATTACHED", "TOP_CATEGORY", "NEXT_ACTION", "REVIEW_GROUP",
                 ],
                 sort_by=["SLA_BREACHED", "CRITICAL_HIGH", "OPEN_ALERTS"],
                 ascending=[False, False, False],
@@ -171,7 +171,7 @@ def render_active_alerts_pane(
                 "STATE": "Ready" if queue_open else "No Open Queue",
                 "EVIDENCE": f"{queue_open:,} open action queue row(s).",
                 "NEXT_ACTION": "Route confirmed alerts into action rows with ticket/reference and telemetry state.",
-                "OWNER": "DBA On-Call",
+                "OWNER": "DBA Review",
             },
             {
                 "CONTROL": "Rule coverage",
@@ -185,7 +185,7 @@ def render_active_alerts_pane(
                 "STATE": "Ready" if not delivery_log.empty else "Review",
                 "EVIDENCE": f"{len(delivery_log):,} delivery log row(s) loaded.",
                 "NEXT_ACTION": "Log alert digests until Snowflake notification integration is live.",
-                "OWNER": "DBA On-Call",
+                "OWNER": "DBA Review",
             },
         ]
         render_priority_dataframe(

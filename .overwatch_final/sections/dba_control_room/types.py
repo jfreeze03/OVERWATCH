@@ -480,6 +480,10 @@ def _canonical_dba_route(route: object) -> str:
     """Fold retired route labels into the current six-surface command model."""
     text = str(route or "").strip()
     upper_text = text.upper()
+    if "WAREHOUSE" in upper_text:
+        return "Cost & Contract"
+    if "SECURITY POSTURE" in upper_text:
+        return "Security Monitoring"
     if any(token in upper_text for token in ("CHANGE & DRIFT", "CHANGE DRIFT", "CONTROLLED DBA ACTION")):
         return "Workload Operations"
     return normalize_section_name(text) or "DBA Control Room"
@@ -524,7 +528,7 @@ def _command_named_owner(row: pd.Series) -> bool:
         "UNKNOWN WAREHOUSE",
         "DBA",
         "DBA LEAD",
-        "DBA / COST OWNER",
+        "DBA / COST ATTRIBUTION",
         "DBA / PLATFORM",
         "DBA / SECURITY",
         "DBA / WORKLOAD OWNER",
@@ -643,7 +647,7 @@ def _dba_incident_containment_action(incident_type: object) -> str:
         return "Reopen or block closure until telemetry, recovery, and review status are present."
     if "DATA" in incident or "TELEMETRY" in incident:
         return "Refresh summary/source telemetry before taking irreversible DBA action."
-    return "Assign DBA on-call, capture telemetry, and route to the specialist workflow."
+    return "Assign DBA review, capture telemetry, and route to the specialist workflow."
 
 
 def _dba_incident_investigation_path(route: object, workflow: object = "") -> str:

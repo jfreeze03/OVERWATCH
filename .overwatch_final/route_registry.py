@@ -15,13 +15,6 @@ PRIMARY_SECTION_TITLES = (
     "Security Monitoring",
 )
 
-ABANDONED_PRIMARY_SECTION_TITLES = (
-    "Command Center",
-    "Incidents",
-    "Optimization",
-    "Settings",
-)
-
 SECTION_WORKFLOW_CONTRACT = {
     "Executive Landing": (
         "Executive Overview",
@@ -86,10 +79,8 @@ DEFAULT_WORKFLOW_BY_SECTION = {
 }
 
 LEGACY_SECTION_ALIASES = {
+    # Live deep-link compatibility for renamed primary sections/workflows only.
     "Executive Briefing": "Executive Landing",
-    "Query Workbench": "Workload Operations",
-    "Live Monitor": "Workload Operations",
-    "Detailed Diagnosis": "Workload Operations",
     "Query Analysis": "Workload Operations",
     "Query Search & History": "Workload Operations",
     "Task Management": "Workload Operations",
@@ -98,55 +89,31 @@ LEGACY_SECTION_ALIASES = {
     "Object Change Monitor": "Workload Operations",
     "Schema Compare": "Workload Operations",
     "Data Compare": "Workload Operations",
-    "Cost Center": "Cost & Contract",
     "Cost Intelligence": "Cost & Contract",
     "Credit Contract": "Cost & Contract",
     "Recommendations": "Cost & Contract",
     "Recommendations & Anomalies": "Cost & Contract",
     "Cortex Monitor": "Cost & Contract",
     "AI & Cortex Monitor": "Cost & Contract",
-    "SPCS Tracker": "Cost & Contract",
     "Usage Overview": "DBA Control Room",
-    "Service Health": "DBA Control Room",
-    "Fast Watch": "DBA Control Room",
-    "Morning Brief": "DBA Control Room",
     "Alerts": "Alert Center",
     "Alert History": "Alert Center",
     "Alert Configuration": "Alert Center",
-    "Adoption Analytics": "Executive Landing",
     "Storage Monitor": "Cost & Contract",
-    "Security Posture": "Security Monitoring",
     "Security & Access": "Security Monitoring",
     "Data Sharing": "Security Monitoring",
     "Failed Logins": "Security Monitoring",
     "Access posture": "Security Monitoring",
     "Access Posture": "Security Monitoring",
-    "Command Center": "DBA Control Room",
-    "Warehouse Health": "Cost & Contract",
-    "Optimization": "Cost & Contract",
 }
 
-RETIRED_SECTION_ALIASES = {
-    "Account Health": "DBA Control Room",
-    "Warehouse Health": "Cost & Contract",
-    "Security Posture": "Security Monitoring",
-}
+RETIRED_SECTION_ALIASES = {}
 
 SECTION_ROUTE_STATE = {
     "Executive Landing": {"executive_landing_workflow": "Executive Overview"},
     "Executive Briefing": {"executive_landing_workflow": "Executive Overview"},
-    "Adoption Analytics": {"executive_landing_workflow": "Executive Admin / Advanced"},
     "DBA Control Room": {"dba_control_room_active_view": "Morning Cockpit"},
-    "Account Health": {
-        "dba_control_room_active_view": "Morning Cockpit",
-        "_dba_control_room_full_workspace_requested": True,
-        "_dba_control_room_brief_mode": False,
-    },
-    "Command Center": {"dba_control_room_active_view": "Morning Cockpit"},
     "Usage Overview": {"dba_control_room_active_view": "Cost Watch"},
-    "Service Health": {"dba_control_room_active_view": "Control Room Admin / Advanced"},
-    "Fast Watch": {"dba_control_room_active_view": "Morning Cockpit"},
-    "Morning Brief": {"dba_control_room_active_view": "Morning Cockpit"},
     "Alert Center": {"alert_center_active_view": "Active Alerts"},
     "Alerts": {"alert_center_active_view": "Active Alerts"},
     "Alert History": {"alert_center_active_view": "Alert History"},
@@ -155,21 +122,6 @@ SECTION_ROUTE_STATE = {
         "alert_center_admin_view": "Delivery & Automation",
     },
     "Cost & Contract": {"cost_contract_workflow": "Cost Overview"},
-    "Warehouse Health": {
-        "cost_contract_workflow": "Waste Detection",
-        "_cost_contract_full_workspace_requested": True,
-        "_cost_contract_brief_mode": False,
-    },
-    "Optimization": {
-        "cost_contract_workflow": "Cost Recommendations",
-        "_cost_contract_full_workspace_requested": True,
-        "_cost_contract_brief_mode": False,
-    },
-    "Cost Center": {
-        "cost_contract_workflow": "Cost Explorer",
-        "cost_center_view": "Cost Explorer",
-        "cc_explorer_lens": "Warehouse",
-    },
     "Credit Contract": {"cost_contract_workflow": "Budget vs Actual"},
     "Recommendations & Anomalies": {"cost_contract_workflow": "Cost Recommendations"},
     "Recommendations": {"cost_contract_workflow": "Cost Recommendations"},
@@ -184,23 +136,12 @@ SECTION_ROUTE_STATE = {
         "cost_contract_advanced_tool": "Storage & Retention",
         "_cost_contract_show_advanced_tools": True,
     },
-    "SPCS Tracker": {
-        "cost_contract_workflow": "Cost Overview",
-        "cost_contract_advanced_tool": "SPCS Spend",
-        "_cost_contract_show_advanced_tools": True,
-    },
     "Workload Operations": {"workload_operations_workflow": "Workload Overview"},
-    "Query Workbench": {"workload_operations_workflow": "Query Investigation"},
     "Query Analysis": {"workload_operations_workflow": "Query Investigation"},
     "Query Search & History": {
         "workload_operations_workflow": "Query Investigation",
         "query_analysis_active_view": "History Search",
     },
-    "Detailed Diagnosis": {
-        "workload_operations_workflow": "Query Investigation",
-        "query_analysis_active_view": "Detailed Diagnosis",
-    },
-    "Live Monitor": {"workload_operations_workflow": "Performance & Contention"},
     "Task Management": {
         "workload_operations_workflow": "Pipeline & Task Health",
         "workload_operations_pipeline_focus": "Failed Tasks",
@@ -230,10 +171,6 @@ SECTION_ROUTE_STATE = {
         "security_posture_view": "Security Overview",
         "security_posture_workflow": "Security Overview",
     },
-    "Security Posture": {
-        "security_posture_view": "Security Overview",
-        "security_posture_workflow": "Security Overview",
-    },
     "Security & Access": {
         "security_posture_view": "Risky Grants",
         "security_posture_workflow": "Risky Grants",
@@ -260,17 +197,14 @@ WORKFLOW_ALIASES_BY_SECTION = {
     "Executive Landing": {
         "Executive Briefing": "Executive Overview",
         "Executive Summary": "Executive Overview",
-        "Adoption Analytics": "Executive Admin / Advanced",
         "Executive Scorecard": "Executive Admin / Advanced",
         "Scorecard Formulas": "Executive Admin / Advanced",
         "Value Ledger": "Executive Admin / Advanced",
         "Production Readiness": "Executive Admin / Advanced",
         "Data Trust": "Executive Admin / Advanced",
-        "Command Center": "Executive Overview",
         "Forecasting": "Cost Movement",
     },
     "Alert Center": {
-        "Command Center": "Active Alerts",
         "Issue Inbox": "Active Alerts",
         "Triage Digest": "Active Alerts",
         "Alert History": "Alert History",
@@ -300,7 +234,6 @@ WORKFLOW_ALIASES_BY_SECTION = {
         "Advanced Alert Admin": "Alert Settings / Admin",
     },
     "Security Monitoring": {
-        "Security Posture": "Security Overview",
         "Security & Access": "Risky Grants",
         "Access posture": "Security Overview",
         "Access Posture": "Security Overview",
@@ -354,7 +287,6 @@ def normalize_workflow_alias(section: str, workflow: object, *, default: str | N
 
 
 __all__ = [
-    "ABANDONED_PRIMARY_SECTION_TITLES",
     "DEFAULT_WORKFLOW_BY_SECTION",
     "LEGACY_ROUTE_CONTRACT",
     "LEGACY_SECTION_ALIASES",

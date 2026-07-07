@@ -114,7 +114,7 @@ def _render_executive_pressure_board(board: pd.DataFrame, advisor_rows: pd.DataF
     render_shell_kpi_row((
         ("Highest Pressure", str(rows.iloc[0].get("LANE") or "Loaded")),
         ("Pressure", _pressure_level(top_pressure)),
-        ("Escalation", str(rows.iloc[0].get("OWNER_ROUTE") or "Executive Landing")),
+        ("Escalation", str(rows.iloc[0].get("WORKFLOW_ROUTE") or "Executive Landing")),
         ("State", str(rows.iloc[0].get("STATE") or "Review")),
     ))
     display_rows = rows.copy()
@@ -125,7 +125,7 @@ def _render_executive_pressure_board(board: pd.DataFrame, advisor_rows: pd.DataF
         title="Executive pressure details",
         priority_columns=[
             "LANE", "STATE", "VALUE", "PRESSURE_LEVEL",
-            "OWNER_ROUTE", "WHY_IT_MATTERS", "NEXT_ACTION",
+            "WORKFLOW_ROUTE", "WHY_IT_MATTERS", "NEXT_ACTION",
         ],
         sort_by=["LANE"],
         ascending=[True],

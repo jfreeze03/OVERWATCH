@@ -44,7 +44,7 @@ class FullAppLaunchGauntletTests(unittest.TestCase):
                 {"section": "Executive Landing", "workflow": "Overview", "label": "View all priorities", "clicked": True, "passed": True}
             ],
             "artifacts/full_app_validation/settings_action_results.json": [
-                {"control_key": "theme_picker", "clicked": True, "passed": True}
+                {"control_key": "settings_open_setup_health", "clicked": True, "passed": True}
             ],
             "artifacts/full_app_validation/live_feature_results.json": [
                 {

@@ -522,8 +522,8 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             "ACTION_ID",
             "ENTITY_TYPE",
             "ENTITY_NAME",
-            "OWNER_SOURCE",
-            "OWNER_EVIDENCE",
+            "ROUTE_SOURCE",
+            "ROUTE_EVIDENCE",
             "RECOVERY_EVIDENCE",
             "VERIFICATION_STATUS",
             "RECOVERY_AUDIT_STATE",
@@ -694,7 +694,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
 
         self.assertIn("Access grants", rendered)
         self.assertIn("All-environment fallback source", rendered)
-        self.assertIn("Source not configured", rendered)
+        self.assertIn("Source unavailable", rendered)
         self.assertNotIn("FACT_", rendered)
         self.assertNotIn("MART_", rendered)
         self.assertNotIn("SELECT", rendered)
@@ -1416,7 +1416,7 @@ def emit_session():
                 "FIRST_SEEN_TS": "2026-06-26T09:00:00",
                 "DUE_TS": "2026-06-26T17:00:00",
                 "OWNER_NAME": "Platform Owner",
-                "OWNER_GAP": False,
+                "WORKFLOW_GAP": False,
                 "SLA_STATE": "Due soon",
                 "ROUTE_KEY": route_key,
             }

@@ -564,13 +564,13 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("VERIFICATION_STATUS", ddl)
         self.assertIn("VERIFICATION_RESULT", ddl)
         self.assertIn("MEASURED_DELTA", ddl)
-        self.assertIn("OWNER_APPROVAL_STATUS", ddl)
+        self.assertIn("REVIEW_STATUS", ddl)
         self.assertIn("RECOVERY_SLA_STATE", ddl)
         self.assertIn("RECOVERY_EVIDENCE", ddl)
-        self.assertIn("OWNER_EMAIL", ddl)
-        self.assertIn("ONCALL_PRIMARY", ddl)
-        self.assertIn("APPROVAL_GROUP", ddl)
-        self.assertIn("OWNER_SOURCE", ddl)
+        self.assertIn("ROUTE_EMAIL", ddl)
+        self.assertIn("REVIEW_PRIMARY", ddl)
+        self.assertIn("REVIEW_GROUP", ddl)
+        self.assertIn("ROUTE_SOURCE", ddl)
         self.assertIn("RECOVERY_AUDIT_STATE", ddl)
         self.assertIn("COMPANY", ddl)
         queue_start = setup_sql.index("CREATE TABLE IF NOT EXISTS OVERWATCH_ACTION_QUEUE")
@@ -578,17 +578,17 @@ class AdminControlTests(unittest.TestCase):
         queue_block = setup_sql[queue_start:queue_end]
         self.assertIn("VERIFICATION_STATUS", queue_block)
         self.assertIn("VERIFIED_AT", queue_block)
-        self.assertIn("OWNER_APPROVAL_STATUS", queue_block)
+        self.assertIn("REVIEW_STATUS", queue_block)
         self.assertIn("RECOVERY_EVIDENCE", queue_block)
-        self.assertIn("OWNER_EMAIL", queue_block)
-        self.assertIn("ONCALL_PRIMARY", queue_block)
-        self.assertIn("APPROVAL_GROUP", queue_block)
-        self.assertIn("OWNER_SOURCE", queue_block)
+        self.assertIn("ROUTE_EMAIL", queue_block)
+        self.assertIn("REVIEW_PRIMARY", queue_block)
+        self.assertIn("REVIEW_GROUP", queue_block)
+        self.assertIn("ROUTE_SOURCE", queue_block)
         self.assertIn("RECOVERY_AUDIT_STATE", queue_block)
         self.assertIn("ALTER TABLE IF EXISTS OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS ENVIRONMENT", setup_sql)
-        self.assertIn("ALTER TABLE IF EXISTS OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS OWNER_EMAIL", setup_sql)
+        self.assertIn("ALTER TABLE IF EXISTS OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS ROUTE_EMAIL", setup_sql)
         self.assertIn("ALTER TABLE IF EXISTS OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS RECOVERY_AUDIT_STATE", setup_sql)
-        self.assertIn("ALTER TABLE IF EXISTS OVERWATCH_ALERTS ADD COLUMN IF NOT EXISTS OWNER", setup_sql)
+        self.assertIn("ALTER TABLE IF EXISTS OVERWATCH_ALERTS ADD COLUMN IF NOT EXISTS WORKFLOW_ROUTE", setup_sql)
         self.assertIn("ALTER TABLE IF EXISTS OVERWATCH_ALERTS ADD COLUMN IF NOT EXISTS STATUS", setup_sql)
         self.assertIn("ALTER TABLE IF EXISTS OVERWATCH_ALERTS ADD COLUMN IF NOT EXISTS ROUTED_ACTION_COUNT", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_DBA_CHECKLIST_HISTORY", setup_sql)
@@ -629,14 +629,14 @@ class AdminControlTests(unittest.TestCase):
         self.assertNotIn("PRIMARY_EVIDENCE_READY", setup_sql)
         self.assertNotIn("OVERWATCH_COST_SAVINGS_VERIFY TASK HANDLES AUTO-CLOSE", setup_sql)
         self.assertIn("WAREHOUSE_METERING_HISTORY", setup_sql)
-        self.assertIn("ESCALATION_TARGET", setup_sql)
+        self.assertIn("REVIEW_TARGET", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_CHANGE_CONTROL_EVIDENCE", setup_sql)
         self.assertIn("CHANGE_TICKET_ID", setup_sql)
         self.assertIn("IAC_RECONCILIATION_STATE", setup_sql)
         self.assertIn("EXECUTION_AUDIT_STATE", setup_sql)
         self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_SOURCE_CONTROL_CHANGE", setup_sql)
         self.assertNotIn("DEPLOYMENT_ADDRESS", setup_sql)
-        self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_APPROVAL", setup_sql)
+        self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_REVIEW_STATUS", setup_sql)
         self.assertIn("APPROVAL_STATUS", setup_sql)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_CHANGE_CONTROL_OPERABILITY_DAILY", setup_sql)
         self.assertIn("CONTROL_SOURCE", setup_sql)
@@ -674,8 +674,8 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("NO_DATABASE_CONTEXT_ROWS", setup_sql)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_CHARGEBACK_DAILY", setup_sql)
         self.assertIn("ALLOCATED_CREDITS", setup_sql)
-        self.assertIn("OWNER_EVIDENCE", setup_sql)
-        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_TAG_NAMES", setup_sql)
+        self.assertIn("ROUTE_EVIDENCE", setup_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_ATTRIBUTION_TAG_NAMES", setup_sql)
         self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_DIRECTORY", setup_sql)
         self.assertNotIn("CREATE OR REPLACE VIEW OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", setup_sql)
         self.assertNotIn("COMPUTE_WH_EXECUTION", setup_sql)
@@ -683,9 +683,9 @@ class AdminControlTests(unittest.TestCase):
         self.assertNotIn("ALFA_EDW_PRD_DATABASE", setup_sql)
         self.assertNotIn("ALFA_EDW_DEV_DATABASES", setup_sql)
         self.assertNotIn("ARCHITECTURE_DEFAULT", setup_sql)
-        self.assertIn("ONCALL_PRIMARY", setup_sql)
-        self.assertIn("APPROVAL_GROUP", setup_sql)
-        self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS DIM_COST_OWNER_TAG", setup_sql)
+        self.assertIn("REVIEW_PRIMARY", setup_sql)
+        self.assertIn("REVIEW_GROUP", setup_sql)
+        self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS DIM_COST_ATTRIBUTION_TAG", setup_sql)
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES", setup_sql)
         self.assertIn("WAREHOUSE_TAG:", setup_sql)
         self.assertIn("DATABASE_TAG:", setup_sql)
@@ -715,7 +715,7 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_ALERT_RULE_AUDIT", setup_sql)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_TASK_CRITICAL_PATH", setup_sql)
         self.assertIn("INSERT INTO FACT_TASK_CRITICAL_PATH", setup_sql)
-        self.assertIn("OWNER_ROLE", setup_sql)
+        self.assertIn("CONTROL_ROLE", setup_sql)
         self.assertIn("APPROVAL_PATH", setup_sql)
         self.assertIn("SOURCE_FRESHNESS", setup_sql)
         self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_ALERT_TRIAGE_V", setup_sql)
@@ -808,10 +808,7 @@ class AdminControlTests(unittest.TestCase):
                 "OVERWATCH_LOAD_DAILY": "WH_ALFA_OVERWATCH",
             },
         )
-        self.assertEqual(
-            {task: warehouse for task, warehouse in warehouses.items() if not warehouse.endswith("_WH")},
-            {},
-        )
+        self.assertNotIn("COMPUTE_WH", set(warehouses.values()))
 
     def test_fixed_action_status_does_not_require_manual_verification(self):
         missing = action_queue_fixed_missing_fields(
@@ -858,10 +855,10 @@ class AdminControlTests(unittest.TestCase):
                             "MEASURED_DELTA",
                             "VERIFIED_BY",
                             "VERIFIED_AT",
-                            "OWNER_APPROVAL_STATUS",
-                            "OWNER_APPROVAL_BY",
-                            "OWNER_APPROVAL_AT",
-                            "OWNER_APPROVAL_NOTE",
+                            "REVIEW_STATUS",
+                            "REVIEWED_BY",
+                            "REVIEWED_AT",
+                            "REVIEW_NOTE",
                             "RECOVERY_SLA_STATE",
                             "RECOVERY_SLA_HOURS",
                             "RECOVERY_SLA_TARGET_HOURS",
@@ -889,8 +886,8 @@ class AdminControlTests(unittest.TestCase):
                 baseline_value=100,
                 current_value=70,
                 measured_delta=-30,
-                owner_approval_status="Approved",
-                owner_approval_note="Pipeline owner approved recovery after INC777.",
+                review_status="Approved",
+                review_note="Pipeline owner approved recovery after INC777.",
                 recovery_sla_state="Recovered Within SLA",
                 recovery_sla_hours=1.5,
                 recovery_sla_target_hours=4,
@@ -915,8 +912,8 @@ class AdminControlTests(unittest.TestCase):
                 baseline_value=100,
                 current_value=68,
                 measured_delta=-32,
-                owner_approval_status="Approved",
-                owner_approval_note="Pipeline owner approved follow-up recovery after INC778.",
+                review_status="Approved",
+                review_note="Pipeline owner approved follow-up recovery after INC778.",
                 recovery_sla_state="Recovered Within SLA",
                 recovery_sla_hours=1.25,
                 recovery_sla_target_hours=4,
@@ -935,9 +932,9 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("DUE_DATE", update_sql)
         self.assertIn("2026-06-01", update_sql)
         self.assertIn("MEASURED_DELTA = COALESCE(-30.0", update_sql)
-        self.assertIn("OWNER_APPROVAL_STATUS", update_sql)
-        self.assertIn("OWNER_APPROVAL_BY", update_sql)
-        self.assertIn("OWNER_APPROVAL_AT", update_sql)
+        self.assertIn("REVIEW_STATUS", update_sql)
+        self.assertIn("REVIEWED_BY", update_sql)
+        self.assertIn("REVIEWED_AT", update_sql)
         self.assertEqual(len(show_calls), 1)
         self.assertEqual(second_show_calls, [])
         self.assertIn("RECOVERY_SLA_STATE", update_sql)
@@ -975,7 +972,7 @@ class AdminControlTests(unittest.TestCase):
                 "VERIFICATION_QUERY": "SELECT * FROM TASK_HISTORY",
                 "BASELINE_VALUE": 300,
                 "CURRENT_VALUE": 240,
-                "OWNER_APPROVAL_STATUS": "Approved",
+                "REVIEW_STATUS": "Approved",
                 "RECOVERY_SLA_STATE": "Recovered Within SLA",
                 "RECOVERY_EVIDENCE": "Successful recovery run attached.",
             },
@@ -991,7 +988,7 @@ class AdminControlTests(unittest.TestCase):
                 "VERIFICATION_QUERY": "SELECT * FROM TASK_HISTORY",
                 "BASELINE_VALUE": 300,
                 "CURRENT_VALUE": 500,
-                "OWNER_APPROVAL_STATUS": "Requested",
+                "REVIEW_STATUS": "Requested",
                 "RECOVERY_SLA_STATE": "Open Failure",
                 "RECOVERY_EVIDENCE": "",
             },

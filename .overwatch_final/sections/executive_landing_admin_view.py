@@ -112,9 +112,9 @@ def _render_enterprise_operating_model_summary(rollups: dict[str, pd.DataFrame])
         confidence = trust.get("CONFIDENCE", pd.Series(dtype=str)).dropna().astype(str).str.lower()
         trust_confidence = confidence.iloc[0] if not confidence.empty else "fallback"
 
-    owner_gaps = 0
+    workflow_gaps = 0
     if isinstance(ownership, pd.DataFrame) and not ownership.empty and "GAP_ITEMS" in ownership.columns:
-        owner_gaps = safe_int(pd.to_numeric(ownership["GAP_ITEMS"], errors="coerce").fillna(0).sum())
+        workflow_gaps = safe_int(pd.to_numeric(ownership["GAP_ITEMS"], errors="coerce").fillna(0).sum())
 
     verified_savings = 0.0
     unverified_estimate = 0.0
@@ -136,7 +136,7 @@ def _render_enterprise_operating_model_summary(rollups: dict[str, pd.DataFrame])
     st.markdown("**Enterprise Operating Model**")
     render_shell_snapshot((
         ("Trust Issues", f"{trust_issues:,}"),
-        ("Ownership Gaps", f"{owner_gaps:,}"),
+        ("Ownership Gaps", f"{workflow_gaps:,}"),
         ("Verified Value", f"${verified_savings:,.0f}"),
         ("App Review", f"{app_review:,}"),
     ))
@@ -144,12 +144,12 @@ def _render_enterprise_operating_model_summary(rollups: dict[str, pd.DataFrame])
         "Operating path: Finding -> Owner -> Trust Level -> Business Impact -> Action -> Value Verified. "
         f"Trust confidence: {trust_confidence}; unverified savings stay separate (${unverified_estimate:,.0f})."
     )
-    with st.expander("Enterprise operating model rollups", expanded=trust_issues > 0 or owner_gaps > 0 or app_review > 0):
+    with st.expander("Enterprise operating model rollups", expanded=trust_issues > 0 or workflow_gaps > 0 or app_review > 0):
         if isinstance(trust, pd.DataFrame) and not trust.empty:
             trust_view = trust[[
                 column for column in [
                     "SOURCE_NAME", "STATUS", "CONFIDENCE", "FRESHNESS_MINUTES",
-                    "SOURCE_OBJECT", "OWNER_ROUTE", "BUSINESS_IMPACT", "NEXT_ACTION",
+                    "SOURCE_OBJECT", "WORKFLOW_ROUTE", "BUSINESS_IMPACT", "NEXT_ACTION",
                 ]
                 if column in trust.columns
             ]].head(12)
@@ -159,7 +159,7 @@ def _render_enterprise_operating_model_summary(rollups: dict[str, pd.DataFrame])
                 column for column in [
                     "SURFACE", "ENTITY_TYPE", "TOTAL_ITEMS", "ROUTED_ITEMS",
                     "GAP_ITEMS", "COVERAGE_PCT", "TRUST_LEVEL", "CONFIDENCE",
-                    "OWNER_ROUTE", "NEXT_ACTION",
+                    "WORKFLOW_ROUTE", "NEXT_ACTION",
                 ]
                 if column in ownership.columns
             ]].head(12)
@@ -167,7 +167,7 @@ def _render_enterprise_operating_model_summary(rollups: dict[str, pd.DataFrame])
         if isinstance(value, pd.DataFrame) and not value.empty:
             value_view = value[[
                 column for column in [
-                    "STATUS", "OWNER_ROUTE", "EXPECTED_SAVINGS_USD",
+                    "STATUS", "WORKFLOW_ROUTE", "EXPECTED_SAVINGS_USD",
                     "VERIFIED_SAVINGS_USD", "UNVERIFIED_ESTIMATE_USD",
                     "CONFIDENCE", "VALUE_STATE", "NEXT_ACTION",
                 ]
@@ -258,14 +258,14 @@ def _render_executive_scorecard_summary(scorecard: pd.DataFrame) -> None:
     ))
     st.caption(
         f"Top concern: {top_row.get('SCORE_NAME') or 'Executive score'} is "
-        f"{top_row.get('STATUS') or 'Unknown'}; owner route "
-        f"{top_row.get('OWNER_ROUTE') or 'Owner gap'}. "
+        f"{top_row.get('STATUS') or 'Unknown'}; workflow route "
+        f"{top_row.get('WORKFLOW_ROUTE') or 'Owner gap'}. "
         f"Action: {top_row.get('RECOMMENDED_ACTION') or 'Review score drivers'}."
     )
     view = work[[
         column for column in [
             "SCORE_NAME", "CURRENT_SCORE", "STATUS", "TREND", "TOP_DRIVER",
-            "RECOMMENDED_ACTION", "OWNER_ROUTE", "OWNER_GAP", "VALUE_AT_RISK_USD",
+            "RECOMMENDED_ACTION", "WORKFLOW_ROUTE", "WORKFLOW_GAP", "VALUE_AT_RISK_USD",
             "CONFIDENCE", "LAST_REFRESHED_TS",
         ]
         if column in work.columns
@@ -325,7 +325,7 @@ def _render_executive_forecast_summary(forecasts: pd.DataFrame) -> None:
         column for column in [
             "FORECAST_NAME", "FORECAST_DOMAIN", "FORECAST_VALUE", "VALUE_UNIT",
             "CURRENT_ACTUAL", "PRIOR_PERIOD_VALUE", "TREND_DIRECTION",
-            "CONFIDENCE", "MAIN_DRIVER", "RECOMMENDED_ACTION", "OWNER_ROUTE",
+            "CONFIDENCE", "MAIN_DRIVER", "RECOMMENDED_ACTION", "WORKFLOW_ROUTE",
             "VALUE_AT_RISK_USD", "LAST_REFRESHED_TS",
         ]
         if column in work.columns
@@ -346,7 +346,7 @@ def _render_change_intelligence_summary(changes: pd.DataFrame) -> None:
     work = changes.copy()
     change_count = pd.to_numeric(work.get("CHANGE_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
     high_risk = pd.to_numeric(work.get("HIGH_RISK_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
-    owner_gaps = pd.to_numeric(work.get("OWNER_GAP_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    workflow_gaps = pd.to_numeric(work.get("WORKFLOW_GAP_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
     correlations = pd.to_numeric(work.get("CORRELATION_CANDIDATE_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
     work["_HIGH_RISK_SORT"] = high_risk
     work["_CHANGE_SORT"] = change_count
@@ -360,7 +360,7 @@ def _render_change_intelligence_summary(changes: pd.DataFrame) -> None:
     render_shell_snapshot((
         ("Changes", f"{safe_int(change_count.sum()):,}"),
         ("High Risk", f"{safe_int(high_risk.sum()):,}"),
-        ("Owner Gaps", f"{safe_int(owner_gaps.sum()):,}"),
+        ("Workflow Gaps", f"{safe_int(workflow_gaps.sum()):,}"),
         ("Possible Links", f"{safe_int(correlations.sum()):,}"),
     ))
     st.caption(
@@ -373,7 +373,7 @@ def _render_change_intelligence_summary(changes: pd.DataFrame) -> None:
             "CHANGE_CATEGORY", "CHANGE_TYPE", "CHANGE_COUNT", "HIGH_RISK_COUNT",
             "RELATED_ALERT_COUNT", "CORRELATION_CANDIDATE_COUNT", "LATEST_CHANGE_TS",
             "TOP_OBJECT_NAME", "TOP_CHANGED_BY", "RISK_LEVEL", "BUSINESS_IMPACT",
-            "OWNER_ROUTE", "CONFIDENCE", "LAST_REFRESHED_TS",
+            "WORKFLOW_ROUTE", "CONFIDENCE", "LAST_REFRESHED_TS",
         ]
         if column in work.columns
     ]]
@@ -415,7 +415,7 @@ def _render_closed_loop_summary(actions: pd.DataFrame) -> None:
         column for column in [
             "ACTION_DOMAIN", "OPEN_ACTION_COUNT", "APPROVAL_REQUIRED_COUNT",
             "APPROVED_COUNT", "VERIFICATION_PENDING_COUNT", "VERIFIED_COUNT",
-            "CLOSED_COUNT", "HIGH_RISK_COUNT", "OWNER_GAP_COUNT",
+            "CLOSED_COUNT", "HIGH_RISK_COUNT", "WORKFLOW_GAP_COUNT",
             "EXPECTED_SAVINGS_USD", "ACTUAL_VERIFIED_SAVINGS_USD",
             "UNVERIFIED_EXPECTED_USD", "TOP_FINDING", "NEXT_ACTION",
             "CONFIDENCE", "LAST_REFRESHED_TS",
@@ -433,16 +433,16 @@ def _render_command_center_summary(findings: pd.DataFrame) -> None:
     work = findings.copy()
     finding_count = pd.to_numeric(work.get("FINDING_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0).astype("float64")
     high_risk = pd.to_numeric(work.get("HIGH_RISK_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0).astype("float64")
-    owner_gap = pd.to_numeric(work.get("OWNER_GAP_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0).astype("float64")
+    workflow_gap = pd.to_numeric(work.get("WORKFLOW_GAP_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0).astype("float64")
     expected_value = pd.to_numeric(work.get("EXPECTED_VALUE_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).astype("float64")
-    work["_SORT_VALUE"] = high_risk.mul(1_000_000.0).add(owner_gap.mul(10_000.0)).add(expected_value)
+    work["_SORT_VALUE"] = high_risk.mul(1_000_000.0).add(workflow_gap.mul(10_000.0)).add(expected_value)
     top_row = work.sort_values("_SORT_VALUE", ascending=False, na_position="last").iloc[0]
 
     st.markdown("**Correlated Investigations**")
     render_shell_snapshot((
         ("Findings", f"{safe_int(finding_count.sum()):,}"),
         ("High Risk", f"{safe_int(high_risk.sum()):,}"),
-        ("Owner Gaps", f"{safe_int(owner_gap.sum()):,}"),
+        ("Workflow Gaps", f"{safe_int(workflow_gap.sum()):,}"),
         ("Value/Risk", f"${safe_float(expected_value.sum()):,.0f}"),
     ))
     st.caption(
@@ -453,7 +453,7 @@ def _render_command_center_summary(findings: pd.DataFrame) -> None:
     view = work[[
         column for column in [
             "INVESTIGATION_TYPE", "QUESTION_TEXT", "FINDING_COUNT",
-            "HIGH_RISK_COUNT", "OWNER_GAP_COUNT", "RELATED_CHANGE_COUNT",
+            "HIGH_RISK_COUNT", "WORKFLOW_GAP_COUNT", "RELATED_CHANGE_COUNT",
             "RELATED_ALERT_COUNT", "RELATED_SCORECARD_COUNT",
             "RELATED_FORECAST_COUNT", "REVIEW_PLAN_COUNT",
             "EXPECTED_VALUE_USD", "TOP_ROOT_CAUSE_CANDIDATE",

@@ -43,7 +43,7 @@ def native_capability_lanes() -> tuple[dict[str, str], ...]:
             "label": "Executive digest",
             "value": "EXECUTIVE_DIGEST_HISTORY",
             "state": "Push",
-            "detail": "Daily digest history should match the boss-page numbers and owner actions.",
+            "detail": "Daily digest history should match the boss-page numbers and workflow actions.",
         },
         {
             "label": "Org rollup",

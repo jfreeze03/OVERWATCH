@@ -160,6 +160,9 @@ def _classify_sql(root: Path, path: Path) -> dict[str, Any]:
     if "DROP" in rel_upper:
         classification = "keep_admin_setup"
         purpose = "Rollback/drop support."
+    elif "/MIGRATIONS/" in rel_upper or "\\MIGRATIONS\\" in rel_upper:
+        classification = "keep_live_validation"
+        purpose = "Schema migration ledger update."
     elif "VALIDATION" in rel_upper:
         classification = "keep_live_validation"
         purpose = "Deployment/setup validation."

@@ -403,7 +403,7 @@ BEGIN
         LISTAGG(
             '[' || COALESCE(SEVERITY, 'Medium') || '] ' || COALESCE(ALERT_TYPE, CATEGORY, 'Alert') ||
             ' | ' || COALESCE(ENTITY_NAME, 'Snowflake account') ||
-            ' | Owner: ' || COALESCE(OWNER, 'DBA') ||
+            ' | Workflow: ' || COALESCE(OWNER, 'DBA') ||
             '\\n' || EMAIL_BODY,
             '\\n\\n---\\n\\n'
         ) WITHIN GROUP (ORDER BY ALERT_ID)

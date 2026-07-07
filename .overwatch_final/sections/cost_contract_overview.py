@@ -76,14 +76,14 @@ def _cost_executive_decision_stack(summary: dict, action_summary: dict) -> pd.Da
             "DECISION": "Explain usage movement",
             "SIGNAL": _slide_money(delta, signed=True),
             "FIRST_QUESTION": f"Is {summary.get('top_warehouse')} the real driver or just the largest warehouse mover?",
-            "OWNER": "DBA / Cost owner",
+            "OWNER": "DBA / Cost attribution",
             "ROUTE": "Cost Explorer > Warehouse",
         },
         {
             "DECISION": "Validate contract burn",
             "SIGNAL": _slide_money(projected),
             "FIRST_QUESTION": "Does the 30-day run-rate fit the usage baseline and run-rate pace?",
-            "OWNER": "DBA / Cost owner",
+            "OWNER": "DBA / Cost attribution",
             "ROUTE": "Burn Rate & Forecast",
         },
         {

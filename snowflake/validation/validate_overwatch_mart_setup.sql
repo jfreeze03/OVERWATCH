@@ -54,7 +54,7 @@ SELECT 'MART_EXECUTIVE_DECISION_INBOX', COUNT(*) FROM MART_EXECUTIVE_DECISION_IN
 UNION ALL
 SELECT 'MART_DATA_TRUST_SUMMARY', COUNT(*) FROM MART_DATA_TRUST_SUMMARY
 UNION ALL
-SELECT 'MART_OPERATIONAL_OWNER_COVERAGE', COUNT(*) FROM MART_OPERATIONAL_OWNER_COVERAGE
+SELECT 'MART_OPERATIONAL_ROUTE_COVERAGE', COUNT(*) FROM MART_OPERATIONAL_ROUTE_COVERAGE
 UNION ALL
 SELECT 'MART_EXECUTIVE_VALUE_LEDGER', COUNT(*) FROM MART_EXECUTIVE_VALUE_LEDGER
 UNION ALL
@@ -702,7 +702,7 @@ FROM (
     ('Workload Operations','suspended_tasks'), ('Workload Operations','copy_load_failures'),
     ('Security Monitoring','failed_logins'), ('Security Monitoring','mfa_gaps'), ('Security Monitoring','risky_grants'), ('Security Monitoring','sharing_exposure'),
     ('Security Monitoring','privilege_changes'), ('Security Monitoring','security_alerts'), ('Security Monitoring','access_changes'), ('Security Monitoring','unassigned_findings'),
-    ('Security Monitoring','overdue_security_actions'), ('Security Monitoring','owner_coverage')
+    ('Security Monitoring','overdue_security_actions'), ('Security Monitoring','workflow_route_coverage')
   AS required(SECTION_NAME, METRIC_KEY)
   LEFT JOIN MART_SECTION_COMMAND_METRIC m
     ON m.SECTION_NAME = required.SECTION_NAME

@@ -224,22 +224,22 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         self.assertIn("NEXT_ACTION", moves.columns)
         self.assertEqual(set(moves["GATE"]), {"Closure status", "Execution audit", "Telemetry route", "Capacity pressure", "Cost guardrail"})
 
-    def test_warehouse_owner_routing_stays_stable(self):
+    def test_warehouse_route_mapping_stays_stable(self):
         from sections import warehouse_health_actions as actions
 
         cases = [
-            ({"WAREHOUSE_NAME": "ANY_WH", "SIGNAL": "Credit Spike"}, "DBA / Cost Route", "Cost owner / DBA Lead", "Cost owner / Warehouse Route"),
-            ({"WAREHOUSE_NAME": "ETL_LOAD_TASK_WH", "SIGNAL": "Queue Pressure"}, "Data Engineering Route", "Pipeline Route / DBA On-Call", "Data Engineering Route / DBA Lead"),
+            ({"WAREHOUSE_NAME": "ANY_WH", "SIGNAL": "Credit Spike"}, "DBA / Cost Route", "Cost attribution / DBA Lead", "Cost attribution / Cost Route"),
+            ({"WAREHOUSE_NAME": "ETL_LOAD_TASK_WH", "SIGNAL": "Queue Pressure"}, "Data Engineering Route", "Pipeline Route / DBA Review", "Data Engineering Route / DBA Lead"),
             ({"WAREHOUSE_NAME": "BI_POWERBI_TABLEAU_WH", "SIGNAL": "Memory Spill"}, "BI Platform Route", "BI Product Route / DBA Lead", "BI Platform Route / Query Route"),
             ({"WAREHOUSE_NAME": "DEV_SAN_SIT_WH", "SIGNAL": "Latency Pressure"}, "Development Platform Route", "DBA Lead", "Development Platform Route / DBA Lead"),
             ({"WAREHOUSE_NAME": "CORE_WH", "SIGNAL": "Latency Pressure"}, "Platform DBA", "DBA Lead", "Platform DBA / DBA Lead"),
         ]
-        for row, owner, escalation, approval in cases:
+        for row, route, escalation, approval in cases:
             with self.subTest(row=row):
                 context = actions._warehouse_owner_context(row)
-                self.assertEqual(context["owner"], owner)
+                self.assertEqual(context["owner"], route)
                 self.assertEqual(context["escalation"], escalation)
-                self.assertEqual(actions._warehouse_approval_for({**row, "OWNER": owner}), approval)
+                self.assertEqual(actions._warehouse_approval_for({**row, "OWNER": route}), approval)
 
     def test_warehouse_setting_candidates_stay_stable_by_signal(self):
         from sections import warehouse_health_actions as actions
@@ -273,7 +273,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
 
         base = {
             "OWNER": "Platform DBA",
-            "OWNER_SOURCE": "Route map",
+            "ROUTE_SOURCE": "Route map",
             "APPROVER": "DBA Lead",
             "APPROVAL_REQUIRED": "Yes",
             "APPROVAL_STATE": "Approved",
@@ -283,7 +283,7 @@ class WarehouseHealthSplitTests(unittest.TestCase):
             "EXECUTION_STATUS": "Not Executed",
         }
         cases = [
-            ({**base, "OWNER": "", "OWNER_SOURCE": ""}, "Route Metadata Blocked", "escalation route"),
+            ({**base, "OWNER": "", "ROUTE_SOURCE": ""}, "Route Metadata Blocked", "escalation route"),
             ({**base, "APPROVAL_STATE": "Requested"}, "Pre-Change Blocked", "review status"),
             ({**base, "ROLLBACK_SQL": ""}, "Pre-Change Blocked", "rollback SQL"),
             ({**base, "EXECUTION_STATUS": "Failed"}, "Execution Failed", "None"),

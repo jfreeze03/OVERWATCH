@@ -122,7 +122,7 @@ def _load_payloads(root: Path, rels: Iterable[str]) -> dict[str, Any]:
 
 def _synthetic_text_for_surface(section: str, workflow: str) -> str:
     if section == "Settings":
-        return "Settings. Theme. Cost estimates use configured credit rates. Open Setup Health."
+        return "Settings. Cost estimates use configured credit rates. Open Setup Health."
     if section == "Settings/Admin Setup Health":
         return "Setup Health. Admin diagnostics available after authorization."
     if section == "Query Search":
@@ -131,14 +131,14 @@ def _synthetic_text_for_surface(section: str, workflow: str) -> str:
         return "Advanced Scope. Apply scoped filters without loading details."
     if section == "Cost & Contract":
         return (
-            "Cost posture summary. Billing reconciliation pending. "
-            "Latest available: ALL / ALL / 7 days. Load Cost Evidence."
+            "Cost posture summary. Billing reconciliation requires review. "
+            "Latest available: ALL / ALL / 7 days. Open cost evidence."
         )
     if section == "Workload Operations":
-        return "Workload summary. Current packet pending. Investigate SQL. Open Pipelines."
+        return "Workload summary. Current packet requires refresh. Investigate SQL. Open Pipelines."
     return (
-        f"{section} summary pending. Latest available: ALL / ALL / 7 days. "
-        "Initialize summaries. Open Setup Health. View all priorities."
+        f"{section} current summary. Latest available: ALL / ALL / 7 days. "
+        "Refresh. Open Setup Health. View priorities."
     )
 
 

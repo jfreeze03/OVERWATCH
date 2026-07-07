@@ -187,7 +187,7 @@ executes.
 | Lock/blocking pressure | Reactive | Query history blocking/transaction fields where available | Blocked seconds/query count | Identify blocker and route owner | Cancel blocker only with strict guardrails |
 | Long-running query | Reactive | `QUERY_HISTORY` | Runtime threshold by warehouse/workload | Review user, role, query hash | Cancel query in final mature phase |
 | Task failure | Reactive | `FACT_TASK_RUN`, `TASK_HISTORY` | Any prod failure; repeated = Critical | Open task graph and root cause | Retry safe idempotent task after policy |
-| Consecutive task failure | Reactive | Recent task states | 2+ consecutive failures or critical graph | Escalate owner route | Retry/suspend only after classification |
+| Consecutive task failure | Reactive | Recent task states | 2+ consecutive failures or critical graph | Escalate workflow route | Retry/suspend only after classification |
 | Task freshness/SLA late | Proactive | Task run cadence | Late vs expected interval | Route owner before downstream miss | Trigger task only if safe/idempotent |
 | Task duration anomaly | Proactive | Daily task duration | p95/avg exceeds baseline | Review dependency and warehouse pressure | None initially |
 | Stored procedure failure | Reactive | `FACT_PROCEDURE_RUN` | Failed `CALL` | Open Stored Procedure Advisor | None initially |
@@ -212,7 +212,7 @@ inefficient code patterns, or causing future system issues.
 | App/session misuse | Reactive | Sessions/query history | Many abandoned sessions or long transactions | Contact user/owner | Kill session only with strict approval |
 
 Implementation note: behavior alerts should not shame users in the UI. Treat
-them as coaching and system-protection signals with owner route, sample query,
+them as coaching and system-protection signals with workflow route, sample query,
 cost estimate, and safer pattern guidance.
 
 ### 4. Security and Access Alerts

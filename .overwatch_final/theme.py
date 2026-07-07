@@ -1,7 +1,4 @@
-# theme.py - OVERWATCH theme system
-# THEMES:
-#   1. carbon     - Snowflake Dark: default dark shell with Snowflake blue
-#   2. terminal   - Snowflake White: classic white with Snowflake blue
+# theme.py - OVERWATCH production theme system.
 #
 # CSS lives in theme_assets/ so the Python module stays maintainable while
 # preserving the same injected selectors and Streamlit override behavior.
@@ -22,17 +19,11 @@ _THEME_ALIASES = {
     "henson": "carbon",
 }
 
-# Theme metadata (used for the picker UI)
 THEMES = {
     "carbon": {
         "label": "Snowflake Dark",
         "swatch": "#29B5E8",
         "bg": "#0B1117",
-    },
-    "terminal": {
-        "label": "Snowflake White",
-        "swatch": "#29B5E8",
-        "bg": "#eef6fb",
     },
 }
 
@@ -45,7 +36,6 @@ def _read_theme_asset(filename: str) -> str:
 
 _VARS = {
     "carbon": _read_theme_asset("carbon.vars.css"),
-    "terminal": _read_theme_asset("terminal.vars.css"),
 }
 
 _STRUCTURAL_CSS = _read_theme_asset("structural.css")
@@ -53,7 +43,6 @@ _COMMAND_CENTER_CSS = _read_theme_asset("command_center.css")
 _STREAMLIT_ICON_FIX = _read_theme_asset("streamlit_icon_fix.css")
 _THEME_EXTRAS = {
     "carbon": _read_theme_asset("carbon.extra.css"),
-    "terminal": _read_theme_asset("terminal.extra.css"),
 }
 
 def _normalize_theme_key(theme_key: str | None) -> str:
@@ -96,8 +85,7 @@ def _get_theme() -> str:
     query_theme = _query_param_theme()
     persistent_theme = st.session_state.get(_ACTIVE_THEME_KEY)
     existing_theme = st.session_state.get("active_theme")
-    picker_theme = st.session_state.get("theme_picker_radio")
-    theme_key = _normalize_theme_key(query_theme or persistent_theme or existing_theme or picker_theme or _DEFAULT_THEME)
+    theme_key = _normalize_theme_key(query_theme or persistent_theme or existing_theme or _DEFAULT_THEME)
     if st.session_state.get("_active_theme_version") != THEME_VERSION:
         st.session_state["_active_theme_version"] = THEME_VERSION
     if st.session_state.get("active_theme") != theme_key:
@@ -133,37 +121,3 @@ def inject_theme() -> None:
     """
     theme_key = _get_theme()
     st.markdown(_combined_theme_css(theme_key), unsafe_allow_html=True)
-
-
-def _commit_theme_selection(selected_theme: str | None) -> None:
-    selected = _normalize_theme_key(selected_theme)
-    st.session_state[_ACTIVE_THEME_KEY] = selected
-    st.session_state["active_theme"] = selected
-    _set_query_param_theme(selected)
-
-
-def _commit_theme_picker_change() -> None:
-    _commit_theme_selection(st.session_state.get("theme_picker_radio"))
-
-
-def render_theme_picker() -> None:
-    """
-    Render the theme picker.
-    Place this inside the sidebar Settings expander in app.py.
-
-    Each option shows only the theme name.
-    The active theme gets a highlight border.
-
-    """
-    current = _get_theme()
-    options = list(THEMES.keys())
-    index = options.index(current) if current in options else 0
-    selected = st.selectbox(
-        "Theme",
-        options,
-        index=index,
-        format_func=lambda key: THEMES[key]["label"],
-    )
-    selected = _normalize_theme_key(str(selected))
-    if selected != current:
-        _commit_theme_selection(selected)

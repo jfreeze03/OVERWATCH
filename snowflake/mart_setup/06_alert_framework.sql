@@ -9,7 +9,7 @@ AS
 INSERT INTO OVERWATCH_ALERTS (
   ALERT_TS, COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, WAREHOUSE_NAME,
   CATEGORY, ALERT_TYPE, SEVERITY, ENTITY_NAME, ENTITY, MESSAGE, DETAIL,
-  SUGGESTED_ACTION, PROOF_QUERY, OWNER, STATUS, DELIVERY_METHOD,
+  SUGGESTED_ACTION, PROOF_QUERY, WORKFLOW_ROUTE, STATUS, DELIVERY_METHOD,
   DELIVERY_TARGET, EMAIL_TARGET, EMAIL_SUBJECT, EMAIL_BODY, DELIVERY_STATUS
 )
 WITH alert_config AS (
@@ -183,9 +183,9 @@ candidates AS (
     r.WAREHOUSE_NAME AS ENTITY,
     'Warehouse used ' || ROUND(r.CURRENT_CREDITS, 2) || ' credits in 24 hours vs ' || ROUND(b.AVG_DAILY_CREDITS, 2) || ' average daily credits.' AS MESSAGE,
     'Warehouse used ' || ROUND(r.CURRENT_CREDITS, 2) || ' credits in 24 hours vs ' || ROUND(b.AVG_DAILY_CREDITS, 2) || ' average daily credits.' AS DETAIL,
-    'Open Cost & Contract, explain the bill movement, then route owner-backed cost-control actions.' AS SUGGESTED_ACTION,
+    'Open Cost & Contract, explain the bill movement, then route route-backed cost-control actions.' AS SUGGESTED_ACTION,
     'SELECT * FROM FACT_WAREHOUSE_HOURLY WHERE WAREHOUSE_NAME = ''' || r.WAREHOUSE_NAME || ''' ORDER BY HOUR_START DESC LIMIT 100;' AS PROOF_QUERY,
-    'DBA' AS OWNER
+    'DBA' AS WORKFLOW_ROUTE
   FROM credit_recent r
   JOIN credit_baseline b ON r.COMPANY = b.COMPANY AND r.WAREHOUSE_NAME = b.WAREHOUSE_NAME
   WHERE b.AVG_DAILY_CREDITS > 0.1
@@ -213,7 +213,7 @@ candidates AS (
     'Open Cost & Contract, explain the top driver, validate demand, and route an Alert Center or action-queue item before contract pace overshoot.',
     'WITH daily AS (SELECT TO_DATE(HOUR_START) AS spend_day, SUM(CREDITS_USED) AS credits FROM FACT_WAREHOUSE_HOURLY WHERE WAREHOUSE_NAME = '''
       || WAREHOUSE_NAME || ''' GROUP BY TO_DATE(HOUR_START)) SELECT * FROM daily ORDER BY spend_day DESC LIMIT 45;',
-    'DBA / Cost owner'
+    'DBA / Cost attribution'
   FROM predictive_cost_anomalies
 
   UNION ALL
@@ -328,7 +328,7 @@ SELECT
   c.DETAIL,
   c.SUGGESTED_ACTION,
   c.PROOF_QUERY,
-  c.OWNER,
+  c.WORKFLOW_ROUTE,
   'New',
   'EMAIL',
   cfg.EMAIL_TARGET,

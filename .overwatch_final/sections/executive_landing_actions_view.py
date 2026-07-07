@@ -78,10 +78,10 @@ def _render_executive_actions(summary: dict, *, snapshot: dict | None, days: int
         if isinstance(queue, pd.DataFrame) and not queue.empty:
             render_priority_dataframe(
                 queue,
-                title="Loaded owner action queue",
+                title="Loaded workflow action queue",
                 priority_columns=[
                     "SEVERITY", "STATUS", "CATEGORY", "ENTITY_NAME",
-                    "OWNER", "DUE_DATE", "NEXT_ACTION", "OWNER_ROUTE",
+                    "OWNER", "DUE_DATE", "NEXT_ACTION", "WORKFLOW_ROUTE",
                 ],
                 sort_by=["SEVERITY", "DUE_DATE"],
                 ascending=[True, True],

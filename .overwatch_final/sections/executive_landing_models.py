@@ -307,7 +307,7 @@ def _default_platform_summary() -> dict:
         {
             "SOURCE": "Alert and action queue",
             "STATE": "Limited",
-            "EVIDENCE": "Open alert and owner-action counts are available after refresh.",
+            "EVIDENCE": "Open alert and workflow-action counts are available after refresh.",
             "NEXT_ACTION": "Open Alert Center or DBA Control Room for owner-ready triage.",
         },
         {
@@ -634,7 +634,7 @@ def _executive_loaded_advisor_rows(state: dict | None = None) -> pd.DataFrame:
             high_findings=high,
             estimated_savings=savings,
             signal=f"{len(recs):,} generated recommendation(s) across {categories}.",
-            next_action="Open Cost & Contract recommendations and confirm owner, validation, and safe next action before assignment.",
+            next_action="Open Cost & Contract recommendations and confirm reviewer, validation, and safe next action before assignment.",
             route="Cost & Contract",
             priority=4 if high else 7,
         )
@@ -874,7 +874,7 @@ def _executive_priority_rows(
             "PRIORITY": 1 if critical_high else 6,
             "LANE": "Open risk",
             "STATE": "Escalate" if critical_high else "Clear",
-            "SIGNAL": f"{critical_high:,} Critical/High alert(s), {open_actions:,} open owner action(s).",
+            "SIGNAL": f"{critical_high:,} Critical/High alert(s), {open_actions:,} open workflow action(s).",
             "BUSINESS_IMPACT": "Security, reliability, or cost issue may already be visible to leadership.",
             "NEXT_ACTION": "Open Alert Center and work route, SLA, and remediation status.",
             "ROUTE": "Alert Center",
@@ -957,7 +957,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
     """Return one-page pressure lanes from the compact executive mart."""
     columns = [
         "LANE", "STATE", "VALUE", "PRESSURE_SCORE", "WHY_IT_MATTERS",
-        "OWNER_ROUTE", "NEXT_ACTION",
+        "WORKFLOW_ROUTE", "NEXT_ACTION",
     ]
     if not isinstance(board, pd.DataFrame) or board.empty or not _has_observability_kpis(board):
         if isinstance(advisor_rows, pd.DataFrame) and not advisor_rows.empty:
@@ -976,7 +976,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
                     100.0,
                 ),
                 "WHY_IT_MATTERS": "Loaded advisors identify avoidable cost, warehouse pressure, storage retention, and procedure work.",
-                "OWNER_ROUTE": "Cost & Contract",
+                "WORKFLOW_ROUTE": "Cost & Contract",
                 "NEXT_ACTION": "Open the highest-priority advisor row before assigning or tuning work.",
             }], columns=columns)
         return pd.DataFrame(columns=columns)
@@ -1005,7 +1005,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
             "VALUE": _platform_score_state(platform_health) if _obs_metric_loaded(board, "Platform Health") else "Details available when needed",
             "PRESSURE_SCORE": max(0.0, 100.0 - safe_float(platform_health)) if _obs_metric_loaded(board, "Platform Health") else 0.0,
             "WHY_IT_MATTERS": "Rolls cost, risk, workload, and telemetry quality into one summary-level pressure signal.",
-            "OWNER_ROUTE": "Executive Landing",
+            "WORKFLOW_ROUTE": "Executive Landing",
             "NEXT_ACTION": "Open the highest pressure lane below before specialist drilldown.",
         },
         {
@@ -1014,7 +1014,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
             "VALUE": _money(spend_delta, signed=True) if _obs_metric_loaded(board, "Spend Delta") else "Details available when needed",
             "PRESSURE_SCORE": capped(max(spend_delta, 0.0), max(current_spend * 0.20, 500.0)),
             "WHY_IT_MATTERS": "Leadership asks first why the bill moved and whether the increase has an owner.",
-            "OWNER_ROUTE": "Cost & Contract",
+            "WORKFLOW_ROUTE": "Cost & Contract",
             "NEXT_ACTION": "Open Cost & Contract when this lane is above 40.",
         },
         {
@@ -1023,7 +1023,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
             "VALUE": _money(cortex_spend) if _obs_metric_loaded(board, "Cortex Spend") else "Details available when needed",
             "PRESSURE_SCORE": capped(cortex_spend, 500.0),
             "WHY_IT_MATTERS": "AI spend can grow without warehouse-style owner habits or quota guardrails.",
-            "OWNER_ROUTE": "Cost & Contract",
+            "WORKFLOW_ROUTE": "Cost & Contract",
             "NEXT_ACTION": "Review top AI user/source and quota posture.",
         },
         {
@@ -1032,7 +1032,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
             "VALUE": _format_seconds(queue_seconds) if _obs_metric_loaded(board, "Queue Time") else "Details available when needed",
             "PRESSURE_SCORE": capped(queue_seconds, 3600.0),
             "WHY_IT_MATTERS": "Queue time turns into missed SLAs, frustrated users, and sometimes wasteful resize decisions.",
-            "OWNER_ROUTE": "DBA Control Room",
+            "WORKFLOW_ROUTE": "DBA Control Room",
             "NEXT_ACTION": "Check warehouse pressure and contention before resizing.",
         },
         {
@@ -1041,7 +1041,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
             "VALUE": _format_gb(spill_gb) if _obs_metric_loaded(board, "Remote Spill") else "Details available when needed",
             "PRESSURE_SCORE": capped(spill_gb, 100.0),
             "WHY_IT_MATTERS": "Remote spill is a strong signal for poor pruning, oversized joins, and warehouse pressure.",
-            "OWNER_ROUTE": "Workload Operations",
+            "WORKFLOW_ROUTE": "Workload Operations",
             "NEXT_ACTION": "Open Query Investigation for the top spilling SQL patterns.",
         },
         {
@@ -1050,7 +1050,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
             "VALUE": f"{safe_int(failed_queries):,} query / {safe_int(failed_tasks):,} task",
             "PRESSURE_SCORE": capped(safe_float(failed_queries) + safe_float(failed_tasks) * 5.0, 25.0),
             "WHY_IT_MATTERS": "Failed query and task volume predicts missed reporting, reruns, and support tickets.",
-            "OWNER_ROUTE": "DBA Control Room",
+            "WORKFLOW_ROUTE": "DBA Control Room",
             "NEXT_ACTION": "Work failed production tasks and repeat query failures first.",
         },
         {
@@ -1059,7 +1059,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
             "VALUE": f"{safe_int(critical_high):,} critical/high; {safe_int(open_actions):,} actions",
             "PRESSURE_SCORE": min(safe_float(critical_high) * 12.0 + safe_float(open_actions) * 3.0, 100.0),
             "WHY_IT_MATTERS": "Unowned alert/action backlog is where small warnings become incidents.",
-            "OWNER_ROUTE": "Alert Center",
+            "WORKFLOW_ROUTE": "Alert Center",
             "NEXT_ACTION": "Acknowledge, assign, suppress, or resolve the oldest high-impact rows.",
         },
         {
@@ -1068,7 +1068,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
             "VALUE": f"{safe_float(storage_tb):,.2f} TB" if _obs_metric_loaded(board, "Storage") else "Details available when needed",
             "PRESSURE_SCORE": capped(storage_tb, 50.0),
             "WHY_IT_MATTERS": "Storage, failsafe, and stages become contract noise when growth lacks lifecycle controls.",
-            "OWNER_ROUTE": "Cost & Contract",
+            "WORKFLOW_ROUTE": "Cost & Contract",
             "NEXT_ACTION": "Review storage growth and cleanup candidates when this lane climbs.",
         },
     ]
@@ -1088,7 +1088,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
                 100.0,
             ),
             "WHY_IT_MATTERS": "Loaded advisors identify avoidable cost, warehouse pressure, storage retention, and procedure work.",
-            "OWNER_ROUTE": "Cost & Contract",
+            "WORKFLOW_ROUTE": "Cost & Contract",
             "NEXT_ACTION": "Open the highest-priority advisor row before assigning or tuning work.",
         })
     out = pd.DataFrame(rows, columns=columns)
@@ -1104,7 +1104,7 @@ def _executive_pressure_placeholder_rows() -> pd.DataFrame:
                 "VALUE": "Details available when needed",
                 "PRESSURE_SCORE": 0.0,
                 "WHY_IT_MATTERS": "Platform health needs cost, workload, alert, and telemetry facts before it is decision-grade.",
-                "OWNER_ROUTE": "Executive Landing",
+                "WORKFLOW_ROUTE": "Executive Landing",
                 "NEXT_ACTION": "Refresh the executive summary facts.",
             },
             {
@@ -1113,7 +1113,7 @@ def _executive_pressure_placeholder_rows() -> pd.DataFrame:
                 "VALUE": "Details available when needed",
                 "PRESSURE_SCORE": 0.0,
                 "WHY_IT_MATTERS": "Spend movement is the first leadership question and must come from metering facts.",
-                "OWNER_ROUTE": "Cost & Contract",
+                "WORKFLOW_ROUTE": "Cost & Contract",
                 "NEXT_ACTION": "Refresh the cost summary facts.",
             },
             {
@@ -1122,7 +1122,7 @@ def _executive_pressure_placeholder_rows() -> pd.DataFrame:
                 "VALUE": "Details available when needed",
                 "PRESSURE_SCORE": 0.0,
                 "WHY_IT_MATTERS": "AI spend needs explicit owner and quota visibility.",
-                "OWNER_ROUTE": "Cost & Contract",
+                "WORKFLOW_ROUTE": "Cost & Contract",
                 "NEXT_ACTION": "Refresh AI spend or mark Cortex unavailable for this account.",
             },
             {
@@ -1131,7 +1131,7 @@ def _executive_pressure_placeholder_rows() -> pd.DataFrame:
                 "VALUE": "Details available when needed",
                 "PRESSURE_SCORE": 0.0,
                 "WHY_IT_MATTERS": "Runtime, queue, and spill show whether the platform is hurting users.",
-                "OWNER_ROUTE": "Workload Operations",
+                "WORKFLOW_ROUTE": "Workload Operations",
                 "NEXT_ACTION": "Refresh QUERY_HISTORY rollups for the active scope.",
             },
             {
@@ -1140,7 +1140,7 @@ def _executive_pressure_placeholder_rows() -> pd.DataFrame:
                 "VALUE": "Details available when needed",
                 "PRESSURE_SCORE": 0.0,
                 "WHY_IT_MATTERS": "Failed queries, failed tasks, and missed runs are the fastest path to incident risk.",
-                "OWNER_ROUTE": "DBA Control Room",
+                "WORKFLOW_ROUTE": "DBA Control Room",
                 "NEXT_ACTION": "Refresh task, procedure, and alert facts.",
             },
             {
@@ -1149,7 +1149,7 @@ def _executive_pressure_placeholder_rows() -> pd.DataFrame:
                 "VALUE": "Details available when needed",
                 "PRESSURE_SCORE": 0.0,
                 "WHY_IT_MATTERS": "Open critical/high alerts and unowned action queue rows drive the morning command queue.",
-                "OWNER_ROUTE": "Alert Center",
+                "WORKFLOW_ROUTE": "Alert Center",
                 "NEXT_ACTION": "Refresh alert and action summaries.",
             },
         ]

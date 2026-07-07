@@ -309,7 +309,7 @@ def _route_contracts_for_source_section(section: str) -> Iterable[ButtonActionCo
         yield ButtonActionContract(
             section=section,
             workflow=source_workflow,
-            key_pattern=rf"_(?:primary|secondary)(?:_\d+)?_{re.escape(_key_token(route_key))}$",
+            key_pattern=rf"_(?:(?:primary|secondary)(?:_\d+)?|command_brief_route_\d+)_{re.escape(_key_token(route_key))}$",
             label_pattern=r"\b(Open|Review|Investigate|Route).*(->)?",
             action_type="route",
             expected_target_section=target_section,

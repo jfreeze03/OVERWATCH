@@ -136,24 +136,18 @@ def scrub_daily_text(value: object, *, admin_only: bool = False) -> str:
 
 
 _DISPLAY_COPY_REPLACEMENTS = {
-    "Not loaded": "Loading current summary",
-    "Refresh required": "Loading current summary",
-    "Connection unavailable": "Loading current source",
-    "connection unavailable": "loading current source",
-    "Snowflake connection unavailable": "Loading current source",
-    "Snowflake connection is not available yet": "Loading current source",
-    ("Summary " + "unavailable"): "Loading current summary",
-    "Source unavailable": "Loading source",
-    "source unavailable": "loading source",
-    "Freshness unavailable": "Loading freshness",
-    "freshness unavailable": "loading freshness",
-    "Data quality unavailable": "Loading data quality",
+    "Not loaded": "Refresh required",
+    ("Summary " + "unavailable"): "Refresh required",
+    "Source unavailable": "Setup required",
+    "source unavailable": "setup required",
+    "Freshness unavailable": "Refresh required",
+    "freshness unavailable": "refresh required",
+    "Data quality unavailable": "Setup required",
     "SLA unavailable": "Current window",
     "sla unavailable": "current window",
     "No SLA": "Current window",
-    "Warehouse split unavailable": "Warehouse split loading",
-    "Trend unavailable": "Loading trend",
-    "No governed trend metadata in this packet.": "Trend loads with the current packet.",
+    "Warehouse split unavailable": "Warehouse split requires refresh",
+    "No governed trend metadata in this packet.": "Trend metadata requires refresh.",
     "Awaiting mart": "Awaiting data",
     "MART_EXECUTIVE_OBSERVABILITY": "fast summary facts",
     "MART_DBA_CONTROL_ROOM": "DBA summary facts",
@@ -238,9 +232,9 @@ _OPERATOR_COPY_REPLACEMENTS = {
     "Governance": "Monitoring",
     "governance": "monitoring",
     "Owner actions": "Routed actions",
-    "Owner Route": "Escalation Route",
-    "Owner route": "Escalation route",
-    "owner route": "escalation route",
+    "Escalation Route": "Escalation Route",
+    "Workflow route": "Escalation route",
+    "workflow route": "escalation route",
     "owner-routed": "route-backed",
     "owning workflow": "drilldown workflow",
     "owning admin workflow": "guarded admin workflow",
@@ -287,13 +281,13 @@ def clean_display_text(value: object) -> str:
         return ""
     lowered = text.lower()
     if "connection unavailable" in lowered or "connection is not available" in lowered:
-        return "Loading current source"
+        return "Connection unavailable"
     if (
         "required decision brief source unavailable" in lowered
         or "oldest required source age" in lowered
         or ("source age" in lowered and "target" in lowered and "requested:" in lowered)
     ):
-        return "Loading freshness"
+        return "Refresh required"
     for old, new in _DISPLAY_COPY_REPLACEMENTS.items():
         text = text.replace(old, new)
     text = scrub_raw_internal_text(text)

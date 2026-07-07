@@ -351,26 +351,15 @@ def _altair():
 
 
 def _cost_chart_palette() -> dict[str, str]:
-    theme_key = str(st.session_state.get("active_theme", "carbon") or "carbon")
-    palettes = {
-        "carbon": {
-            "bar": "#29B5E8",
-            "line": "#71D3DC",
-            "risk": "#F97316",
-            "text": "#eef8fb",
-            "muted": "#9bddea",
-            "grid": "rgba(113, 211, 220, 0.18)",
-        },
-        "terminal": {
-            "bar": "#0068B7",
-            "line": "#29B5E8",
-            "risk": "#B45309",
-            "text": "#102a43",
-            "muted": "#31566b",
-            "grid": "rgba(0, 104, 183, 0.18)",
-        },
+    palette = {
+        "bar": "#29B5E8",
+        "line": "#71D3DC",
+        "risk": "#F97316",
+        "text": "#eef8fb",
+        "muted": "#9bddea",
+        "grid": "rgba(113, 211, 220, 0.18)",
     }
-    return palettes.get(theme_key, palettes["carbon"])
+    return palette
 
 
 def _finalize_cost_chart(chart, *, height: int):

@@ -37,7 +37,7 @@ class CostContractAdvisorTests(unittest.TestCase):
             "CATEGORY": ["Cost", "Cost", "Cost", "Cost", "Cost", "Cost", "Chargeback"],
             "SOURCE": ["Cost & Contract"] * 7,
             "STATUS": ["New", "Fixed", "Ignored", "New", "Fixed", "Fixed", "New"],
-            "OWNER_APPROVAL_STATUS": [
+            "REVIEW_STATUS": [
                 "Approved",
                 "Approved",
                 "",

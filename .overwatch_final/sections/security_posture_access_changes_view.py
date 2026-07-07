@@ -56,8 +56,8 @@ def _render_security_change_detail(
             title="Security-sensitive change events",
             priority_columns=[
                 "CHANGE_TS", "CHANGE_TYPE", "OBJECT_TYPE", "OBJECT_NAME",
-                "CHANGED_BY", "RISK_LEVEL", "BUSINESS_IMPACT", "OWNER_ROUTE",
-                "OWNER_GAP", "RELATED_ALERT_COUNT", "CONFIDENCE", "LAST_REFRESHED_TS",
+                "CHANGED_BY", "RISK_LEVEL", "BUSINESS_IMPACT", "WORKFLOW_ROUTE",
+                "WORKFLOW_GAP", "RELATED_ALERT_COUNT", "CONFIDENCE", "LAST_REFRESHED_TS",
             ],
             sort_by=["CHANGE_TS"],
             ascending=False,

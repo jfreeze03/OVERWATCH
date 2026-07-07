@@ -33,21 +33,19 @@ ACTION_QUEUE_OPTIONAL_COLUMN_TYPES = {
     "MEASURED_DELTA": "FLOAT",
     "VERIFIED_BY": "VARCHAR",
     "VERIFIED_AT": "TIMESTAMP_NTZ",
-    "OWNER_APPROVAL_STATUS": "VARCHAR",
-    "OWNER_APPROVAL_BY": "VARCHAR",
-    "OWNER_APPROVAL_AT": "TIMESTAMP_NTZ",
-    "OWNER_APPROVAL_NOTE": "VARCHAR",
+    "REVIEW_STATUS": "VARCHAR",
+    "REVIEWED_BY": "VARCHAR",
+    "REVIEWED_AT": "TIMESTAMP_NTZ",
+    "REVIEW_NOTE": "VARCHAR",
+    "ROUTE_EMAIL": "VARCHAR",
+    "REVIEW_PRIMARY": "VARCHAR",
+    "REVIEW_TARGET": "VARCHAR",
+    "REVIEW_GROUP": "VARCHAR",
+    "ROUTE_SOURCE": "VARCHAR",
     "RECOVERY_SLA_STATE": "VARCHAR",
     "RECOVERY_SLA_HOURS": "FLOAT",
     "RECOVERY_SLA_TARGET_HOURS": "FLOAT",
     "RECOVERY_EVIDENCE": "VARCHAR",
-    "OWNER_EMAIL": "VARCHAR",
-    "ONCALL_PRIMARY": "VARCHAR",
-    "ONCALL_SECONDARY": "VARCHAR",
-    "APPROVAL_GROUP": "VARCHAR",
-    "ESCALATION_TARGET": "VARCHAR",
-    "OWNER_SOURCE": "VARCHAR",
-    "OWNER_EVIDENCE": "VARCHAR",
     "RECOVERY_AUDIT_STATE": "VARCHAR",
 }
 
@@ -107,7 +105,6 @@ CREATE TABLE IF NOT EXISTS {fqn} (
     SEVERITY                  VARCHAR(20),
     ENTITY_TYPE               VARCHAR(100),
     ENTITY_NAME               VARCHAR(500),
-    OWNER                     VARCHAR(200),
     STATUS                    VARCHAR(40) DEFAULT 'New',
     FINDING                   VARCHAR(4000),
     RECOMMENDED_ACTION        VARCHAR(4000),
@@ -128,21 +125,19 @@ CREATE TABLE IF NOT EXISTS {fqn} (
     MEASURED_DELTA            FLOAT,
     VERIFIED_BY               VARCHAR(200),
     VERIFIED_AT               TIMESTAMP_NTZ,
-    OWNER_APPROVAL_STATUS      VARCHAR(40),
-    OWNER_APPROVAL_BY          VARCHAR(200),
-    OWNER_APPROVAL_AT          TIMESTAMP_NTZ,
-    OWNER_APPROVAL_NOTE        VARCHAR(2000),
+    REVIEW_STATUS             VARCHAR(40),
+    REVIEWED_BY               VARCHAR(200),
+    REVIEWED_AT               TIMESTAMP_NTZ,
+    REVIEW_NOTE               VARCHAR(2000),
+    ROUTE_EMAIL               VARCHAR(500),
+    REVIEW_PRIMARY            VARCHAR(200),
+    REVIEW_TARGET             VARCHAR(200),
+    REVIEW_GROUP              VARCHAR(200),
+    ROUTE_SOURCE              VARCHAR(100),
     RECOVERY_SLA_STATE         VARCHAR(100),
     RECOVERY_SLA_HOURS         FLOAT,
     RECOVERY_SLA_TARGET_HOURS  FLOAT,
     RECOVERY_EVIDENCE          VARCHAR(8000),
-    OWNER_EMAIL                VARCHAR(500),
-    ONCALL_PRIMARY             VARCHAR(200),
-    ONCALL_SECONDARY           VARCHAR(200),
-    APPROVAL_GROUP             VARCHAR(200),
-    ESCALATION_TARGET          VARCHAR(200),
-    OWNER_SOURCE               VARCHAR(200),
-    OWNER_EVIDENCE             VARCHAR(2000),
     RECOVERY_AUDIT_STATE       VARCHAR(100),
     ACKNOWLEDGED_BY           VARCHAR(200),
     ACKNOWLEDGED_AT           TIMESTAMP_NTZ,
@@ -281,22 +276,22 @@ def _queue_series(df: pd.DataFrame, column: str, default: object = "") -> pd.Ser
 
 
 def _text_present(value: object) -> bool:
+    try:
+        if pd.isna(value):
+            return False
+    except Exception:
+        pass
     text = str(value or "").strip()
-    return bool(text and text.upper() not in {"N/A", "NONE", "NULL"})
+    return bool(text and text.upper() not in {"N/A", "NONE", "NULL", "NAN", "<NA>"})
 
 
-def _generic_owner(value: object) -> bool:
-    text = str(value or "").strip().upper()
-    return text in {
-        "",
-        "N/A",
-        "UNKNOWN",
-        "UNKNOWN USER",
-        "UNKNOWN WAREHOUSE",
-        "DBA",
-        "DBA / COST OWNER",
-        "DBA / DATA ENGINEERING",
-    }
+def _status_text(value: object) -> str:
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    return str(value or "").strip().upper()
 
 
 def _cost_control_category(category: object) -> bool:
@@ -311,7 +306,7 @@ def _task_reliability_category(category: object) -> bool:
 def _row_evidence_gap(row: pd.Series) -> str:
     status = str(row.get("STATUS") or "").strip()
     status_upper = status.upper()
-    verification_status = str(row.get("VERIFICATION_STATUS") or "").strip().upper()
+    verification_status = _status_text(row.get("VERIFICATION_STATUS"))
     verification_query = str(row.get("VERIFICATION_QUERY") or row.get("PROOF_QUERY") or "").strip()
 
     if status_upper == "FIXED":
@@ -322,11 +317,6 @@ def _row_evidence_gap(row: pd.Series) -> str:
         return "Ignored with reason" if _text_present(row.get("IGNORED_REASON")) else "Ignored without reason"
 
     gaps = []
-    has_owner_route = _text_present(row.get("OWNER_SOURCE")) and (
-        _text_present(row.get("ONCALL_PRIMARY")) or _text_present(row.get("APPROVAL_GROUP"))
-    )
-    if _generic_owner(row.get("OWNER")) and not has_owner_route:
-        gaps.append("needs escalation route")
     if not _text_present(row.get("TICKET_ID")):
         gaps.append("missing ticket/change ID")
     if not _text_present(row.get("APPROVER")):
@@ -343,15 +333,15 @@ def _row_evidence_gap(row: pd.Series) -> str:
         if not _text_present(row.get("BASELINE_VALUE")) or not _text_present(row.get("CURRENT_VALUE")):
             gaps.append("missing baseline/current value")
     if is_cost_control:
-        approval_status = str(row.get("OWNER_APPROVAL_STATUS") or "").strip().upper()
-        if approval_status in {"", "PENDING", "REQUESTED", "REQUIRED"}:
+        verification_status = _status_text(row.get("VERIFICATION_STATUS"))
+        if verification_status in {"", "PENDING", "REQUESTED", "REQUIRED"}:
             gaps.append("missing telemetry status")
         if not _text_present(row.get("RECOVERY_SLA_STATE")):
             gaps.append("missing savings/chargeback closure state")
     if is_task_reliability:
-        approval_status = str(row.get("OWNER_APPROVAL_STATUS") or "").strip().upper()
-        recovery_state = str(row.get("RECOVERY_SLA_STATE") or "").strip().upper()
-        if approval_status in {"", "PENDING", "REQUESTED", "REQUIRED"}:
+        verification_status = _status_text(row.get("VERIFICATION_STATUS"))
+        recovery_state = _status_text(row.get("RECOVERY_SLA_STATE"))
+        if verification_status in {"", "PENDING", "REQUESTED", "REQUIRED"}:
             gaps.append("missing telemetry status")
         if recovery_state in {"OPEN FAILURE", "RECOVERED LATE", "RECOVERY SLA BREACH"} and not _text_present(row.get("RECOVERY_EVIDENCE")):
             gaps.append("missing recovery status")
@@ -372,14 +362,14 @@ def _row_next_action(row: pd.Series) -> str:
     if status == "IGNORED":
         return "Retain the ignore reason and review if the signal reappears."
     if due_state == "Overdue":
-        return "Escalate the on-call route/ticket, validate current telemetry, and move this before lower-risk work."
+        return "Escalate the overdue route, add the ticket/change ID, validate current telemetry, and move this before lower-risk work."
     if evidence_gap and evidence_gap != "Ready to work":
         return f"Complete control metadata first: {evidence_gap}."
     if _cost_control_category(category):
         return "Explain the driver, review any warehouse change, then monitor next-period credits."
     if _task_reliability_category(category):
         return "Fix root cause, retry after stability checks, then monitor the next run."
-    return "Acknowledge, assign the escalation route, perform the recommended action, and monitor the resulting telemetry."
+    return "Acknowledge, assign the workflow review, perform the recommended action, and monitor the resulting telemetry."
 
 
 def enrich_action_queue_view(df: pd.DataFrame, today: str | pd.Timestamp | None = None) -> pd.DataFrame:
@@ -591,10 +581,6 @@ def upsert_actions(session, actions: list[dict]) -> int:
         severity = sql_literal(action.get("Severity", "Medium"), max_len=20)
         entity_type = sql_literal(action.get("Entity Type", "Snowflake Object"), max_len=100)
         entity_name = sql_literal(action.get("Entity", ""), max_len=500)
-        owner = sql_literal(
-            _action_value(action, "Route", "ROUTE", "Escalation Route", "Owner", "OWNER", default="DBA"),
-            max_len=200,
-        )
         finding = sql_literal(action.get("Finding", ""), max_len=4000)
         recommended = sql_literal(action.get("Action", ""), max_len=4000)
         sql_fix = sql_literal(action.get("Generated SQL Fix", ""), max_len=8000)
@@ -616,18 +602,6 @@ def upsert_actions(session, actions: list[dict]) -> int:
             _action_value(action, "Telemetry Query", "TELEMETRY_QUERY", "Verification Query", "VERIFICATION_QUERY", "Proof Query"),
             max_len=8000,
         )
-        owner_approval_status = sql_literal(
-            _action_value(action, "Telemetry Status", "TELEMETRY_STATUS", "Verification Status", "OWNER_APPROVAL_STATUS"),
-            max_len=40,
-        )
-        owner_approval_by = sql_literal(
-            _action_value(action, "Status By", "Telemetry By", "Verification By", "OWNER_APPROVAL_BY", "Reviewer", "Approver", "APPROVER"),
-            max_len=200,
-        )
-        owner_approval_note = sql_literal(
-            _action_value(action, "Status Note", "Telemetry Note", "Verification Note", "OWNER_APPROVAL_NOTE", "Verification State"),
-            max_len=2000,
-        )
         recovery_sla_state = sql_literal(
             _action_value(action, "Recovery SLA State", "RECOVERY_SLA_STATE", "RECOVERY_STATE"),
             max_len=100,
@@ -636,13 +610,6 @@ def upsert_actions(session, actions: list[dict]) -> int:
             _action_value(action, "Recovery Status", "RECOVERY_STATUS", "Recovery Evidence", "RECOVERY_EVIDENCE", "Verify After Fix", "VERIFY_AFTER_FIX"),
             max_len=8000,
         )
-        owner_email = sql_literal(_action_value(action, "Route Email", "ROUTE_EMAIL", "Owner Email", "OWNER_EMAIL"), max_len=500)
-        oncall_primary = sql_literal(_action_value(action, "Oncall Primary", "On-Call Primary", "ONCALL_PRIMARY"), max_len=200)
-        oncall_secondary = sql_literal(_action_value(action, "Oncall Secondary", "On-Call Secondary", "ONCALL_SECONDARY"), max_len=200)
-        approval_group = sql_literal(_action_value(action, "Escalation", "Review Group", "APPROVAL_GROUP"), max_len=200)
-        escalation_target = sql_literal(_action_value(action, "Escalation Target", "ESCALATION_TARGET"), max_len=200)
-        owner_source = sql_literal(_action_value(action, "Route Basis", "ROUTE_BASIS", "Owner Source", "OWNER_SOURCE"), max_len=200)
-        owner_evidence = sql_literal(_action_value(action, "Route Detail", "ROUTE_DETAIL", "Route Basis", "ROUTE_BASIS", "Owner Evidence", "OWNER_EVIDENCE"), max_len=2000)
         recovery_audit_state = sql_literal(_action_value(action, "Recovery Audit State", "RECOVERY_AUDIT_STATE"), max_len=100)
         baseline_value = _float_or_none(_action_value(action, "Baseline Value", "BASELINE_VALUE", default=None))
         current_value = _float_or_none(_action_value(action, "Current Value", "CURRENT_VALUE", default=None))
@@ -704,18 +671,6 @@ def upsert_actions(session, actions: list[dict]) -> int:
             optional_update += f", MEASURED_DELTA = COALESCE({measured_delta}, tgt.MEASURED_DELTA)"
             optional_insert_cols += ", MEASURED_DELTA"
             optional_insert_vals += f", {measured_delta}"
-        if optional_has.get("OWNER_APPROVAL_STATUS"):
-            optional_update += f", OWNER_APPROVAL_STATUS = COALESCE(NULLIF({owner_approval_status}, ''), tgt.OWNER_APPROVAL_STATUS)"
-            optional_insert_cols += ", OWNER_APPROVAL_STATUS"
-            optional_insert_vals += f", {owner_approval_status}"
-        if optional_has.get("OWNER_APPROVAL_BY"):
-            optional_update += f", OWNER_APPROVAL_BY = COALESCE(NULLIF({owner_approval_by}, ''), tgt.OWNER_APPROVAL_BY)"
-            optional_insert_cols += ", OWNER_APPROVAL_BY"
-            optional_insert_vals += f", {owner_approval_by}"
-        if optional_has.get("OWNER_APPROVAL_NOTE"):
-            optional_update += f", OWNER_APPROVAL_NOTE = COALESCE(NULLIF({owner_approval_note}, ''), tgt.OWNER_APPROVAL_NOTE)"
-            optional_insert_cols += ", OWNER_APPROVAL_NOTE"
-            optional_insert_vals += f", {owner_approval_note}"
         if optional_has.get("RECOVERY_SLA_STATE"):
             optional_update += f", RECOVERY_SLA_STATE = COALESCE(NULLIF({recovery_sla_state}, ''), tgt.RECOVERY_SLA_STATE)"
             optional_insert_cols += ", RECOVERY_SLA_STATE"
@@ -732,34 +687,6 @@ def upsert_actions(session, actions: list[dict]) -> int:
             optional_update += f", RECOVERY_EVIDENCE = COALESCE(NULLIF({recovery_evidence}, ''), tgt.RECOVERY_EVIDENCE)"
             optional_insert_cols += ", RECOVERY_EVIDENCE"
             optional_insert_vals += f", {recovery_evidence}"
-        if optional_has.get("OWNER_EMAIL"):
-            optional_update += f", OWNER_EMAIL = COALESCE(NULLIF({owner_email}, ''), tgt.OWNER_EMAIL)"
-            optional_insert_cols += ", OWNER_EMAIL"
-            optional_insert_vals += f", {owner_email}"
-        if optional_has.get("ONCALL_PRIMARY"):
-            optional_update += f", ONCALL_PRIMARY = COALESCE(NULLIF({oncall_primary}, ''), tgt.ONCALL_PRIMARY)"
-            optional_insert_cols += ", ONCALL_PRIMARY"
-            optional_insert_vals += f", {oncall_primary}"
-        if optional_has.get("ONCALL_SECONDARY"):
-            optional_update += f", ONCALL_SECONDARY = COALESCE(NULLIF({oncall_secondary}, ''), tgt.ONCALL_SECONDARY)"
-            optional_insert_cols += ", ONCALL_SECONDARY"
-            optional_insert_vals += f", {oncall_secondary}"
-        if optional_has.get("APPROVAL_GROUP"):
-            optional_update += f", APPROVAL_GROUP = COALESCE(NULLIF({approval_group}, ''), tgt.APPROVAL_GROUP)"
-            optional_insert_cols += ", APPROVAL_GROUP"
-            optional_insert_vals += f", {approval_group}"
-        if optional_has.get("ESCALATION_TARGET"):
-            optional_update += f", ESCALATION_TARGET = COALESCE(NULLIF({escalation_target}, ''), tgt.ESCALATION_TARGET)"
-            optional_insert_cols += ", ESCALATION_TARGET"
-            optional_insert_vals += f", {escalation_target}"
-        if optional_has.get("OWNER_SOURCE"):
-            optional_update += f", OWNER_SOURCE = COALESCE(NULLIF({owner_source}, ''), tgt.OWNER_SOURCE)"
-            optional_insert_cols += ", OWNER_SOURCE"
-            optional_insert_vals += f", {owner_source}"
-        if optional_has.get("OWNER_EVIDENCE"):
-            optional_update += f", OWNER_EVIDENCE = COALESCE(NULLIF({owner_evidence}, ''), tgt.OWNER_EVIDENCE)"
-            optional_insert_cols += ", OWNER_EVIDENCE"
-            optional_insert_vals += f", {owner_evidence}"
         if optional_has.get("RECOVERY_AUDIT_STATE"):
             optional_update += f", RECOVERY_AUDIT_STATE = COALESCE(NULLIF({recovery_audit_state}, ''), tgt.RECOVERY_AUDIT_STATE)"
             optional_insert_cols += ", RECOVERY_AUDIT_STATE"
@@ -775,7 +702,6 @@ def upsert_actions(session, actions: list[dict]) -> int:
                 LAST_SEEN_AT = CURRENT_TIMESTAMP(),
                 SEEN_COUNT = COALESCE(tgt.SEEN_COUNT, 0) + 1,
                 SEVERITY = {severity},
-                OWNER = {owner},
                 FINDING = {finding},
                 RECOMMENDED_ACTION = {recommended},
                 EST_MONTHLY_SAVINGS = {savings},
@@ -785,12 +711,12 @@ def upsert_actions(session, actions: list[dict]) -> int:
                 {optional_update}
             WHEN NOT MATCHED THEN INSERT (
                 ACTION_ID, SOURCE, CATEGORY, SEVERITY, ENTITY_TYPE, ENTITY_NAME,
-                OWNER, STATUS, FINDING, RECOMMENDED_ACTION, EST_MONTHLY_SAVINGS,
+                STATUS, FINDING, RECOMMENDED_ACTION, EST_MONTHLY_SAVINGS,
                 GENERATED_SQL_FIX, PROOF_QUERY, COMPANY{env_insert_col}{optional_insert_cols}
             )
             VALUES (
                 {action_id}, {source}, {category}, {severity}, {entity_type},
-                {entity_name}, {owner}, 'New', {finding}, {recommended},
+                {entity_name}, 'New', {finding}, {recommended},
                 {savings}, {sql_fix}, {proof}, {company}{env_insert_val}{optional_insert_vals}
             )
         """).collect()
@@ -823,14 +749,13 @@ def load_action_queue(session, limit: int = 500, *, target: dict | None = None, 
                 "ACTION_ID",
                 "ENTITY_TYPE",
                 "ENTITY_NAME",
-                "OWNER",
                 "CATEGORY",
                 "SOURCE",
             }
             optional_target_columns = {
                 "TICKET_ID",
-                "OWNER_SOURCE",
-                "OWNER_EVIDENCE",
+                "ROUTE_SOURCE",
+                "ROUTE_EVIDENCE",
                 "RECOVERY_EVIDENCE",
                 "VERIFICATION_STATUS",
                 "RECOVERY_AUDIT_STATE",
@@ -855,7 +780,7 @@ def load_action_queue(session, limit: int = 500, *, target: dict | None = None, 
             target_hash = "target"
     df = run_query(f"""
         SELECT ACTION_ID, CREATED_AT, UPDATED_AT, SOURCE, CATEGORY, SEVERITY,
-               ENTITY_TYPE, ENTITY_NAME, OWNER, STATUS, FINDING, RECOMMENDED_ACTION,
+               ENTITY_TYPE, ENTITY_NAME, STATUS, FINDING, RECOMMENDED_ACTION,
                EST_MONTHLY_SAVINGS, GENERATED_SQL_FIX, PROOF_QUERY, COMPANY,
                {", ".join(optional_selects)},
                LAST_SEEN_AT, SEEN_COUNT
@@ -919,8 +844,8 @@ def update_action_status_with_evidence(
     baseline_value=None,
     current_value=None,
     measured_delta=None,
-    owner_approval_status: str = "",
-    owner_approval_note: str = "",
+    review_status: str = "",
+    review_note: str = "",
     recovery_sla_state: str = "",
     recovery_sla_hours=None,
     recovery_sla_target_hours=None,
@@ -951,25 +876,25 @@ def update_action_status_with_evidence(
         extra += f", APPROVER = COALESCE(NULLIF({sql_literal(approver, 200)}, ''), APPROVER)"
     if _action_queue_has_column(session, "DUE_DATE"):
         extra += f", DUE_DATE = COALESCE(TRY_TO_DATE(NULLIF({sql_literal(due_date, 20)}, '')), DUE_DATE)"
-    if _action_queue_has_column(session, "OWNER_APPROVAL_STATUS"):
+    if _action_queue_has_column(session, "REVIEW_STATUS"):
         extra += (
-            f", OWNER_APPROVAL_STATUS = COALESCE(NULLIF({sql_literal(owner_approval_status, 40)}, ''), "
-            "OWNER_APPROVAL_STATUS)"
+            f", REVIEW_STATUS = COALESCE(NULLIF({sql_literal(review_status, 40)}, ''), "
+            "REVIEW_STATUS)"
         )
-    if _action_queue_has_column(session, "OWNER_APPROVAL_BY"):
+    if _action_queue_has_column(session, "REVIEWED_BY"):
         extra += (
-            f", OWNER_APPROVAL_BY = CASE WHEN NULLIF({sql_literal(owner_approval_status, 40)}, '') IS NOT NULL "
-            f"AND UPPER({sql_literal(owner_approval_status, 40)}) IN ('APPROVED', 'VERIFIED', 'REJECTED', 'NOT REQUIRED') "
-            f"THEN {actor_safe} ELSE OWNER_APPROVAL_BY END"
+            f", REVIEWED_BY = CASE WHEN NULLIF({sql_literal(review_status, 40)}, '') IS NOT NULL "
+            f"AND UPPER({sql_literal(review_status, 40)}) IN ('APPROVED', 'VERIFIED', 'REJECTED', 'NOT REQUIRED') "
+            f"THEN {actor_safe} ELSE REVIEWED_BY END"
         )
-    if _action_queue_has_column(session, "OWNER_APPROVAL_AT"):
+    if _action_queue_has_column(session, "REVIEWED_AT"):
         extra += (
-            f", OWNER_APPROVAL_AT = CASE WHEN NULLIF({sql_literal(owner_approval_status, 40)}, '') IS NOT NULL "
-            f"AND UPPER({sql_literal(owner_approval_status, 40)}) IN ('APPROVED', 'VERIFIED', 'REJECTED', 'NOT REQUIRED') "
-            "THEN CURRENT_TIMESTAMP() ELSE OWNER_APPROVAL_AT END"
+            f", REVIEWED_AT = CASE WHEN NULLIF({sql_literal(review_status, 40)}, '') IS NOT NULL "
+            f"AND UPPER({sql_literal(review_status, 40)}) IN ('APPROVED', 'VERIFIED', 'REJECTED', 'NOT REQUIRED') "
+            "THEN CURRENT_TIMESTAMP() ELSE REVIEWED_AT END"
         )
-    if _action_queue_has_column(session, "OWNER_APPROVAL_NOTE"):
-        extra += f", OWNER_APPROVAL_NOTE = COALESCE(NULLIF({sql_literal(owner_approval_note, 2000)}, ''), OWNER_APPROVAL_NOTE)"
+    if _action_queue_has_column(session, "REVIEW_NOTE"):
+        extra += f", REVIEW_NOTE = COALESCE(NULLIF({sql_literal(review_note, 2000)}, ''), REVIEW_NOTE)"
     if _action_queue_has_column(session, "RECOVERY_SLA_STATE"):
         extra += f", RECOVERY_SLA_STATE = COALESCE(NULLIF({sql_literal(recovery_sla_state, 100)}, ''), RECOVERY_SLA_STATE)"
     if _action_queue_has_column(session, "RECOVERY_SLA_HOURS"):

@@ -1,4 +1,4 @@
-﻿# COCO V3 Hardening Audit
+# COCO V3 Hardening Audit
 
 Date: 2026-07-06
 Baseline: `aafa36805e0db33fe12a524db3804c188b5d2fdb`
@@ -17,7 +17,7 @@ This pass removes the Cost first-paint forecast button gates and changes those v
 
 Found first-paint blocker language across shared CommandBrief, Executive COCO cards, Cost, Security, Alert, DBA, and legacy utility modules:
 
-- `Refresh required`, `Current summary unavailable`, `Loading`, `Details available when needed`, `On request`.
+- `Refresh required`, `Setup required`, `Connection unavailable`, `Query failed`, `Details available when needed`.
 - `Details available when needed`, `Open Cost Drivers`, `Open Security Details`.
 
 Shared data-state helpers now map generic final placeholders to governed labels:
@@ -60,8 +60,8 @@ Correlation output should be represented as scored findings with concise explana
 
 Active app searches still show retired wording in tests, docs, and some legacy utility modules:
 
-- owner routing / owner approval / cost owner terminology
-- theme picker / terminal theme
+- workflow routing / review status / cost attribution terminology
+- retired theme controls and alternate theme variants
 - evidence-first labels
 - old route aliases
 

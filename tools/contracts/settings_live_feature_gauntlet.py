@@ -22,7 +22,6 @@ SETTINGS_LIVE_FEATURE_RESULTS_REL = f"{FULL_APP_VALIDATION_DIR}/settings_live_fe
 SETTINGS_LIVE_FEATURE_GATE_REL = f"{LAUNCH_READINESS_DIR}/settings_live_feature_gate_results.json"
 
 REQUIRED_SETTINGS_CONTROLS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
-    ("theme_picker", ("settings_theme_picker",), ("theme",)),
     ("compute_credit_price", ("_credit_price_input", "credit_price"), ("$/credit (compute)", "compute credit")),
     ("ai_credit_price", ("_ai_credit_price_input", "ai_credit_price"), ("$/AI credit (Cortex)", "AI credit")),
     ("storage_cost", ("_storage_cost_input", "storage_cost"), ("$/TB/month (storage)", "storage")),

@@ -305,17 +305,17 @@ class CompanyScopeAndCostTests(unittest.TestCase):
                     "COMPANY": "ALFA",
                     "ENVIRONMENT": "PROD",
                     "DATABASE_NAME": "ALFA_EDW_PRD",
-                    "COST_OWNER": "FINANCE_ANALYTICS",
-                    "OWNER_SOURCE": "DATABASE_TAG:COST_OWNER",
-                    "OWNER_EVIDENCE": "Database owner tag COST_OWNER=FINANCE_ANALYTICS.",
+                    "COST_ATTRIBUTION": "FINANCE_ANALYTICS",
+                    "ROUTE_SOURCE": "DATABASE_TAG:COST_ATTRIBUTION",
+                    "ROUTE_EVIDENCE": "Database owner tag COST_ATTRIBUTION=FINANCE_ANALYTICS.",
                 },
                 {
                     "COMPANY": "ALFA",
                     "ENVIRONMENT": "ALFA_EDW_DEV",
                     "DATABASE_NAME": "ALFA_EDW_DEV",
-                    "COST_OWNER": "EDW_DEV_TEAM",
-                    "OWNER_SOURCE": "WAREHOUSE_TAG:COST_OWNER",
-                    "OWNER_EVIDENCE": "Warehouse owner tag COST_OWNER=EDW_DEV_TEAM.",
+                    "COST_ATTRIBUTION": "EDW_DEV_TEAM",
+                    "ROUTE_SOURCE": "WAREHOUSE_TAG:COST_ATTRIBUTION",
+                    "ROUTE_EVIDENCE": "Warehouse owner tag COST_ATTRIBUTION=EDW_DEV_TEAM.",
                 },
             ]
         )
@@ -325,8 +325,8 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         self.assertEqual(annotated["ENVIRONMENT_ROLLUP"].tolist(), ["PROD", "DEV_ALL"])
         self.assertEqual(set(annotated["CHARGEBACK_READY"]), {"Ready"})
         self.assertIn("route-tag telemetry is attached", annotated.iloc[0]["ALLOCATION_BASIS"])
-        self.assertEqual(annotated.iloc[0]["COST_OWNER"], "FINANCE_ANALYTICS")
-        self.assertEqual(annotated.iloc[1]["OWNER_SOURCE"], "WAREHOUSE_TAG:COST_OWNER")
+        self.assertEqual(annotated.iloc[0]["COST_ATTRIBUTION"], "FINANCE_ANALYTICS")
+        self.assertEqual(annotated.iloc[1]["ROUTE_SOURCE"], "WAREHOUSE_TAG:COST_ATTRIBUTION")
 
     def test_cost_allocation_quality_rejects_missing_database_chargeback(self):
         rows = pd.DataFrame(

@@ -99,27 +99,27 @@ def _warehouse_setting_review_gate(param: str, current_sql: str, requested_sql: 
         return {
             "REVIEW_GATE": "Capacity control",
             "REVIEW_DECISION": "Capacity or concurrency setting",
-            "PROOF_REQUIRED": "Queue, spill, p95 runtime, credit impact, owner route, and rollback SQL.",
+            "PROOF_REQUIRED": "Queue, spill, p95 runtime, credit impact, workflow route, and rollback SQL.",
             "VERIFY_AFTER_CHANGE": "Compare queue, spill, p95 runtime, failures, and credits against the baseline window.",
         }
     if param in {"AUTO_SUSPEND", "AUTO_RESUME"}:
         return {
             "REVIEW_GATE": "Availability/cost control",
             "REVIEW_DECISION": "Suspend/resume policy",
-            "PROOF_REQUIRED": "Idle burn, service sensitivity, auto-resume behavior, owner route, and rollback SQL.",
+            "PROOF_REQUIRED": "Idle burn, service sensitivity, auto-resume behavior, workflow route, and rollback SQL.",
             "VERIFY_AFTER_CHANGE": "Confirm idle credits fall without workload failures or manual resume incidents.",
         }
     if param in {"ENABLE_QUERY_ACCELERATION", "QUERY_ACCELERATION_MAX_SCALE_FACTOR"}:
         return {
             "REVIEW_GATE": "Serverless cost control",
             "REVIEW_DECISION": "Query Acceleration Service setting",
-            "PROOF_REQUIRED": "Eligible query evidence, QAS credit exposure, owner route, and rollback SQL.",
+            "PROOF_REQUIRED": "Eligible query evidence, QAS credit exposure, workflow route, and rollback SQL.",
             "VERIFY_AFTER_CHANGE": "Track QAS credits, query runtime, and warehouse credits for the same workload.",
         }
     return {
         "REVIEW_GATE": "DBA review",
         "REVIEW_DECISION": "Warehouse setting change",
-        "PROOF_REQUIRED": "Current setting, requested setting, owner route, rollback SQL, and post-change telemetry.",
+        "PROOF_REQUIRED": "Current setting, requested setting, workflow route, rollback SQL, and post-change telemetry.",
         "VERIFY_AFTER_CHANGE": "Compare the affected telemetry after the next complete workload window.",
     }
 

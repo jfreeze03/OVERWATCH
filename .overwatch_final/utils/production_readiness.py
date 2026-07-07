@@ -111,7 +111,7 @@ def load_production_validation_detail(
           VALUE_DETAIL,
           SOURCE_OBJECT,
           FRESHNESS_MINUTES,
-          OWNER_ROUTE AS ROUTE,
+          WORKFLOW_ROUTE AS ROUTE,
           RUNBOOK_STEP,
           CONFIDENCE
         FROM {table}

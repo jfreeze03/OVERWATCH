@@ -244,7 +244,7 @@ def _task_recovery_priority(state: str, downstream: int) -> str:
         return "P3 - Late Recovery"
     return "P4 - Verified Recovery"
 
-def _task_owner_approval_state(row: pd.Series) -> str:
+def _task_review_state(row: pd.Series) -> str:
     recovery_state = str(row.get("RECOVERY_STATE") or "").upper()
     signal = str(row.get("SIGNAL") or row.get("FAILURE_CATEGORY") or "").upper()
     if "OPEN" in recovery_state or "FAILED" in signal:
@@ -257,8 +257,8 @@ def _task_owner_approval_state(row: pd.Series) -> str:
         return "DBA release owner accepts or remediates baseline"
     return "DBA review before close"
 
-def _task_owner_approval_status(row: pd.Series) -> str:
-    state = str(row.get("OWNER_APPROVAL_STATE") or "").upper()
+def _task_review_status(row: pd.Series) -> str:
+    state = str(row.get("REVIEW_STATE") or "").upper()
     if "NOT REQUIRED" in state:
         return "Not Required"
     if "APPROVAL REQUIRED" in state or "Verification" in state or "ROOT-CAUSE OWNER" in state:
@@ -346,13 +346,13 @@ def _build_task_recovery_sla_frame(
             "PROCEDURE_NAME": meta.get("PROCEDURE_NAME", "") if not meta.empty else "",
             "TASK_FQN": task_fqn,
             "OWNER": owner_context.get("OWNER", base_owner),
-            "OWNER_EMAIL": owner_context.get("OWNER_EMAIL", ""),
-            "ONCALL_PRIMARY": owner_context.get("ONCALL_PRIMARY", ""),
-            "ONCALL_SECONDARY": owner_context.get("ONCALL_SECONDARY", ""),
-            "APPROVAL_GROUP": owner_context.get("APPROVAL_GROUP", ""),
-            "ESCALATION_TARGET": owner_context.get("ESCALATION_TARGET", ""),
-            "OWNER_SOURCE": owner_context.get("OWNER_SOURCE", ""),
-            "OWNER_EVIDENCE": owner_context.get("OWNER_EVIDENCE", ""),
+            "ROUTE_EMAIL": owner_context.get("ROUTE_EMAIL", ""),
+            "REVIEW_PRIMARY": owner_context.get("REVIEW_PRIMARY", ""),
+            "REVIEW_SECONDARY": owner_context.get("REVIEW_SECONDARY", ""),
+            "REVIEW_GROUP": owner_context.get("REVIEW_GROUP", ""),
+            "REVIEW_TARGET": owner_context.get("REVIEW_TARGET", ""),
+            "ROUTE_SOURCE": owner_context.get("ROUTE_SOURCE", ""),
+            "ROUTE_EVIDENCE": owner_context.get("ROUTE_EVIDENCE", ""),
             "GRAPH_ROLE": meta.get("GRAPH_ROLE", "Unknown") if not meta.empty else "Unknown",
             "DOWNSTREAM_TASK_COUNT": downstream,
             "BLAST_RADIUS": meta.get("BLAST_RADIUS", "Unknown") if not meta.empty else "Unknown",
@@ -368,7 +368,7 @@ def _build_task_recovery_sla_frame(
             "ERROR_SIGNATURE": _failure_signature(latest_failure.get("ERROR_MESSAGE")),
         }
         row["INCIDENT_PRIORITY"] = _task_recovery_priority(recovery_state, downstream)
-        row["OWNER_APPROVAL_STATE"] = _task_owner_approval_state(pd.Series(row))
+        row["REVIEW_STATE"] = _task_review_state(pd.Series(row))
         row["VERIFY_AFTER_FIX"] = (
             "Latest TASK_HISTORY run succeeds after the failure and recovery time is inside the configured SLA."
             if recovery_state == "Open Failure"
@@ -521,7 +521,7 @@ def _task_recovery_command_board(exceptions: pd.DataFrame, recovery_sla: pd.Data
             if task_name:
                 seen_tasks.add(task_name)
             readiness = str(row.get("RECOVERY_READINESS") or _task_exception_recovery_readiness(row)).strip()
-            owner_state = str(row.get("OWNER_APPROVAL_STATE") or _task_owner_approval_state(row)).strip()
+            owner_state = str(row.get("REVIEW_STATE") or _task_review_state(row)).strip()
             rows.append({
                 "INCIDENT_PRIORITY": row.get("INCIDENT_PRIORITY", ""),
                 "COMMAND_STATE": "Blocked" if readiness.upper().startswith("BLOCKED") else "Ready for DBA review",
@@ -532,9 +532,9 @@ def _task_recovery_command_board(exceptions: pd.DataFrame, recovery_sla: pd.Data
                 "DOWNSTREAM_TASK_COUNT": safe_int(row.get("DOWNSTREAM_TASK_COUNT")),
                 "RECOVERY_STATE": row.get("RECOVERY_STATE", ""),
                 "RECOVERY_READINESS": readiness,
-                "OWNER_APPROVAL_STATE": owner_state,
-                "ONCALL_PRIMARY": row.get("ONCALL_PRIMARY", ""),
-                "APPROVAL_GROUP": row.get("APPROVAL_GROUP", ""),
+                "REVIEW_STATE": owner_state,
+                "REVIEW_PRIMARY": row.get("REVIEW_PRIMARY", ""),
+                "REVIEW_GROUP": row.get("REVIEW_GROUP", ""),
                 "NEXT_WORKFLOW": row.get("NEXT_WORKFLOW", _task_ops_workflow_for(row.get("SIGNAL", ""))),
                 "NEXT_ACTION": row.get("NEXT_ACTION", _task_action_for(row.get("SIGNAL", ""))[0]),
                 "VERIFY_AFTER_FIX": row.get("VERIFY_AFTER_FIX", "Verify the next successful TASK_HISTORY run before closure."),
@@ -560,9 +560,9 @@ def _task_recovery_command_board(exceptions: pd.DataFrame, recovery_sla: pd.Data
                     if recovery_state == "Open Failure"
                     else "Blocked - record late recovery telemetry before close"
                 ),
-                "OWNER_APPROVAL_STATE": row.get("OWNER_APPROVAL_STATE", ""),
-                "ONCALL_PRIMARY": row.get("ONCALL_PRIMARY", ""),
-                "APPROVAL_GROUP": row.get("APPROVAL_GROUP", ""),
+                "REVIEW_STATE": row.get("REVIEW_STATE", ""),
+                "REVIEW_PRIMARY": row.get("REVIEW_PRIMARY", ""),
+                "REVIEW_GROUP": row.get("REVIEW_GROUP", ""),
                 "NEXT_WORKFLOW": "Failure Console",
                 "NEXT_ACTION": "Record recovery telemetry and confirm the next successful task run before closure.",
                 "VERIFY_AFTER_FIX": row.get("VERIFY_AFTER_FIX", "Record TASK_HISTORY recovery telemetry before closure."),
@@ -867,13 +867,13 @@ def _build_failure_console_frames(
         recovery_cols = [
             col for col in [
                 "TASK_NAME", "RECOVERY_STATE", "RECOVERY_HOURS", "RECOVERY_SLA_TARGET_HOURS",
-                "RECOVERY_AT", "OWNER_APPROVAL_STATE",
+                "RECOVERY_AT", "REVIEW_STATE",
             ] if col in recovery.columns
         ]
         failures = failures.merge(recovery[recovery_cols], on="TASK_NAME", how="left")
         failures["RECOVERY_STATE"] = failures["RECOVERY_STATE"].fillna("No recent recovery signal")
-        failures["OWNER_APPROVAL_STATE"] = failures.apply(
-            lambda row: row.get("OWNER_APPROVAL_STATE") or _task_owner_approval_state(row),
+        failures["REVIEW_STATE"] = failures.apply(
+            lambda row: row.get("REVIEW_STATE") or _task_review_state(row),
             axis=1,
         )
         failures["VERIFY_AFTER_FIX"] = failures.apply(
@@ -885,7 +885,7 @@ def _build_failure_console_frames(
         )
     else:
         failures["RECOVERY_STATE"] = "No recent recovery signal"
-        failures["OWNER_APPROVAL_STATE"] = failures.apply(_task_owner_approval_state, axis=1)
+        failures["REVIEW_STATE"] = failures.apply(_task_review_state, axis=1)
     failures["SEVERITY"] = failures["INCIDENT_PRIORITY"].apply(
         lambda value: "Critical" if str(value).startswith("P1")
         else "High" if str(value).startswith("P2")
@@ -970,7 +970,7 @@ def _build_failure_runbook_markdown(company: str, days: int, summary: dict, fail
                 f"- Recommended action: {row.get('RECOMMENDED_ACTION', '')}",
                 f"- Recovery status: {row.get('RECOVERY_READINESS', '')}",
                 f"- Recovery SLA state: {row.get('RECOVERY_STATE', '')}",
-                f"- Status: {row.get('OWNER_APPROVAL_STATE', '')}",
+                f"- Status: {row.get('REVIEW_STATE', '')}",
                 f"- Confirm after fix: {row.get('VERIFY_AFTER_FIX', '')}",
                 "- Retry plan after fix: reviewed runbook action",
                 "",
@@ -1051,7 +1051,7 @@ def _build_task_ops_markdown(
                 f"{row.get('SIGNAL', 'Unknown')} | "
                 f"{row.get('TASK_NAME', '')} | {row.get('PROCEDURE_NAME', '')} | "
                 f"{row.get('DETAIL', '')} | Recovery: {row.get('RECOVERY_READINESS', '')} | "
-                f"SLA state: {row.get('RECOVERY_STATE', '')} | Status: {row.get('OWNER_APPROVAL_STATE', '')} | "
+                f"SLA state: {row.get('RECOVERY_STATE', '')} | Status: {row.get('REVIEW_STATE', '')} | "
                 f"Downstream tasks: {safe_int(row.get('DOWNSTREAM_TASK_COUNT')):,} | "
                 f"Impact hints: {row.get('IMPACT_OBJECTS', '')}"
             )
@@ -1275,7 +1275,7 @@ def _build_task_ops_frames(
             recovery_by_task = recovery.drop_duplicates("TASK_NAME", keep="last").set_index("TASK_NAME")
             for col in [
                 "RECOVERY_STATE", "RECOVERY_HOURS", "RECOVERY_SLA_TARGET_HOURS",
-                "RECOVERY_AT", "LAST_FAILURE_AT", "OWNER_APPROVAL_STATE",
+                "RECOVERY_AT", "LAST_FAILURE_AT", "REVIEW_STATE",
             ]:
                 if col in recovery_by_task.columns:
                     mapped = exceptions["TASK_NAME"].map(recovery_by_task[col])
@@ -1285,11 +1285,11 @@ def _build_task_ops_frames(
                         exceptions[col] = mapped
         exceptions["INCIDENT_PRIORITY"] = exceptions.apply(_task_exception_incident_priority, axis=1)
         exceptions["RECOVERY_READINESS"] = exceptions.apply(_task_exception_recovery_readiness, axis=1)
-        owner_approval = exceptions.get("OWNER_APPROVAL_STATE", pd.Series([""] * len(exceptions), index=exceptions.index))
-        missing_owner_approval = owner_approval.fillna("").astype(str).str.strip().eq("")
-        exceptions["OWNER_APPROVAL_STATE"] = owner_approval
-        exceptions.loc[missing_owner_approval, "OWNER_APPROVAL_STATE"] = exceptions.loc[missing_owner_approval].apply(
-            _task_owner_approval_state,
+        review_status = exceptions.get("REVIEW_STATE", pd.Series([""] * len(exceptions), index=exceptions.index))
+        missing_review_status = review_status.fillna("").astype(str).str.strip().eq("")
+        exceptions["REVIEW_STATE"] = review_status
+        exceptions.loc[missing_review_status, "REVIEW_STATE"] = exceptions.loc[missing_review_status].apply(
+            _task_review_state,
             axis=1,
         )
         exceptions["VERIFY_AFTER_FIX"] = exceptions.apply(
@@ -1566,4 +1566,4 @@ def _build_task_reliability_slo_board(summary: dict, exceptions: pd.DataFrame, r
         "review": int((board["STATE"] == "Review").sum()),
     }, board.sort_values(["_RANK", "SLO"]).drop(columns=["_RANK"], errors="ignore")
 
-__all__ = ['_procedure_from_definition', '_extract_object_candidates', '_task_root_name', '_df_col', '_blankish_series', '_task_failure_mask', '_task_success_mask', '_parse_task_predecessors', '_annotate_task_graph_impact', '_task_full_name', '_is_prod_task', '_confirmation_phrase', '_collect_graph_tasks', '_build_task_graph_dot', '_task_ops_score', '_task_time_series', '_normalize_task_history_for_recovery', '_recovery_state_rank', '_task_recovery_priority', '_task_owner_approval_state', '_task_owner_approval_status', '_build_task_recovery_sla_frame', '_task_recovery_sla_summary', '_build_task_critical_path_snapshot', '_normalize_task_critical_path_mart', '_task_ops_priority_view', '_task_recovery_command_board', '_task_ops_workflow_for', '_task_action_for', '_failure_signature', '_failure_diagnosis', '_estimate_query_credits', '_normalize_query_details', '_prepare_inventory_for_failures', '_failure_incident_priority', '_failure_recovery_readiness', '_verification_after_failure', '_task_exception_incident_priority', '_task_exception_recovery_readiness', '_build_failure_console_frames', '_build_failure_runbook_markdown', '_task_owner', '_task_environment', '_task_metric', '_build_task_ops_markdown', '_build_task_ops_frames', '_task_task_status_handoff_state', '_state_distribution_text', '_latest_task_timestamp', '_first_task_value', '_build_task_status_job_status_board', '_build_task_status_error_board', '_build_task_reliability_slo_board']
+__all__ = ['_procedure_from_definition', '_extract_object_candidates', '_task_root_name', '_df_col', '_blankish_series', '_task_failure_mask', '_task_success_mask', '_parse_task_predecessors', '_annotate_task_graph_impact', '_task_full_name', '_is_prod_task', '_confirmation_phrase', '_collect_graph_tasks', '_build_task_graph_dot', '_task_ops_score', '_task_time_series', '_normalize_task_history_for_recovery', '_recovery_state_rank', '_task_recovery_priority', '_task_review_state', '_task_review_status', '_build_task_recovery_sla_frame', '_task_recovery_sla_summary', '_build_task_critical_path_snapshot', '_normalize_task_critical_path_mart', '_task_ops_priority_view', '_task_recovery_command_board', '_task_ops_workflow_for', '_task_action_for', '_failure_signature', '_failure_diagnosis', '_estimate_query_credits', '_normalize_query_details', '_prepare_inventory_for_failures', '_failure_incident_priority', '_failure_recovery_readiness', '_verification_after_failure', '_task_exception_incident_priority', '_task_exception_recovery_readiness', '_build_failure_console_frames', '_build_failure_runbook_markdown', '_task_owner', '_task_environment', '_task_metric', '_build_task_ops_markdown', '_build_task_ops_frames', '_task_task_status_handoff_state', '_state_distribution_text', '_latest_task_timestamp', '_first_task_value', '_build_task_status_job_status_board', '_build_task_status_error_board', '_build_task_reliability_slo_board']

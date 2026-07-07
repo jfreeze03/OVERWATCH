@@ -37,7 +37,7 @@ def _annotate_security_privileged_grant_readiness(grants: pd.DataFrame) -> pd.Da
             "ENTITY": row.get("ENTITY", ""),
             "DATABASE_NAME": row.get("DATABASE_NAME", ""),
         })
-        route_ready = bool(context.get("owner_email") or context.get("oncall_primary") or context.get("escalation"))
+        route_ready = bool(context.get("route_email") or context.get("review_primary") or context.get("escalation"))
         database_context = bool(row.get("DATABASE_CONTEXT"))
         role_name = str(row.get("ROLE_NAME") or "").strip().upper()
         object_name = str(row.get("OBJECT_NAME") or "").strip()
@@ -64,13 +64,13 @@ def _annotate_security_privileged_grant_readiness(grants: pd.DataFrame) -> pd.Da
             next_action = "Validate business justification and monitor telemetry before closure."
         rows.append({
             "OWNER": context.get("owner", ""),
-            "OWNER_EMAIL": context.get("owner_email", ""),
-            "ONCALL_PRIMARY": context.get("oncall_primary", ""),
-            "APPROVAL_GROUP": "",
-            "ESCALATION_TARGET": context.get("escalation", ""),
-            "OWNER_SOURCE": context.get("source", ""),
-            "OWNER_EVIDENCE": context.get("owner_evidence", ""),
-            "OWNER_ROUTE_READY": "Yes" if route_ready else "No",
+            "ROUTE_EMAIL": context.get("route_email", ""),
+            "REVIEW_PRIMARY": context.get("review_primary", ""),
+            "REVIEW_GROUP": "",
+            "REVIEW_TARGET": context.get("escalation", ""),
+            "ROUTE_SOURCE": context.get("source", ""),
+            "ROUTE_EVIDENCE": context.get("route_evidence", ""),
+            "WORKFLOW_ROUTE_READY": "Yes" if route_ready else "No",
             "GRANT_REVIEW_STATE": review_state,
             "GRANT_REVIEW_READINESS": readiness,
             "GRANT_REVIEW_RANK": rank,
@@ -241,8 +241,8 @@ def _render_privileged_grant_readiness(
                 "SEVERITY", "GRANT_REVIEW_READINESS", "GRANT_REVIEW_STATE",
                 "FINDING_TYPE", "ENTITY", "ROLE_NAME", "PRIVILEGE", "GRANT_OPTION",
                 "OBJECT_NAME", "DATABASE_NAME", "GRANT_AGE_DAYS",
-                "ENVIRONMENT", "SCOPE_CONFIDENCE", "OWNER", "OWNER_ROUTE_READY",
-                "ONCALL_PRIMARY", "APPROVAL_GROUP", "GRANTED_BY", "CREATED_ON",
+                "ENVIRONMENT", "SCOPE_CONFIDENCE", "OWNER", "WORKFLOW_ROUTE_READY",
+                "REVIEW_PRIMARY", "REVIEW_GROUP", "GRANTED_BY", "CREATED_ON",
                 "PROOF_REQUIRED", "NEXT_GRANT_ACTION",
             ],
             sort_by=["GRANT_REVIEW_RANK", "SEVERITY", "CREATED_ON"],

@@ -55,11 +55,11 @@ class ProductionReadinessContractTests(unittest.TestCase):
         text = self._readiness_text()
         self.assertIn("Compatibility/deep-link routes normalize to current workflow locations", text)
         for fragment in (
-            "Cost Center -> Cost & Contract workflow",
-            "Account Health -> DBA Control Room workflow",
-            "Security Posture -> Security Monitoring workflow",
+            "Executive Briefing -> Executive Landing workflow",
+            "Cost Intelligence -> Cost & Contract workflow",
             "Task Management -> Workload Operations workflow",
-            "Change Drift / Change & Drift -> Workload Operations delegated workflow path",
+            "Security & Access -> Security Monitoring workflow",
+            "Alert History -> Alert Center workflow",
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, text)

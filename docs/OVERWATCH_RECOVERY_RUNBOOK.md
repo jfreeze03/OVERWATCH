@@ -29,7 +29,7 @@ Use this when the dashboard is blank, stale, slow, or showing conflicting teleme
 1. Query `ALERT_EVENTS` for open, acknowledged, suppressed, and resolved rows.
 2. Check `ALERT_RUN_HISTORY` for the latest alert task run.
 3. Check `ALERT_SUPPRESSION_WINDOWS` or equivalent suppression policy before reopening alerts.
-4. Validate that native Snowflake alerts are notification-only until owner routing and dedupe are approved.
+4. Validate that native Snowflake alerts are notification-only until workflow routing and dedupe are approved.
 
 ## If The App Is Slow
 

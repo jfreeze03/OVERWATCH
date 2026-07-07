@@ -25,14 +25,14 @@ from utils import (
 
 def _chargeback_action_owner(row: pd.Series) -> str:
     readiness = _row_text(row, "CHARGEBACK_READY").upper()
-    owner_source = _row_text(row, "OWNER_SOURCE").upper()
-    cost_owner = _row_text(row, "COST_OWNER")
-    if "TAG" in owner_source and cost_owner:
-        return cost_owner
+    route_source = _row_text(row, "ROUTE_SOURCE").upper()
+    cost_attribution = _row_text(row, "COST_ATTRIBUTION")
+    if "TAG" in route_source and cost_attribution:
+        return cost_attribution
     user = _row_text(row, "USER_NAME")
     if readiness in {"NO", "REVIEW"}:
-        return "DBA / Cost owner"
-    return user if user and user.upper() not in {"UNKNOWN USER", "UNKNOWN_USER"} else "DBA / Cost owner"
+        return "DBA / Cost attribution"
+    return user if user and user.upper() not in {"UNKNOWN USER", "UNKNOWN_USER"} else "DBA / Cost attribution"
 
 
 def _chargeback_route_text(value: str, default: str = "") -> str:
@@ -59,17 +59,17 @@ def _chargeback_action_sql_note(row: pd.Series, credits: float, est_cost: float)
     scope_review = _row_text(row, "SCOPE_REVIEW") or "None"
     database = _row_text(row, "DATABASE_NAME") or "NO_DATABASE_CONTEXT"
     env_rollup = _row_text(row, "ENVIRONMENT_ROLLUP") or _environment_rollup_for_cost(row)
-    cost_owner = _chargeback_route_text(_row_text(row, "COST_OWNER") or "Missing")
-    owner_source = _chargeback_route_text(_row_text(row, "OWNER_SOURCE") or "Missing")
-    owner_evidence = _chargeback_route_text(_row_text(row, "OWNER_EVIDENCE"), "No route telemetry attached.")
+    cost_attribution = _chargeback_route_text(_row_text(row, "COST_ATTRIBUTION") or "Missing")
+    route_source = _chargeback_route_text(_row_text(row, "ROUTE_SOURCE") or "Missing")
+    route_evidence = _chargeback_route_text(_row_text(row, "ROUTE_EVIDENCE"), "No route telemetry attached.")
     return "\n".join([
         "-- Chargeback review note, no state-changing SQL.",
         "-- Do not bill from this row until allocation measurement and route telemetry are attached.",
         f"-- Database: {database}",
         f"-- Environment rollup: {env_rollup}",
-        f"-- Cost route: {cost_owner}",
-        f"-- Route basis: {owner_source}",
-        f"-- Route telemetry: {owner_evidence}",
+        f"-- Cost route: {cost_attribution}",
+        f"-- Route basis: {route_source}",
+        f"-- Route telemetry: {route_evidence}",
         f"-- Credits: {credits:,.4f}; estimated cost: ${est_cost:,.2f}",
         f"-- Allocation measurement: {confidence}",
         f"-- Chargeback status: {readiness}",
@@ -115,8 +115,8 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
         confidence = _row_text(row, "ALLOCATION_CONFIDENCE")
         readiness = _row_text(row, "CHARGEBACK_READY")
         scope_review = _row_text(row, "SCOPE_REVIEW")
-        owner_source = _row_text(row, "OWNER_SOURCE")
-        owner_evidence = _row_text(row, "OWNER_EVIDENCE")
+        route_source = _row_text(row, "ROUTE_SOURCE")
+        route_evidence = _row_text(row, "ROUTE_EVIDENCE")
         credits = safe_float(row.get("TOTAL_CREDITS", 0))
         est_cost = credits_to_dollars(credits, credit_price)
         if baseline > 0 and credits < baseline * 2 and est_cost < 500:
@@ -129,7 +129,7 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
         confidence_note = f" ({confidence})" if confidence else ""
         readiness_note = f"; chargeback status: {readiness}" if readiness else ""
         scope_note = f"; scope review: {scope_review}" if scope_review and scope_review != "None" else ""
-        owner_note = f"; route telemetry: {owner_source}" if owner_source else ""
+        owner_note = f"; route telemetry: {route_source}" if route_source else ""
         finding = (
             f"{entity} consumed {credits:,.2f} credits (${est_cost:,.2f}) "
             f"in the selected window{confidence_note}{readiness_note}{scope_note}{owner_note}"
@@ -149,13 +149,13 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
             action_text = (
                 f"{action_text} This row is not cleanly chargeback-ready; resolve scope/route telemetry before billing."
             )
-        if is_chargeback and "TAG" not in owner_source.upper():
+        if is_chargeback and "TAG" not in route_source.upper():
             action_text = (
                 f"{action_text} Missing Snowflake route-tag telemetry; attach cost, data, or app allocation telemetry "
                 "or classify this as shared/unallocated."
             )
-        if owner_evidence:
-            action_text = f"{action_text} Route telemetry: {owner_evidence[:300]}"
+        if route_evidence:
+            action_text = f"{action_text} Route telemetry: {route_evidence[:300]}"
         action_owner = _chargeback_action_owner(row) if is_chargeback else (user if user != "Unknown user" else "DBA")
         owner_context = resolve_owner_context(
             row,
@@ -167,10 +167,10 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
         )
         action_owner = owner_context.get("OWNER") or action_owner
         approver = (
-            owner_context.get("APPROVAL_GROUP")
-            or ("Cost owner / Cost Route" if is_chargeback else "Cost owner / Workload Route")
+            owner_context.get("REVIEW_GROUP")
+            or ("Cost attribution / Cost Route" if is_chargeback else "Cost attribution / Workload Route")
         )
-        owner_approval_note = (
+        review_note = (
             "Allocated/estimated chargeback requires route/tag telemetry review before billing. "
             "Close only after the next complete period measurement confirms the billable driver or documents shared/unallocated treatment."
             if is_chargeback
@@ -186,13 +186,13 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
             "Entity": entity,
             "Owner": action_owner,
             "Approver": approver,
-            "Owner Email": owner_context.get("OWNER_EMAIL", ""),
-            "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
-            "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
+            "Route Email": owner_context.get("ROUTE_EMAIL", ""),
+            "Review Primary": owner_context.get("REVIEW_PRIMARY", ""),
+            "Review Secondary": owner_context.get("REVIEW_SECONDARY", ""),
             "Review Group": approver,
-            "Escalation Target": owner_context.get("ESCALATION_TARGET", ""),
-            "Owner Source": owner_context.get("OWNER_SOURCE", owner_source),
-            "Owner Evidence": owner_context.get("OWNER_EVIDENCE", owner_evidence),
+            "Review Target": owner_context.get("REVIEW_TARGET", ""),
+            "Route Source": owner_context.get("ROUTE_SOURCE", route_source),
+            "Route Evidence": owner_context.get("ROUTE_EVIDENCE", route_evidence),
             "Finding": finding,
             "Action": action_text,
             "Estimated Monthly Savings": round(monthly_savings, 2),
@@ -206,7 +206,7 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
             "Current Value": round(credits, 4),
             "Measured Delta": round(credits, 4),
             "Verification Status": "Requested",
-            "Verification Note": owner_approval_note,
+            "Verification Note": review_note,
             "Recovery SLA State": "Chargeback Telemetry Pending" if is_chargeback else "Savings Measurement Pending",
             "Recovery SLA Target Hours": 168.0,
         })
@@ -237,7 +237,7 @@ def _warehouse_cost_control_action(
         row.get("OWNER")
         or row.get("WAREHOUSE_OWNER")
         or row.get("OWNER_ROLE")
-        or "DBA / Cost owner"
+        or "DBA / Cost attribution"
     ))
     base_owner = owner
     owner_context = resolve_owner_context(
@@ -268,11 +268,11 @@ def _warehouse_cost_control_action(
         "Measure savings in the next complete period before marking fixed."
     )
     approver = (
-        f"{owner} / Cost owner"
-        if base_owner and base_owner.upper() not in {"DBA", "DBA / COST OWNER", "UNKNOWN"}
-        else owner_context.get("APPROVAL_GROUP") or "Cost owner / Warehouse Route"
+        f"{owner} / Cost attribution"
+        if base_owner and base_owner.upper() not in {"DBA", "DBA / COST ATTRIBUTION", "UNKNOWN"}
+        else owner_context.get("REVIEW_GROUP") or "Cost attribution / Warehouse Route"
     )
-    owner_approval_note = (
+    review_note = (
         f"Exact warehouse metering for {period_label}. Review is required before any warehouse "
         "setting change; close only after the next complete period measurement query shows the "
         "reviewed change reduced or justified the delta."
@@ -295,13 +295,13 @@ def _warehouse_cost_control_action(
         "Entity": wh,
         "Owner": owner,
         "Approver": approver,
-        "Owner Email": owner_context.get("OWNER_EMAIL", ""),
-        "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
-        "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
+        "Route Email": owner_context.get("ROUTE_EMAIL", ""),
+        "Review Primary": owner_context.get("REVIEW_PRIMARY", ""),
+        "Review Secondary": owner_context.get("REVIEW_SECONDARY", ""),
         "Review Group": approver,
-        "Escalation Target": owner_context.get("ESCALATION_TARGET", ""),
-        "Owner Source": _chargeback_route_text(owner_context.get("OWNER_SOURCE", "")),
-        "Owner Evidence": _chargeback_route_text(owner_context.get("OWNER_EVIDENCE", "")),
+        "Review Target": owner_context.get("REVIEW_TARGET", ""),
+        "Route Source": _chargeback_route_text(owner_context.get("ROUTE_SOURCE", "")),
+        "Route Evidence": _chargeback_route_text(owner_context.get("ROUTE_EVIDENCE", "")),
         "Finding": finding,
         "Action": f"{confidence}. {action}",
         "Estimated Monthly Savings": round(max(0.0, est_delta_cost * 0.25), 2),
@@ -315,7 +315,7 @@ def _warehouse_cost_control_action(
         "Current Value": round(current, 4),
         "Measured Delta": round(delta, 4),
         "Verification Status": "Requested",
-        "Verification Note": owner_approval_note,
+        "Verification Note": review_note,
         "Recovery SLA State": "Savings Measurement Pending",
         "Recovery SLA Target Hours": 168.0,
     }

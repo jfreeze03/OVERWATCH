@@ -166,8 +166,8 @@ def annotate_alert_triage_frame(df: pd.DataFrame, *, now: Any | None = None) -> 
         view.loc[closed_mask, "SLA_STATE"] = "Closed"
     else:
         view["SLA_STATE"] = view["SLA_STATE"].fillna("Within SLA")
-    if "ESCALATION_TARGET" not in view.columns:
-        view["ESCALATION_TARGET"] = view.apply(
+    if "REVIEW_TARGET" not in view.columns:
+        view["REVIEW_TARGET"] = view.apply(
             lambda row: (
                 "DBA Lead"
                 if row.get("SLA_STATE") == "Overdue" and normalize_alert_severity(row.get("SEVERITY")) in {"Critical", "High"}
@@ -176,7 +176,7 @@ def annotate_alert_triage_frame(df: pd.DataFrame, *, now: Any | None = None) -> 
             axis=1,
         )
     else:
-        view["ESCALATION_TARGET"] = view["ESCALATION_TARGET"].fillna(view.get("OWNER", "DBA"))
+        view["REVIEW_TARGET"] = view["REVIEW_TARGET"].fillna(view.get("OWNER", "DBA"))
     view["_SLA_RANK"] = view["SLA_STATE"].map({"Overdue": 0, "Due Soon": 1, "Within SLA": 2, "Closed": 9}).fillna(5)
     if "TRIAGE_PRIORITY" in view.columns:
         view["TRIAGE_PRIORITY"] = pd.to_numeric(view["TRIAGE_PRIORITY"], errors="coerce")
@@ -202,10 +202,10 @@ def alert_escalation_candidates(df: pd.DataFrame, *, limit: int = 10) -> pd.Data
         return view
     severity = view["SEVERITY"].apply(normalize_alert_severity).isin(["Critical", "High"])
     sla = view.get("SLA_STATE", pd.Series(["Within SLA"] * len(view), index=view.index)).isin(["Overdue", "Due Soon"])
-    owner_gap = view.get("OWNER", pd.Series(["DBA"] * len(view), index=view.index)).fillna("").astype(str).str.upper().isin(
-        ["", "DBA", "DBA / COST OWNER", "DBA / PLATFORM", "DBA / SECURITY", "DBA / PIPELINE OWNER"]
+    workflow_gap = view.get("OWNER", pd.Series(["DBA"] * len(view), index=view.index)).fillna("").astype(str).str.upper().isin(
+        ["", "DBA", "DBA / COST ATTRIBUTION", "DBA / PLATFORM", "DBA / SECURITY", "DBA / PIPELINE OWNER"]
     )
-    candidates = view[severity | sla | owner_gap].copy()
+    candidates = view[severity | sla | workflow_gap].copy()
     if candidates.empty:
         candidates = view.head(limit).copy()
     return candidates.sort_values(["TRIAGE_PRIORITY", "ALERT_TS"], ascending=[True, False]).head(limit)
@@ -243,7 +243,7 @@ def build_alert_digest_summary(df: pd.DataFrame) -> dict[str, int]:
         "overdue": int(active.get("SLA_STATE", pd.Series([""] * len(active), index=active.index)).eq("Overdue").sum()),
         "due_soon": int(active.get("SLA_STATE", pd.Series([""] * len(active), index=active.index)).eq("Due Soon").sum()),
         "email_ready": int(delivery.str.contains("EMAIL_READY").sum()),
-        "needs_owner": int(owners.isin(["", "DBA", "DBA / COST OWNER", "DBA / PLATFORM", "DBA / SECURITY", "DBA / PIPELINE OWNER"]).sum()),
+        "needs_owner": int(owners.isin(["", "DBA", "DBA / COST ATTRIBUTION", "DBA / PLATFORM", "DBA / SECURITY", "DBA / PIPELINE OWNER"]).sum()),
     }
 
 
@@ -510,7 +510,7 @@ def load_alert_history(
         "ALERT_ROUTE",
         "ALERT_RUNBOOK",
         "SLA_STATE",
-        "ESCALATION_TARGET",
+        "REVIEW_TARGET",
         "TRIAGE_PRIORITY",
     ]
     compact_table = mart_object_name("MART_ALERT_EVIDENCE_RECENT")
@@ -596,7 +596,7 @@ def load_alert_history(
             {_coalesce_sql(columns, "ALERT_ROUTE", default="''")} AS ALERT_ROUTE,
             {_coalesce_sql(columns, "ALERT_RUNBOOK", default="''")} AS ALERT_RUNBOOK,
             {_coalesce_sql(columns, "SLA_STATE", default="NULL")} AS SLA_STATE,
-            {_coalesce_sql(columns, "ESCALATION_TARGET", default="NULL")} AS ESCALATION_TARGET,
+            {_coalesce_sql(columns, "REVIEW_TARGET", default="NULL")} AS REVIEW_TARGET,
             {_coalesce_sql(columns, "TRIAGE_PRIORITY", default="NULL")} AS TRIAGE_PRIORITY
         FROM {table}
         WHERE 1 = 1

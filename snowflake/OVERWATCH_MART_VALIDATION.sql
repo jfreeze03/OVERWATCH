@@ -41,15 +41,15 @@ WITH required_objects AS (
         ('VIEW', 'ALERT_NATIVE_DEPLOYMENT_REVIEW_V'),
         ('TABLE', 'ALERT_NOTIFICATION_LOG'),
         ('TABLE', 'ALERT_THRESHOLDS'),
-        ('TABLE', 'ALERT_OWNER_ROUTING'),
+        ('TABLE', 'ALERT_WORKFLOW_ROUTING'),
         ('TABLE', 'OVERWATCH_RECON_CONFIG'),
         ('TABLE', 'OVERWATCH_RECON_RUN'),
         ('TABLE', 'OVERWATCH_SCHEMA_DIFF_RESULT'),
         ('TABLE', 'OVERWATCH_DATA_TRUST_SOURCE'),
         ('TABLE', 'OVERWATCH_DATA_TRUST_STATUS'),
         ('TABLE', 'MART_DATA_TRUST_SUMMARY'),
-        ('TABLE', 'OVERWATCH_OPERATIONAL_OWNER_MAP'),
-        ('TABLE', 'MART_OPERATIONAL_OWNER_COVERAGE'),
+        ('TABLE', 'OVERWATCH_OPERATIONAL_ROUTE_MAP'),
+        ('TABLE', 'MART_OPERATIONAL_ROUTE_COVERAGE'),
         ('TABLE', 'OVERWATCH_VALUE_LEDGER'),
         ('TABLE', 'MART_EXECUTIVE_VALUE_LEDGER'),
         ('TABLE', 'OVERWATCH_APP_OBSERVABILITY'),
@@ -223,7 +223,7 @@ WITH known_drift AS (
         ('TABLE', 'OVERWATCH_COMPANY_SCOPE', 'migration candidate', 'If it contains useful ALFA/Trexis rules, migrate them to the current company/role/warehouse scope model before dropping.', 'SELECT * FROM OVERWATCH_COMPANY_SCOPE; -- review then DROP TABLE IF EXISTS OVERWATCH_COMPANY_SCOPE;'),
         ('TABLE', 'OVERWATCH_COST_SAVINGS_VERIFICATION_RUN', 'migration candidate', 'Migrate useful savings proof to OVERWATCH_ACTION_VERIFICATION or OVERWATCH_VALUE_LEDGER before dropping.', 'SELECT * FROM OVERWATCH_COST_SAVINGS_VERIFICATION_RUN; -- review then DROP TABLE IF EXISTS OVERWATCH_COST_SAVINGS_VERIFICATION_RUN;'),
         ('TABLE', 'OVERWATCH_ITSM_TICKET', 'required retention', 'Potential ticket/audit history. Export or migrate needed rows before any drop.', 'SELECT * FROM OVERWATCH_ITSM_TICKET;'),
-        ('TABLE', 'OVERWATCH_OWNER_DIRECTORY', 'migration candidate', 'Generic owner directory is retired; migrate active routes to OVERWATCH_OPERATIONAL_OWNER_MAP before dropping.', 'SELECT * FROM OVERWATCH_OWNER_DIRECTORY; -- review then DROP TABLE IF EXISTS OVERWATCH_OWNER_DIRECTORY;'),
+        ('TABLE', 'OVERWATCH_ROUTE_DIRECTORY', 'migration candidate', 'Generic route directory is retired; migrate active routes to OVERWATCH_OPERATIONAL_ROUTE_MAP before dropping.', 'SELECT * FROM OVERWATCH_ROUTE_DIRECTORY; -- review then DROP TABLE IF EXISTS OVERWATCH_ROUTE_DIRECTORY;'),
         ('TABLE', 'OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER', 'cleanup candidate', 'Platform futures scope is retired from the app. Drop after dependency check.', 'DROP TABLE IF EXISTS OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER;'),
         ('TABLE', 'OVERWATCH_PLATFORM_FUTURES_EVIDENCE', 'cleanup candidate', 'Platform futures evidence is retired from the app. Drop after dependency check.', 'DROP TABLE IF EXISTS OVERWATCH_PLATFORM_FUTURES_EVIDENCE;'),
         ('TABLE', 'OVERWATCH_ROI_LOG', 'migration candidate', 'Migrate any useful value proof to OVERWATCH_VALUE_LEDGER before dropping.', 'SELECT * FROM OVERWATCH_ROI_LOG; -- review then DROP TABLE IF EXISTS OVERWATCH_ROI_LOG;'),
@@ -240,7 +240,7 @@ WITH known_drift AS (
         ('TABLE', 'PERF_TEST_WAREHOUSE_METERING_HISTORY', 'approved legacy', 'Perf-test history is approved legacy validation evidence. Drop only if local perf history is formally retired.', 'DROP TABLE IF EXISTS PERF_TEST_WAREHOUSE_METERING_HISTORY;'),
         ('VIEW', 'OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V', 'migration candidate', 'Old savings proof view. Replace with closed-loop verification/value ledger detail.', 'DROP VIEW IF EXISTS OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V;'),
         ('VIEW', 'OVERWATCH_COST_SAVINGS_VERIFICATION_V', 'migration candidate', 'Old savings proof view. Replace with closed-loop verification/value ledger detail.', 'DROP VIEW IF EXISTS OVERWATCH_COST_SAVINGS_VERIFICATION_V;'),
-        ('VIEW', 'OVERWATCH_OWNER_DIRECTORY_ACTIVE_V', 'migration candidate', 'Generic owner directory view is retired; migrate routes to OVERWATCH_OPERATIONAL_OWNER_MAP first.', 'DROP VIEW IF EXISTS OVERWATCH_OWNER_DIRECTORY_ACTIVE_V;'),
+        ('VIEW', 'OVERWATCH_ROUTE_DIRECTORY_ACTIVE_V', 'migration candidate', 'Generic route directory view is retired; migrate routes to OVERWATCH_OPERATIONAL_ROUTE_MAP first.', 'DROP VIEW IF EXISTS OVERWATCH_ROUTE_DIRECTORY_ACTIVE_V;'),
         ('VIEW', 'OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V', 'cleanup candidate', 'Platform futures scope is retired from the app. Drop after dependency check.', 'DROP VIEW IF EXISTS OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V;'),
         ('VIEW', 'OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V', 'cleanup candidate', 'Platform futures scope is retired from the app. Drop after dependency check.', 'DROP VIEW IF EXISTS OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V;'),
         ('VIEW', 'PERF_TEST_APP_USAGE_REPORT_V', 'approved legacy', 'Perf-test view is approved legacy validation evidence. Drop only if local perf reports are formally retired.', 'DROP VIEW IF EXISTS PERF_TEST_APP_USAGE_REPORT_V;'),
@@ -362,26 +362,26 @@ ORDER BY AGE_MINUTES DESC NULLS FIRST, SOURCE_NAME;
 WITH refresh_contract AS (
     SELECT * FROM VALUES
         ('EXECUTIVE_OBSERVABILITY', 'Executive Landing', 'MART', 60, 'TASK_AFTER_FACT_LOADS', 'MART_EXECUTIVE_OBSERVABILITY', 35, TRUE, FALSE, 'Executive Landing reads one compact mart query on first paint.', 'DBA / Platform'),
-        ('DBA_CONTROL_ROOM_FAST', 'DBA Control Room', 'MART', 60, 'TASK_AFTER_HOURLY_FACTS', 'MART_DBA_CONTROL_ROOM', 35, TRUE, FALSE, 'Morning triage renders from a small control-room mart before live ACCOUNT_USAGE detail.', 'DBA On-Call'),
-        ('COST_WATCH_FLOOR', 'Cost & Contract', 'MART_AND_BOUNDED_OFFICIAL_COST', 60, 'TASK_PLUS_EXPLICIT_REFRESH', 'FACT_COST_DAILY; FACT_CORTEX_DAILY; WAREHOUSE_METERING_HISTORY', 730, TRUE, FALSE, 'Cost first paint shows lightweight spend, Cortex, and warehouse movement; full attribution proof is explicit.', 'DBA / Cost owner'),
-        ('ALERT_COMMAND_VIEW', 'Alert Center', 'APP_TABLES', 15, 'TASK_OR_APP_WRITE', 'ALERT_EVENTS; ALERT_NOTIFICATION_LOG; OVERWATCH_ACTION_QUEUE', 180, TRUE, FALSE, 'Alert Center may auto-load bounded app tables because they are small, routed, and deduplicated.', 'DBA / Alert Owner'),
-        ('WORKLOAD_SNAPSHOT', 'Workload Operations', 'MART_AND_TASK_HISTORY', 30, 'TASK_PLUS_EXPLICIT_REFRESH', 'FACT_QUERY_HOURLY; FACT_TASK_RUN', 35, TRUE, FALSE, 'Workload first paint shows task/query pressure from compact facts; live triage is explicit.', 'DBA / Workload Owner'),
-        ('LIVE_TRIAGE', 'DBA Control Room / Workload Operations', 'NEAR_REAL_TIME', 5, 'ON_DEMAND_ONLY', 'INFORMATION_SCHEMA table functions; SHOW commands', 1, FALSE, TRUE, 'Near-real-time checks stay explicit to avoid runaway monitoring cost.', 'DBA On-Call'),
-        ('DATA_RECONCILIATION', 'Workload Operations', 'ON_DEMAND_PROOF', NULL, 'OPERATOR_RUN', 'OVERWATCH_RECON_CONFIG; OVERWATCH_RECON_RUN', 365, FALSE, TRUE, 'Schema and data comparison proof can be expensive and runs only on operator request.', 'DBA / Data Owner'),
+        ('DBA_CONTROL_ROOM_FAST', 'DBA Control Room', 'MART', 60, 'TASK_AFTER_HOURLY_FACTS', 'MART_DBA_CONTROL_ROOM', 35, TRUE, FALSE, 'Morning triage renders from a small control-room mart before live ACCOUNT_USAGE detail.', 'DBA Review'),
+        ('COST_WATCH_FLOOR', 'Cost & Contract', 'MART_AND_BOUNDED_OFFICIAL_COST', 60, 'TASK_PLUS_EXPLICIT_REFRESH', 'FACT_COST_DAILY; FACT_CORTEX_DAILY; WAREHOUSE_METERING_HISTORY', 730, TRUE, FALSE, 'Cost first paint shows lightweight spend, Cortex, and warehouse movement; full attribution proof is explicit.', 'DBA / Cost attribution'),
+        ('ALERT_COMMAND_VIEW', 'Alert Center', 'APP_TABLES', 15, 'TASK_OR_APP_WRITE', 'ALERT_EVENTS; ALERT_NOTIFICATION_LOG; OVERWATCH_ACTION_QUEUE', 180, TRUE, FALSE, 'Alert Center may auto-load bounded app tables because they are small, routed, and deduplicated.', 'DBA / Alert Route'),
+        ('WORKLOAD_SNAPSHOT', 'Workload Operations', 'MART_AND_TASK_HISTORY', 30, 'TASK_PLUS_EXPLICIT_REFRESH', 'FACT_QUERY_HOURLY; FACT_TASK_RUN', 35, TRUE, FALSE, 'Workload first paint shows task/query pressure from compact facts; live triage is explicit.', 'DBA / Workload Route'),
+        ('LIVE_TRIAGE', 'DBA Control Room / Workload Operations', 'NEAR_REAL_TIME', 5, 'ON_DEMAND_ONLY', 'INFORMATION_SCHEMA table functions; SHOW commands', 1, FALSE, TRUE, 'Near-real-time checks stay explicit to avoid runaway monitoring cost.', 'DBA Review'),
+        ('DATA_RECONCILIATION', 'Workload Operations', 'ON_DEMAND_PROOF', NULL, 'OPERATOR_RUN', 'OVERWATCH_RECON_CONFIG; OVERWATCH_RECON_RUN', 365, FALSE, TRUE, 'Schema and data comparison proof can be expensive and runs only on operator request.', 'DBA / Data Route'),
         ('DATA_TRUST_LAYER', 'Executive Landing / DBA Control Room', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_DATA_TRUST_SUMMARY; OVERWATCH_DATA_TRUST_STATUS', 35, TRUE, FALSE, 'Executive Landing reads compact source trust; DBA detail diagnostics require explicit Load.', 'DBA / Platform'),
-        ('OWNERSHIP_MAP', 'Alert Center / Security Monitoring', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_OPERATIONAL_OWNER_COVERAGE; OVERWATCH_OPERATIONAL_OWNER_MAP', 35, TRUE, FALSE, 'Ownership coverage shows who owns the next action without creating a generic directory.', 'DBA / Alert Owner'),
-        ('EXECUTIVE_VALUE_LEDGER', 'Executive Landing / Cost & Contract', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_EXECUTIVE_VALUE_LEDGER; OVERWATCH_VALUE_LEDGER', 180, TRUE, FALSE, 'Verified savings are separated from unverified estimates.', 'DBA / Cost owner'),
+        ('WORKFLOW_ROUTE_MAP', 'Alert Center / Security Monitoring', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_OPERATIONAL_ROUTE_COVERAGE; OVERWATCH_OPERATIONAL_ROUTE_MAP', 35, TRUE, FALSE, 'Workflow route coverage shows who carries the next action without creating a generic directory.', 'DBA / Alert Route'),
+        ('EXECUTIVE_VALUE_LEDGER', 'Executive Landing / Cost & Contract', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_EXECUTIVE_VALUE_LEDGER; OVERWATCH_VALUE_LEDGER', 180, TRUE, FALSE, 'Verified savings are separated from unverified estimates.', 'DBA / Cost attribution'),
         ('APP_SELF_OBSERVABILITY', 'Executive Landing / DBA Control Room', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_APP_OBSERVABILITY_SUMMARY; OVERWATCH_APP_OBSERVABILITY', 35, TRUE, FALSE, 'App health reads compact query-tag/runtime summaries; detail is explicit Load.', 'DBA / Platform'),
         ('PRODUCTION_READINESS', 'Executive Landing / DBA Control Room', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_PRODUCTION_READINESS_SUMMARY; OVERWATCH_PRODUCTION_VALIDATION_STATUS', 35, TRUE, FALSE, 'Production readiness shows deployment, validation, role, privilege, refresh, config, freshness, and environment status from compact readiness marts.', 'DBA / Platform'),
         ('EXECUTIVE_SCORECARD', 'Executive Landing / DBA Control Room / Cost & Contract / Security Monitoring / Alert Center', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_EXECUTIVE_SCORECARD_SUMMARY; OVERWATCH_EXECUTIVE_SCORECARD_HISTORY', 180, TRUE, FALSE, 'Leadership scorecard reads compact score summaries first; driver history is explicit Load by section.', 'DBA / Platform'),
-        ('EXECUTIVE_FORECASTING', 'Executive Landing / DBA Control Room / Cost & Contract / Workload Operations', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_EXECUTIVE_FORECAST_SUMMARY; OVERWATCH_FORECAST_HISTORY', 180, TRUE, FALSE, 'Leadership forecasts read compact summary rows first; historical drivers and evidence are explicit Load by section.', 'DBA / Cost owner'),
+        ('EXECUTIVE_FORECASTING', 'Executive Landing / DBA Control Room / Cost & Contract / Workload Operations', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_EXECUTIVE_FORECAST_SUMMARY; OVERWATCH_FORECAST_HISTORY', 180, TRUE, FALSE, 'Leadership forecasts read compact summary rows first; historical drivers and evidence are explicit Load by section.', 'DBA / Cost attribution'),
         ('CHANGE_INTELLIGENCE', 'Executive Landing / DBA Control Room / Cost & Contract / Workload Operations / Security Monitoring / Alert Center', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_CHANGE_INTELLIGENCE_SUMMARY; OVERWATCH_CHANGE_EVENT; OVERWATCH_CHANGE_CORRELATION', 180, TRUE, FALSE, 'Executive Landing reads compact change-risk summaries first; event evidence and possible correlations are explicit Load by section.', 'DBA / Platform'),
         ('CLOSED_LOOP_OPERATIONS', 'Executive Landing / DBA Control Room / Alert Center / Cost & Contract / Workload Operations / Security Monitoring', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_CLOSED_LOOP_OPERATIONS_SUMMARY; OVERWATCH_ACTION_WORKFLOW; OVERWATCH_ACTION_APPROVAL; OVERWATCH_ACTION_EXECUTION_PLAN; OVERWATCH_ACTION_VERIFICATION; OVERWATCH_ACTION_EVIDENCE', 180, TRUE, FALSE, 'Executive Landing reads compact action lifecycle summaries first; approval, review SQL, evidence, and verification detail are explicit Load by section. No remediation SQL is executed.', 'DBA / Platform'),
         ('COMMAND_CENTER', 'Executive Landing / DBA Control Room / Alert Center / Cost & Contract / Workload Operations / Security Monitoring', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_COMMAND_CENTER_SUMMARY; OVERWATCH_COMMAND_CENTER_FINDING; OVERWATCH_COMMAND_CENTER_EVIDENCE; OVERWATCH_COMMAND_CENTER_RECOMMENDATION', 180, TRUE, FALSE, 'Executive Landing reads compact command findings first; investigation evidence and recommendations are explicit Load by section. No remediation SQL is executed.', 'DBA / Platform')
     AS t(
         POLICY_NAME, SURFACE, SOURCE_CLASS, TARGET_FRESHNESS_MIN, REFRESH_METHOD,
         BASE_OBJECT, RETENTION_DAYS, RUN_IN_FIRST_PAINT, APPROVED_LIVE_FALLBACK,
-        WHY_THIS_POLICY, OWNER
+        WHY_THIS_POLICY, WORKFLOW_ROUTE
     )
 )
 SELECT
@@ -393,7 +393,7 @@ SELECT
     RUN_IN_FIRST_PAINT,
     REFRESH_METHOD,
     BASE_OBJECT,
-    OWNER,
+    WORKFLOW_ROUTE,
     WHY_THIS_POLICY AS WHY_THIS_DECISION
 FROM refresh_contract
 ORDER BY RUN_IN_FIRST_PAINT DESC, SURFACE;
@@ -409,7 +409,7 @@ WITH refresh_contract AS (
         ('LIVE_TRIAGE', 'DBA Control Room / Workload Operations', 'NEAR_REAL_TIME', 5, 'ON_DEMAND_ONLY', 'INFORMATION_SCHEMA table functions; SHOW commands', 1, FALSE, TRUE),
         ('DATA_RECONCILIATION', 'Workload Operations', 'ON_DEMAND_PROOF', NULL, 'OPERATOR_RUN', 'OVERWATCH_RECON_CONFIG; OVERWATCH_RECON_RUN', 365, FALSE, TRUE),
         ('DATA_TRUST_LAYER', 'Executive Landing / DBA Control Room', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_DATA_TRUST_SUMMARY; OVERWATCH_DATA_TRUST_STATUS', 35, TRUE, FALSE),
-        ('OWNERSHIP_MAP', 'Alert Center / Security Monitoring', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_OPERATIONAL_OWNER_COVERAGE; OVERWATCH_OPERATIONAL_OWNER_MAP', 35, TRUE, FALSE),
+        ('WORKFLOW_ROUTE_MAP', 'Alert Center / Security Monitoring', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_OPERATIONAL_ROUTE_COVERAGE; OVERWATCH_OPERATIONAL_ROUTE_MAP', 35, TRUE, FALSE),
         ('EXECUTIVE_VALUE_LEDGER', 'Executive Landing / Cost & Contract', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_EXECUTIVE_VALUE_LEDGER; OVERWATCH_VALUE_LEDGER', 180, TRUE, FALSE),
         ('APP_SELF_OBSERVABILITY', 'Executive Landing / DBA Control Room', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_APP_OBSERVABILITY_SUMMARY; OVERWATCH_APP_OBSERVABILITY', 35, TRUE, FALSE),
         ('PRODUCTION_READINESS', 'Executive Landing / DBA Control Room', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_PRODUCTION_READINESS_SUMMARY; OVERWATCH_PRODUCTION_VALIDATION_STATUS', 35, TRUE, FALSE),
@@ -442,7 +442,7 @@ freshness AS (
     SELECT
         'Alert Center / Security Monitoring' AS SURFACE,
         MAX(SNAPSHOT_TS) AS LATEST_REFRESH_TS
-    FROM MART_OPERATIONAL_OWNER_COVERAGE
+    FROM MART_OPERATIONAL_ROUTE_COVERAGE
     UNION ALL
     SELECT
         'Executive Landing / Cost & Contract' AS SURFACE,
@@ -550,7 +550,7 @@ SELECT
     c.TABLE_PATTERN,
     c.CHECK_MODE,
     c.SEVERITY,
-    c.OWNER,
+    c.WORKFLOW_ROUTE,
     c.ENABLED,
     lr.RUN_TS AS LAST_RUN_TS,
     lr.RUN_STATUS AS LAST_RUN_STATUS
@@ -610,8 +610,8 @@ WITH confidence_values AS (
     SELECT 'MART_DATA_TRUST_SUMMARY', CONFIDENCE
     FROM MART_DATA_TRUST_SUMMARY
     UNION ALL
-    SELECT 'MART_OPERATIONAL_OWNER_COVERAGE', CONFIDENCE
-    FROM MART_OPERATIONAL_OWNER_COVERAGE
+    SELECT 'MART_OPERATIONAL_ROUTE_COVERAGE', CONFIDENCE
+    FROM MART_OPERATIONAL_ROUTE_COVERAGE
     UNION ALL
     SELECT 'OVERWATCH_VALUE_LEDGER', CONFIDENCE
     FROM OVERWATCH_VALUE_LEDGER
@@ -1053,7 +1053,7 @@ WITH expected_keys AS (
     ('Workload Operations', 'suspended_tasks'), ('Workload Operations', 'copy_load_failures'),
     ('Security Monitoring', 'failed_logins'), ('Security Monitoring', 'mfa_gaps'), ('Security Monitoring', 'risky_grants'), ('Security Monitoring', 'sharing_exposure'),
     ('Security Monitoring', 'privilege_changes'), ('Security Monitoring', 'security_alerts'), ('Security Monitoring', 'access_changes'), ('Security Monitoring', 'unassigned_findings'),
-    ('Security Monitoring', 'overdue_security_actions'), ('Security Monitoring', 'owner_coverage')
+    ('Security Monitoring', 'overdue_security_actions'), ('Security Monitoring', 'workflow_route_coverage')
   AS t(SECTION_NAME, METRIC_KEY)
 ),
 latest_metrics AS (
@@ -1093,7 +1093,7 @@ SELECT 'OVERWATCH_DECISION_REFRESH_AUDIT', COUNT(*), MAX(LOAD_TS) FROM OVERWATCH
 UNION ALL
 SELECT 'MART_EXECUTIVE_DECISION_INBOX', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_EXECUTIVE_DECISION_INBOX
 UNION ALL
-SELECT 'MART_OPERATIONAL_OWNER_COVERAGE', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_OPERATIONAL_OWNER_COVERAGE
+SELECT 'MART_OPERATIONAL_ROUTE_COVERAGE', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_OPERATIONAL_ROUTE_COVERAGE
 UNION ALL
 SELECT 'MART_EXECUTIVE_VALUE_LEDGER', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_EXECUTIVE_VALUE_LEDGER
     UNION ALL
@@ -1219,7 +1219,7 @@ SELECT
     STATUS,
     CONFIDENCE,
     FRESHNESS_MINUTES,
-    OWNER_ROUTE,
+    WORKFLOW_ROUTE,
     CASE
         WHEN SOURCE_OBJECT = 'FACT_TASK_RUN' AND STATUS <> 'Ready'
             THEN 'Run SP_OVERWATCH_LOAD_HOURLY_UNIT(''TASK_RUN'', NULL, NULL), confirm FACT_TASK_RUN has rows for the selected company, and verify TASK_HISTORY visibility for the runtime role. Trexis is ALFA-equivalent for coverage expectations.'
@@ -1520,7 +1520,7 @@ SELECT
     COUNT_IF(LOWER(COALESCE(RISK_LEVEL, '')) NOT IN ('critical', 'high', 'medium', 'low')) AS BAD_RISK_ROWS,
     COUNT_IF(UPPER(COALESCE(APPROVAL_STATUS, '')) NOT IN ('NOT REQUIRED', 'APPROVAL NOT REQUIRED', 'NEEDS APPROVAL', 'REQUIRED', 'REQUESTED', 'PENDING', 'APPROVED', 'REJECTED')) AS BAD_APPROVAL_STATUS_ROWS,
     COUNT_IF(UPPER(COALESCE(VERIFICATION_STATUS, '')) NOT IN ('PENDING', 'NEEDS VERIFICATION', 'VERIFIED', 'CLOSED')) AS BAD_VERIFICATION_STATUS_ROWS,
-    COUNT_IF(COALESCE(OWNER_ROUTE, '') = '') AS EMPTY_OWNER_ROWS,
+    COUNT_IF(COALESCE(WORKFLOW_ROUTE, '') = '') AS EMPTY_WORKFLOW_ROUTE_ROWS,
     COUNT_IF(COALESCE(RECOMMENDED_ACTION, '') = '') AS EMPTY_RECOMMENDED_ACTION_ROWS,
     IFF(
         COUNT_IF(ACTION_DOMAIN NOT IN ('ALL', 'Cost', 'Operations', 'Security', 'Workload', 'Alert')) = 0
@@ -1528,7 +1528,7 @@ SELECT
         AND COUNT_IF(LOWER(COALESCE(RISK_LEVEL, '')) NOT IN ('critical', 'high', 'medium', 'low')) = 0
         AND COUNT_IF(UPPER(COALESCE(APPROVAL_STATUS, '')) NOT IN ('NOT REQUIRED', 'APPROVAL NOT REQUIRED', 'NEEDS APPROVAL', 'REQUIRED', 'REQUESTED', 'PENDING', 'APPROVED', 'REJECTED')) = 0
         AND COUNT_IF(UPPER(COALESCE(VERIFICATION_STATUS, '')) NOT IN ('PENDING', 'NEEDS VERIFICATION', 'VERIFIED', 'CLOSED')) = 0
-        AND COUNT_IF(COALESCE(OWNER_ROUTE, '') = '') = 0
+        AND COUNT_IF(COALESCE(WORKFLOW_ROUTE, '') = '') = 0
         AND COUNT_IF(COALESCE(RECOMMENDED_ACTION, '') = '') = 0,
         'PASS',
         'FAIL'

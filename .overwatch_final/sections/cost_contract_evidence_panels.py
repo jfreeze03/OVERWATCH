@@ -116,7 +116,7 @@ def _render_executive_value_ledger(company: str, environment: str) -> None:
         st.dataframe(
             rollup[[
                 column for column in [
-                    "STATUS", "OWNER_ROUTE", "EXPECTED_SAVINGS_USD",
+                    "STATUS", "WORKFLOW_ROUTE", "EXPECTED_SAVINGS_USD",
                     "VERIFIED_SAVINGS_USD", "UNVERIFIED_ESTIMATE_USD",
                     "CONFIDENCE", "VALUE_STATE", "OPEN_ITEMS",
                     "VERIFIED_ITEMS", "NEXT_ACTION",
@@ -194,7 +194,7 @@ def _render_cost_efficiency_score_explanation(company: str, environment: str) ->
             title="Cost Efficiency Score drivers",
             priority_columns=[
                 "SNAPSHOT_TS", "CURRENT_SCORE", "STATUS", "TREND", "TOP_DRIVER",
-                "RECOMMENDED_ACTION", "OWNER_ROUTE", "VALUE_AT_RISK_USD",
+                "RECOMMENDED_ACTION", "WORKFLOW_ROUTE", "VALUE_AT_RISK_USD",
                 "CONFIDENCE", "SOURCE_OBJECTS", "LAST_REFRESHED_TS",
             ],
             sort_by=["SNAPSHOT_TS"],
@@ -242,7 +242,7 @@ def _render_cost_forecast_detail(company: str, environment: str) -> None:
                 "SNAPSHOT_TS", "FORECAST_NAME", "FORECAST_VALUE", "VALUE_UNIT",
                 "CURRENT_ACTUAL", "PRIOR_PERIOD_VALUE", "TREND_DIRECTION",
                 "CONFIDENCE", "METHODOLOGY", "MAIN_DRIVER", "RECOMMENDED_ACTION",
-                "OWNER_ROUTE", "VALUE_AT_RISK_USD", "LAST_REFRESHED_TS",
+                "WORKFLOW_ROUTE", "VALUE_AT_RISK_USD", "LAST_REFRESHED_TS",
             ],
             sort_by=["SNAPSHOT_TS", "FORECAST_KEY"],
             ascending=[False, True],
@@ -281,7 +281,7 @@ def _render_cost_change_correlation(company: str, environment: str) -> None:
                 "RELATED_TS", "CHANGE_TS", "CHANGE_TYPE", "OBJECT_NAME",
                 "CHANGED_BY", "RELATED_SIGNAL", "RELATED_ENTITY",
                 "CORRELATION_STRENGTH", "CORRELATION_LABEL", "EVIDENCE",
-                "RISK_LEVEL", "OWNER_ROUTE", "CONFIDENCE",
+                "RISK_LEVEL", "WORKFLOW_ROUTE", "CONFIDENCE",
             ],
             sort_by=["RELATED_TS", "CHANGE_TS"],
             ascending=[False, False],
@@ -375,7 +375,7 @@ def _render_cost_command_findings(company: str, environment: str) -> None:
                 priority_columns=[
                     "QUESTION_TEXT", "ROOT_CAUSE_CANDIDATE", "CAUSALITY_LABEL",
                     "EVIDENCE_SUMMARY", "CONFIDENCE", "BUSINESS_IMPACT",
-                    "OWNER_ROUTE", "RELATED_CHANGES", "RELATED_ALERTS",
+                    "WORKFLOW_ROUTE", "RELATED_CHANGES", "RELATED_ALERTS",
                     "RELATED_SCORECARD_DRIVERS", "RELATED_FORECASTS",
                     "RECOMMENDED_ACTION", "RISK_LEVEL", "EXECUTION_PLAN_REF",
                     "EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", "VERIFICATION_PATH",
@@ -392,7 +392,7 @@ def _render_cost_command_findings(company: str, environment: str) -> None:
                 recommendations,
                 title="Cost investigation recommendations",
                 priority_columns=[
-                    "RECOMMENDED_ACTION", "RISK_LEVEL", "OWNER_ROUTE",
+                    "RECOMMENDED_ACTION", "RISK_LEVEL", "WORKFLOW_ROUTE",
                     "EXECUTION_PLAN_REF", "REVIEW_REQUIRED",
                     "EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", "VERIFICATION_PATH",
                     "SAFETY_NOTE", "LAST_REFRESHED_TS",

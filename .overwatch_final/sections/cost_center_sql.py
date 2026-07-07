@@ -141,12 +141,12 @@ def _cost_explorer_live_sql(
             COALESCE(q.warehouse_name, 'Unknown warehouse') AS warehouse_name,
             {warehouse_size_expr} AS warehouse_size,
             COALESCE(NULLIF(t.cost_center_tag, ''), NULLIF(t.owner_tag, ''), 'Unassigned') AS department,
-            COALESCE(NULLIF(t.cost_center_tag, ''), NULLIF(t.owner_tag, ''), 'Unassigned') AS cost_owner,
-            IFF(COALESCE(t.cost_center_tag, t.owner_tag, '') <> '', 'WAREHOUSE_TAG', 'QUERY_USER') AS owner_source,
+            COALESCE(NULLIF(t.cost_center_tag, ''), NULLIF(t.owner_tag, ''), 'Unassigned') AS cost_attribution,
+            IFF(COALESCE(t.cost_center_tag, t.owner_tag, '') <> '', 'WAREHOUSE_TAG', 'QUERY_USER') AS route_source,
             IFF(COALESCE(t.cost_center_tag, t.owner_tag, '') <> '',
                 'Warehouse tag evidence from TAG_REFERENCES.',
                 'Query user only; validate owner or department before billing.'
-            ) AS owner_evidence,
+            ) AS route_evidence,
             COUNT(*) AS query_count,
             ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS total_credits,
             MIN(q.start_time::DATE) AS first_usage_date,
@@ -170,9 +170,9 @@ def _cost_explorer_live_sql(
         warehouse_name,
         warehouse_size,
         department,
-        cost_owner,
-        owner_source,
-        owner_evidence,
+        cost_attribution,
+        route_source,
+        route_evidence,
         query_count,
         total_credits,
         first_usage_date,
@@ -255,7 +255,7 @@ owner_tag_scope AS (
         tag_name,
         tag_value
     FROM SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES
-    WHERE UPPER(tag_name) IN ('COST_OWNER', 'DATA_OWNER', 'APP_OWNER', 'APPLICATION_OWNER', 'BUSINESS_OWNER', 'SERVICE_OWNER')
+    WHERE UPPER(tag_name) IN ('COST_ATTRIBUTION', 'DATA_OWNER', 'APP_OWNER', 'APPLICATION_OWNER', 'BUSINESS_OWNER', 'SERVICE_OWNER')
       AND tag_value IS NOT NULL
       AND (
         (UPPER(domain) = 'WAREHOUSE' AND UPPER(object_name) = UPPER({sql_literal(wh, 300)}))

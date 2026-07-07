@@ -73,7 +73,7 @@ def _build_cost_monitoring_alert_rows(
             "SUGGESTED_ACTION": suggested_action,
             "PROOF_QUERY": proof_query,
             "ROUTE": route or "Cost & Contract",
-            "OWNER": owner or "DBA / Cost owner",
+            "OWNER": owner or "DBA / Cost attribution",
             "EMAIL_TARGET": email_target,
             "DELIVERY_STATUS": alert_delivery_status_for_target(email_target),
             "STATUS": "New",
@@ -96,7 +96,7 @@ def _build_cost_monitoring_alert_rows(
                 suggested_action=_cost_alert_message(row, "NEXT_ACTION", default="Open Cost & Contract root-cause drilldown."),
                 proof_query=_cost_alert_message(row, "PROOF_REQUIRED", default="Record warehouse metering, run-rate, routing, and change telemetry."),
                 route=_cost_alert_message(row, "ROUTE", default="Cost & Contract"),
-                owner="DBA / Cost owner",
+                owner="DBA / Cost attribution",
                 value_at_risk=safe_float(row.get("VALUE_AT_RISK_USD", 0)),
                 source_surface="Cost Spike Root Cause",
             )
@@ -114,7 +114,7 @@ def _build_cost_monitoring_alert_rows(
                 suggested_action=_cost_alert_message(row, "NEXT_ACTION", default="Compare change telemetry to cost movement before tuning."),
                 proof_query=_cost_alert_message(row, "PROOF_REQUIRED", default="Record change query_id, actor, ticket, and cost telemetry."),
                 route=_cost_alert_message(row, "ROUTE", default="Security Monitoring"),
-                owner="DBA / Cost owner",
+                owner="DBA / Cost attribution",
                 value_at_risk=0.0,
                 source_surface="Change + Cost Correlation",
             )
@@ -251,7 +251,7 @@ def _build_cost_incident_timeline(
             "Alert routed",
             _cost_alert_message(alert, "ENTITY_NAME", default=top_wh),
             _cost_alert_message(alert, "MESSAGE", default="Cost Monitoring alert candidate is ready for Alert Center."),
-            _cost_alert_message(alert, "SUGGESTED_ACTION", default="Route the alert to DBA / Cost owner email triage."),
+            _cost_alert_message(alert, "SUGGESTED_ACTION", default="Route the alert to DBA / Cost attribution email triage."),
             _cost_alert_message(alert, "PROOF_QUERY", default="Record the alert telemetry query."),
             "Alert Center",
         )

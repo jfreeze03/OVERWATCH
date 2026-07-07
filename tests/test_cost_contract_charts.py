@@ -33,7 +33,7 @@ class CostContractChartTests(unittest.TestCase):
         self.assertIs(cost_contract.build_warehouse_bridge_top_rows, cost_contract_charts.build_warehouse_bridge_top_rows)
         self.assertIs(cost_contract.cost_db_chart_pattern_results, cost_contract_charts.cost_db_chart_pattern_results)
 
-    def test_cost_chart_palette_returns_carbon_fallback_and_terminal_palette(self):
+    def test_cost_chart_palette_returns_carbon_for_unknown_legacy_values(self):
         from sections import cost_contract_charts
 
         with patch.object(cost_contract_charts.st, "session_state", {}):
@@ -41,12 +41,7 @@ class CostContractChartTests(unittest.TestCase):
         self.assertEqual(carbon["bar"], "#29B5E8")
         self.assertEqual(carbon["text"], "#eef8fb")
 
-        with patch.object(cost_contract_charts.st, "session_state", {"active_theme": "terminal"}):
-            terminal = cost_contract_charts._cost_chart_palette()
-        self.assertEqual(terminal["bar"], "#0068B7")
-        self.assertEqual(terminal["text"], "#102a43")
-
-        with patch.object(cost_contract_charts.st, "session_state", {"active_theme": "unknown"}):
+        with patch.object(cost_contract_charts.st, "session_state", {"active_theme": "old_theme"}):
             fallback = cost_contract_charts._cost_chart_palette()
         self.assertEqual(fallback, carbon)
 

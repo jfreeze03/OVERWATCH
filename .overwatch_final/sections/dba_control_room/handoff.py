@@ -213,7 +213,7 @@ def _dba_workload_morning_lanes(
         first_move: str,
         proof_required: str,
         priority_score: float,
-        owner_route: str = "Workload route / DBA on-call",
+        workflow_route: str = "Workload route / DBA review",
         go_no_go: str = "Go only through Workload Operations after telemetry is current.",
         source_signals: str = "DBA Control Room workload telemetry",
         focus_context: dict[str, str] | None = None,
@@ -225,7 +225,7 @@ def _dba_workload_morning_lanes(
             "STATE": state,
             "WHY_NOW": why_now,
             "FIRST_MOVE": first_move,
-            "OWNER_ROUTE": owner_route,
+            "WORKFLOW_ROUTE": workflow_route,
             "GO_NO_GO": go_no_go,
             "PROOF_REQUIRED": proof_required,
             "SOURCE_SIGNALS": source_signals,
@@ -253,7 +253,7 @@ def _dba_workload_morning_lanes(
             ),
             proof_required="TASK_HISTORY success after latest failure, Snowflake task rerun/late state, and downstream refresh status.",
             priority_score=96,
-            owner_route="Task route / Snowflake task operator / DBA on-call",
+            workflow_route="Task route / Snowflake task operator / DBA review",
             go_no_go="No-Go for dependent loads until clean rerun and downstream status are current.",
             source_signals="Task failures: mart/TASK_HISTORY",
         )
@@ -312,7 +312,7 @@ def _dba_workload_morning_lanes(
                 "review status, and recovery SLA telemetry."
             ),
             priority_score=priority,
-            owner_route="Snowflake task operator / task route / DBA on-call",
+            workflow_route="Snowflake task operator / task route / DBA review",
             go_no_go=go_no_go,
             source_signals="Snowflake TASK_HISTORY summary",
         )
@@ -328,7 +328,7 @@ def _dba_workload_morning_lanes(
             first_move="Compare current task graph runs to baseline, isolate the changed task/query, and assign route status.",
             proof_required="Task baseline comparison, latest successful run, cost/runtime delta, and review status for schedule changes.",
             priority_score=90 if cost_count or sla_count >= 3 else 76,
-            owner_route="Task graph route / DBA release reviewer",
+            workflow_route="Task graph route / DBA release reviewer",
             source_signals="Task SLA/cost telemetry",
         )
 
@@ -357,7 +357,7 @@ def _dba_workload_morning_lanes(
             ),
             proof_required="SHOW LOCKS/LOCK_WAIT_HISTORY, task-overlap telemetry, QUERY_HISTORY blocked seconds, and WAREHOUSE_LOAD_HISTORY.",
             priority_score=94 if queued_queries >= 20 or queued_warehouses else 82,
-            owner_route="DBA on-call / workload route / warehouse route",
+            workflow_route="DBA review / workload route / warehouse route",
             go_no_go="No-Go for warehouse resizing until lock waits and overlapping writers are ruled out.",
             source_signals="Warehouse pressure and queue telemetry",
             focus_context=contention_context,
@@ -394,7 +394,7 @@ def _dba_workload_morning_lanes(
             ),
             proof_required="Query ID, warehouse/user/role/database context, operator stats, specific recommendation, and rerun comparison.",
             priority_score=88 if failed_count >= 10 or spill_count or p95_runtime >= 300 else 72,
-            owner_route="Query route / DBA performance reviewer",
+            workflow_route="Query route / DBA performance reviewer",
             source_signals="Failed, spilling, or long-running query telemetry",
             focus_context=query_context,
         )
@@ -410,7 +410,7 @@ def _dba_workload_morning_lanes(
             first_move="Open Stored procedures, compare latest CALL duration/cost to baseline, and confirm release linkage.",
             proof_required="Procedure run baseline, latest CALL query ID, route, ticket/change ID, and post-fix runtime/cost telemetry.",
             priority_score=84 if cost_count or runtime_count >= 3 else 70,
-            owner_route="Procedure route / DBA release reviewer",
+            workflow_route="Procedure route / DBA release reviewer",
             source_signals="Stored procedure SLA/cost telemetry",
         )
 
@@ -440,7 +440,7 @@ def _dba_morning_brief_rows(
         state: object,
         why_now: object,
         first_move: object,
-        owner_route: object = "",
+        workflow_route: object = "",
         go_no_go: object = "",
         proof_required: object = "",
         source_signals: object = "",
@@ -465,7 +465,7 @@ def _dba_morning_brief_rows(
             "STATE": str(state or "Review"),
             "WHY_NOW": str(why_now or "Loaded Control Room telemetry requires review."),
             "FIRST_MOVE": str(first_move or "Open the guarded drilldown workflow and validate telemetry."),
-            "OWNER_ROUTE": str(owner_route or _dba_runbook_route_templates(route_text, 24)["owner_route"]),
+            "WORKFLOW_ROUTE": str(workflow_route or _dba_runbook_route_templates(route_text, 24)["workflow_route"]),
             "GO_NO_GO": str(go_no_go or "Go only through the guarded drilldown workflow."),
             "PROOF_REQUIRED": str(proof_required or _dba_section_proof_required(route_text)),
             "SOURCE_SIGNALS": str(source_signals or "Control Room"),
@@ -488,7 +488,7 @@ def _dba_morning_brief_rows(
                 state=item.get("ESCALATION_LEVEL") or item.get("STATE"),
                 why_now=item.get("WHY_NOW") or item.get("EVIDENCE_PACKET"),
                 first_move=item.get("FIRST_MOVE"),
-                owner_route=item.get("OWNER_ROUTE"),
+                workflow_route=item.get("WORKFLOW_ROUTE"),
                 go_no_go=item.get("GO_NO_GO"),
                 proof_required=item.get("PROOF_REQUIRED"),
                 source_signals=item.get("SOURCE_SIGNALS"),
@@ -512,7 +512,7 @@ def _dba_morning_brief_rows(
                 state=item.get("STATE"),
                 why_now=item.get("WHY_NOW"),
                 first_move=item.get("FIRST_MOVE"),
-                owner_route=item.get("OWNER_ROUTE"),
+                workflow_route=item.get("WORKFLOW_ROUTE"),
                 go_no_go=item.get("GO_NO_GO"),
                 proof_required=item.get("PROOF_REQUIRED"),
                 source_signals=item.get("SOURCE_SIGNALS"),
@@ -559,7 +559,7 @@ def _dba_morning_brief_rows(
                 state=item.get("STATE"),
                 why_now=item.get("EVIDENCE"),
                 first_move=item.get("NEXT_ACTION"),
-                owner_route=item.get("OWNER_OR_ROUTE"),
+                workflow_route=item.get("OWNER_OR_ROUTE"),
                 go_no_go=go_no_go,
                 proof_required=item.get("PROOF_REQUIRED"),
                 source_signals=f"Shift Handoff: {item.get('SOURCE') or lane}",
@@ -572,7 +572,7 @@ def _dba_morning_brief_rows(
             state="Monitor",
             why_now="No loaded blocker, escalation, or handoff row for the current scope.",
             first_move="Keep Morning Cockpit current and review Alert Center for newly routed issues.",
-            owner_route="On-call DBA / platform route",
+            workflow_route="Review DBA / platform route",
             go_no_go="Go for monitoring only.",
             proof_required="fresh Control Room load and current Alert Center review",
             source_signals="Daily Brief: routine watch",
@@ -596,7 +596,7 @@ def _dba_morning_decision_contract(row: dict | pd.Series | None) -> dict[str, st
     workflow = str(_row_value(row, "WORKFLOW", default="") or "").strip()
     go_no_go = str(_row_value(row, "GO_NO_GO", default="") or "")
     proof = str(_row_value(row, "PROOF_REQUIRED", default="") or "")
-    owner = str(_row_value(row, "OWNER_ROUTE", default="") or "")
+    owner = str(_row_value(row, "WORKFLOW_ROUTE", default="") or "")
     score = safe_float(_row_value(row, "PRIORITY_SCORE", default=0))
     combined = f"{state} {go_no_go} {proof}".upper()
 
@@ -680,7 +680,7 @@ def _dba_morning_execution_contract(row: dict | pd.Series | None) -> dict[str, s
     state = str(_row_value(row, "STATE", default="Review") or "Review")
     first_move = str(_row_value(row, "FIRST_MOVE", default="Open the guarded drilldown workflow and validate telemetry.") or "")
     proof = str(_row_value(row, "PROOF_REQUIRED", default="fresh source telemetry") or "")
-    owner = str(_row_value(row, "OWNER_ROUTE", default="DBA on-call") or "DBA on-call")
+    owner = str(_row_value(row, "WORKFLOW_ROUTE", default="DBA review") or "DBA review")
     focus_query = str(_row_value(row, "FOCUS_QUERY_ID", default="") or "").strip()
     focus_warehouse = str(_row_value(row, "FOCUS_WAREHOUSE", default="") or "").strip()
     focus_object = str(_row_value(row, "FOCUS_OBJECT", default="") or "").strip()
@@ -699,7 +699,7 @@ def _dba_morning_execution_contract(row: dict | pd.Series | None) -> dict[str, s
                 "QUERY_ID": focus_query,
                 "WAREHOUSE_NAME": focus_warehouse,
                 "TARGET_OBJECT": focus_object,
-                "OWNER_ROUTE": "Contention Center",
+                "WORKFLOW_ROUTE": "Contention Center",
                 "BLOCKED_SECONDS": 1 if focus_query else 0,
             }
             contract = build_contention_safe_action_contract(contention_row, "Blocked query / lock contention")
@@ -708,12 +708,12 @@ def _dba_morning_execution_contract(row: dict | pd.Series | None) -> dict[str, s
             verify_next = str(contract.get("RECOVERY_PLAN") or contract.get("VERIFY_AFTER_CLEANUP") or verify_next)
             execution_boundary = str(contract.get("EXECUTION_BOUNDARY") or execution_boundary)
         except Exception:
-            approval_gate = "DBA on-call review and incident/ticket status before cancel/abort/schedule action."
+            approval_gate = "DBA review review and incident/ticket status before cancel/abort/schedule action."
             evidence_package = "SHOW LOCKS, LOCK_WAIT_HISTORY, blocked query, target object, telemetry, and post-action status."
             verify_next = "Confirm blocked seconds stop increasing and dependent workload recovers before closure."
             execution_boundary = "No cleanup from Daily Brief; open Contention Center for governed SQL and telemetry review."
     elif workflow in {"Task graphs", "Pipeline & Task Health"}:
-        approval_gate = "Snowflake task operator and DBA on-call review before retry, resume, or schedule change."
+        approval_gate = "Snowflake task operator and DBA review review before retry, resume, or schedule change."
         evidence_package = (
             "TASK_HISTORY failure/recovery rows, Snowflake task failed/blocked/late state, telemetry, "
             "downstream refresh status, and recovery SLA status."
@@ -819,7 +819,7 @@ def _dba_morning_brief_detail_view(brief: pd.DataFrame | None) -> pd.DataFrame:
             brief_view[column] = brief_view[column].map(clean_display_text)
     rename_pairs = (
         ("OWNER_PROOF_STATE", "ROUTE_TELEMETRY_STATE"),
-        ("OWNER_ROUTE", "ESCALATION_ROUTE"),
+        ("WORKFLOW_ROUTE", "ESCALATION_ROUTE"),
     )
     for source, target in rename_pairs:
         if target in brief_view.columns:
@@ -1040,7 +1040,7 @@ def _dba_handoff_rows(
         for _, item in important.iterrows():
             route = str(item.get("ROUTE") or _command_queue_route(item.get("CATEGORY")) or "DBA Control Room")
             entity = str(item.get("ENTITY_NAME") or item.get("ENTITY") or item.get("CATEGORY") or "queued item")
-            owner = str(item.get("OWNER") or item.get("OWNER_EMAIL") or item.get("APPROVAL_GROUP") or route)
+            owner = str(item.get("OWNER") or item.get("ROUTE_EMAIL") or item.get("REVIEW_GROUP") or route)
             evidence_required = str(item.get("COMMAND_EVIDENCE_REQUIRED") or item.get("EVIDENCE_GAP") or "")
             rows.append({
                 "PRIORITY_RANK": 0 if str(item.get("DUE_STATE")) == "Overdue" else 1 if str(item.get("COMMAND_EXECUTION_GATE", "")).startswith("Blocked") else 2,
@@ -1130,7 +1130,7 @@ def _dba_handoff_rows(
             "LANE": "DBA Control Room",
             "STATE": "Routine Watch",
             "EVIDENCE": "No loaded exceptions, open command blockers, closure blockers, or stale telemetry surfaces.",
-            "OWNER_OR_ROUTE": "On-call DBA",
+            "OWNER_OR_ROUTE": "Review DBA",
             "NEXT_ACTION": "Keep the fast snapshot current and review Alert Center for new routed issues.",
             "PROOF_REQUIRED": "fresh Control Room load and current Alert Center review",
             "SOURCE": "Handoff",

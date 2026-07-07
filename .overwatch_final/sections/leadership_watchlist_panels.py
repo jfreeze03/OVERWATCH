@@ -359,12 +359,12 @@ def render_workload_query_error_panels(company: str, environment: str) -> None:
 
 def leadership_alert_candidates() -> list[AlertCandidate]:
     return [
-        AlertCandidate("Credit Burn Spike", "+25% current 24h credits vs prior 24h", "High", "Cost Intelligence", "Cost owner", "24h Credit Comparison", "Suppress repeat contributor for one review window"),
+        AlertCandidate("Credit Burn Spike", "+25% current 24h credits vs prior 24h", "High", "Cost Intelligence", "Cost attribution", "24h Credit Comparison", "Suppress repeat contributor for one review window"),
         AlertCandidate("Failed Login Spike", "10 failures in last hour or 3x baseline", "High", "Security Monitoring", "IAM / Security", "Failed Logins - Last Hour", "Group by user and IP"),
         AlertCandidate("Suspicious Login Activity", "Repeated failures across users or failure followed by success", "Critical", "Security Monitoring", "IAM / Security", "Suspicious Login Attempts", "Deduplicate by IP/user pair"),
         AlertCandidate("Query Error Spike", ">5% failure rate or 2x same-hour baseline", "High", "Workload Operations", "DBA / Workload", "Query Error Frequency", "Suppress same error code after route"),
-        AlertCandidate("Storage Growth Spike", "+10% day over day or +1 TB", "Medium", "Cost Intelligence", "Data owner", "Storage Growth", "Deduplicate by database"),
-        AlertCandidate("Cortex Code Spend Spike", "Credits or tokens above prior 7-day average", "Medium", "Cost Intelligence", "AI cost owner", "Cortex Code Usage", "Suppress known rollout windows"),
+        AlertCandidate("Storage Growth Spike", "+10% day over day or +1 TB", "Medium", "Cost Intelligence", "Data reviewer", "Storage Growth", "Deduplicate by database"),
+        AlertCandidate("Cortex Code Spend Spike", "Credits or tokens above prior 7-day average", "Medium", "Cost Intelligence", "AI cost attribution", "Cortex Code Usage", "Suppress known rollout windows"),
         AlertCandidate("High-Risk Role Grant Change", "Elevated TF_O_DEV_* grant or unexpected grantee", "Critical", "Security Monitoring", "IAM / Security", "Role / Grant Audit", "Require owner acknowledgement"),
     ]
 

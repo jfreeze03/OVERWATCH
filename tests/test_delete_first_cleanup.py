@@ -41,6 +41,26 @@ class DeleteFirstCleanupTests(unittest.TestCase):
         self.assertFalse(gate["passed"])
         self.assertIn("unclassified", gate["failures"][0]["reason"])
 
+    def test_migration_sql_is_owned_live_validation_path(self):
+        from tools.contracts.delete_first_cleanup import build_delete_first_inventory
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            migrations = root / "snowflake" / "migrations"
+            migrations.mkdir(parents=True)
+            (migrations / "2026_07_remove_owner_routing.sql").write_text(
+                "insert into overwatch_schema_migration values ('2026_07_remove_owner_routing');",
+                encoding="utf-8",
+            )
+
+            inventory = build_delete_first_inventory(root)
+
+        row = inventory["rows"][0]
+        self.assertEqual(row["classification"], "keep_live_validation")
+        self.assertEqual(row["owner"], "Snowflake setup owner")
+        self.assertTrue(row["admin_only"])
+        self.assertTrue(inventory["passed"])
+
     def test_retired_query_workbench_module_blocks_gate(self):
         from tools.contracts.delete_first_cleanup import build_delete_first_inventory, evaluate_delete_first_cleanup_gate
 

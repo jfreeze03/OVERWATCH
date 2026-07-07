@@ -33,7 +33,7 @@ class DecisionFinding:
     signal: str
     entity: str = ""
     detail: str = ""
-    owner: str = ""
+    workflow: str = ""
     sla: str = ""
     finding_key: str = ""
     dedupe_key: str = ""
@@ -41,13 +41,10 @@ class DecisionFinding:
     entity_id: str = ""
     entity_name: str = ""
     evidence_id: str = ""
-    owner_id: str = ""
-    owner_name: str = ""
     first_seen_label: str = ""
     due_label: str = ""
     evidence_source: str = ""
     evidence_query: str = ""
-    owner_gap: bool = False
     route_key: str = ""
 
 
@@ -206,7 +203,7 @@ _SOURCE_LABEL_OVERRIDES: dict[str, str] = {
     "grant_daily": "Access grants",
     "login_daily": "Login activity",
     "notification_log": "Notification delivery",
-    "owner_coverage": "Owner coverage",
+    "workflow_route_coverage": "Workflow coverage",
     "procedure_runs": "Procedure runs",
     "production_readiness": "Production readiness",
     "query_hourly": "Query history summary",
@@ -284,7 +281,7 @@ def _metric_availability_state(metric: object, semantic: MetricSemantic | None, 
     if state:
         return state
     if semantic is not None:
-        return "Billing reconciliation pending" if semantic.source_family == "account_billing" else "Loading current summary"
+        return "Billing reconciliation requires review" if semantic.source_family == "account_billing" else "Refresh required"
     return "Available"
 
 
@@ -510,16 +507,12 @@ def _fallback_view(brief: object, source_mode: str, *, evidence_action: object |
     )
 
 
-def _owner_label(signal: object) -> str:
-    for attr in ("owner_name", "owner_id", "owner_route"):
-        owner = str(getattr(signal, attr, "") or "").strip()
-        if owner:
-            if attr == "owner_route" and bool(getattr(signal, "owner_gap", False)):
-                return "Owner gap"
-            return owner
-    if bool(getattr(signal, "owner_gap", False)):
-        return "Owner gap"
-    return "Owner unavailable"
+def _workflow_label(signal: object) -> str:
+    for attr in ("route_workflow", "route_section", "route_key"):
+        value = str(getattr(signal, attr, "") or "").strip()
+        if value:
+            return value
+    return "Workflow unavailable"
 
 
 def _sla_label(signal: object) -> str:
@@ -602,7 +595,7 @@ def build_decision_workspace_view_model(
             signal=str(getattr(item, "signal", "") or "Review summary"),
             entity=str(getattr(item, "entity", "") or ""),
             detail=str(getattr(item, "detail", "") or ""),
-            owner=_owner_label(item),
+            workflow=_workflow_label(item),
             sla=_due_label(item),
             finding_key=str(getattr(item, "finding_key", "") or ""),
             dedupe_key=str(getattr(item, "dedupe_key", "") or ""),
@@ -610,13 +603,10 @@ def build_decision_workspace_view_model(
             entity_id=str(getattr(item, "entity_id", "") or ""),
             entity_name=str(getattr(item, "entity", "") or ""),
             evidence_id=str(getattr(item, "evidence_id", "") or ""),
-            owner_id=str(getattr(item, "owner_id", "") or ""),
-            owner_name=str(getattr(item, "owner_name", "") or ""),
             first_seen_label=_first_seen_label(item),
             due_label=_due_label(item),
             evidence_source=str(getattr(item, "evidence_source", "") or ""),
             evidence_query=str(getattr(item, "evidence_query", "") or ""),
-            owner_gap=bool(getattr(item, "owner_gap", False)),
             route_key=str(getattr(item, "route_key", "") or ""),
         )
         for item in tuple(getattr(brief, "exceptions", ()) or ())[:3]

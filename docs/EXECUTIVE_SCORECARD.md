@@ -5,24 +5,24 @@ core or adding first-paint live Snowflake scans.
 
 ## Scores
 
-| Score | Purpose | Primary owner route |
+| Score | Purpose | Primary workflow route |
 |---|---|---|
 | Snowflake Health Score | DBA platform health, failed refreshes, failed tasks, and app failures. | DBA / Platform |
-| Cost Efficiency Score | Cost signals, Cortex/cost alerts, verified value, and unverified savings exposure. | DBA / Cost owner |
+| Cost Efficiency Score | Cost signals, Cortex/cost alerts, verified value, and unverified savings exposure. | DBA / Cost attribution |
 | Security Score | Security alert pressure and security ownership gaps. | Security / DBA |
-| Operational Risk Score | Critical/high alerts, open high-priority actions, and ownership gaps. | DBA On-Call |
+| Operational Risk Score | Critical/high alerts, open high-priority actions, and ownership gaps. | DBA Review |
 | Data Trust Score | Missing, stale, or low-confidence source trust rows. | DBA / Platform |
 | Production Readiness Score | Deployment, validation, privilege, refresh, config, and environment readiness. | DBA / Platform |
 
 Each score includes current score, green/yellow/red status, trend, drivers,
-recommended action, owner route or owner gap, value/risk, confidence, and last
+recommended action, workflow route or workflow gap, value/risk, confidence, and last
 refreshed timestamp.
 
 ## Snowflake Objects
 
 | Object | Purpose |
 |---|---|
-| `OVERWATCH_EXECUTIVE_SCORECARD_CONFIG` | Score catalog, thresholds, owner route, driver source, and recommended action defaults. |
+| `OVERWATCH_EXECUTIVE_SCORECARD_CONFIG` | Score catalog, thresholds, workflow route, driver source, and recommended action defaults. |
 | `OVERWATCH_EXECUTIVE_SCORECARD_HISTORY` | Score snapshots and driver history retained for explicit Load panels. |
 | `MART_EXECUTIVE_SCORECARD_SUMMARY` | Compact first-paint source for Executive Landing. |
 | `SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD` | Refreshes score history and summary from existing OVERWATCH marts and app tables. |

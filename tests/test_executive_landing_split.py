@@ -60,13 +60,11 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
         expected_aliases = {
             "Executive Briefing": "Executive Overview",
             "Executive Summary": "Executive Overview",
-            "Adoption Analytics": "Executive Admin / Advanced",
             "Executive Scorecard": "Executive Admin / Advanced",
             "Scorecard Formulas": "Executive Admin / Advanced",
             "Value Ledger": "Executive Admin / Advanced",
             "Production Readiness": "Executive Admin / Advanced",
             "Data Trust": "Executive Admin / Advanced",
-            "Command Center": "Executive Overview",
             "Forecasting": "Cost Movement",
         }
         self.assertEqual(contracts.EXECUTIVE_LANDING_LEGACY_WORKFLOW_ALIASES, expected_aliases)

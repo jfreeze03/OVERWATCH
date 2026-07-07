@@ -41,7 +41,7 @@ contracts continue to be generated from `config/decision_brief_contracts.json`.
 
 | Metric | Decision | Replacement |
 |---|---|---|
-| Owner Coverage | Removed from user-facing metrics | Routed findings and Open Work Items |
+| Workflow Route Coverage | Removed from user-facing metrics | Routed findings and Open Work Items |
 | Unassigned Findings | Removed from user-facing metrics | Routed findings and overdue security work items |
 | Unassigned Alerts | Removed from user-facing metrics | Alert lifecycle metrics and Open Work Items |
 | Owner Route / Owner Approval / Cost Owner wording | Removed from metric vocabulary | Route/action context only |

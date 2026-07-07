@@ -47,14 +47,14 @@ def _warehouse_owner_context(row: pd.Series | dict) -> dict:
     signal = str(row.get("SIGNAL") or "").upper()
     if "CREDIT" in signal:
         base = {
-            "owner": "DBA / Cost owner Route",
-            "escalation": "Cost owner / DBA Lead",
+            "owner": "DBA / Cost Route",
+            "escalation": "Cost attribution / DBA Lead",
             "source": "Warehouse signal route map",
         }
     elif any(token in wh for token in ("ETL", "LOAD", "TASK", "PIPE", "AIRFLOW", "DBT")):
         base = {
             "owner": "Data Engineering Route",
-            "escalation": "Pipeline Route / DBA On-Call",
+            "escalation": "Pipeline Route / DBA Review",
             "source": "Warehouse name route hint",
         }
     elif any(token in wh for token in ("BI", "REPORT", "LOOKER", "POWERBI", "TABLEAU")):
@@ -84,13 +84,13 @@ def _warehouse_owner_context(row: pd.Series | dict) -> dict:
     )
     return {
         "owner": _route_label(directory_context.get("OWNER") or base["owner"]),
-        "escalation": base["escalation"] or directory_context.get("ESCALATION_TARGET", ""),
-        "source": _route_label(f"{base['source']}; {directory_context.get('OWNER_SOURCE', '')}".strip("; ")),
-        "owner_email": directory_context.get("OWNER_EMAIL", ""),
-        "oncall_primary": directory_context.get("ONCALL_PRIMARY", ""),
-        "oncall_secondary": directory_context.get("ONCALL_SECONDARY", ""),
-        "approval_group": base["escalation"] or directory_context.get("APPROVAL_GROUP", ""),
-        "owner_evidence": _route_label(directory_context.get("OWNER_EVIDENCE", "")),
+        "escalation": base["escalation"] or directory_context.get("REVIEW_TARGET", ""),
+        "source": _route_label(f"{base['source']}; {directory_context.get('ROUTE_SOURCE', '')}".strip("; ")),
+        "route_email": directory_context.get("ROUTE_EMAIL", ""),
+        "review_primary": directory_context.get("REVIEW_PRIMARY", ""),
+        "review_secondary": directory_context.get("REVIEW_SECONDARY", ""),
+        "review_group": base["escalation"] or directory_context.get("REVIEW_GROUP", ""),
+        "route_evidence": _route_label(directory_context.get("ROUTE_EVIDENCE", "")),
     }
 
 
@@ -98,7 +98,7 @@ def _warehouse_approval_for(row: pd.Series | dict) -> str:
     signal = str(row.get("SIGNAL") or "").upper()
     owner = _route_label(row.get("OWNER") or _warehouse_owner_context(row)["owner"])
     if "CREDIT" in signal:
-        return "Cost owner / Warehouse Route"
+        return "Cost attribution / Cost Route"
     if "QUEUE" in signal:
         return f"{owner} / DBA Lead"
     if "SPILL" in signal:
@@ -149,13 +149,13 @@ def _warehouse_setting_candidate_for(row: pd.Series) -> dict:
     return {
         "ADMIN_READINESS": readiness,
         "OWNER": owner_context["owner"],
-        "ESCALATION_TARGET": owner_context["escalation"],
-        "OWNER_SOURCE": owner_context["source"],
-        "OWNER_EMAIL": owner_context.get("owner_email", ""),
-        "ONCALL_PRIMARY": owner_context.get("oncall_primary", ""),
-        "ONCALL_SECONDARY": owner_context.get("oncall_secondary", ""),
-        "APPROVAL_GROUP": owner_context.get("approval_group", ""),
-        "OWNER_EVIDENCE": owner_context.get("owner_evidence", ""),
+        "REVIEW_TARGET": owner_context["escalation"],
+        "ROUTE_SOURCE": owner_context["source"],
+        "ROUTE_EMAIL": owner_context.get("route_email", ""),
+        "REVIEW_PRIMARY": owner_context.get("review_primary", ""),
+        "REVIEW_SECONDARY": owner_context.get("review_secondary", ""),
+        "REVIEW_GROUP": owner_context.get("review_group", ""),
+        "ROUTE_EVIDENCE": owner_context.get("route_evidence", ""),
         "APPROVER": _warehouse_approval_for({**row.to_dict(), **owner_context} if hasattr(row, "to_dict") else row),
         "SETTING_CHANGE_CANDIDATE": candidate,
         "APPROVAL_REQUIRED": "Yes",
@@ -190,12 +190,12 @@ def _annotate_warehouse_admin_readiness(exceptions: pd.DataFrame) -> pd.DataFram
 def _warehouse_setting_audit_readiness_for_row(row: pd.Series | dict) -> dict:
     """Score whether a warehouse setting change has review, execution, and telemetry status."""
     owner = str(row.get("OWNER") or "").strip()
-    owner_source = str(row.get("OWNER_SOURCE") or "").upper()
-    approver = str(row.get("APPROVER") or row.get("APPROVAL_GROUP") or "").strip()
+    route_source = str(row.get("ROUTE_SOURCE") or "").upper()
+    approver = str(row.get("APPROVER") or row.get("REVIEW_GROUP") or "").strip()
     approval_required = str(row.get("APPROVAL_REQUIRED") or "Yes").upper() == "YES"
     rollback_required = str(row.get("ROLLBACK_REQUIRED") or "Yes").upper() == "YES"
     savings_required = str(row.get("IMPACT_TELEMETRY_REQUIRED") or "No").upper() == "YES"
-    approval_state = str(row.get("APPROVAL_STATE") or row.get("OWNER_APPROVAL_STATUS") or "").upper()
+    approval_state = str(row.get("APPROVAL_STATE") or row.get("REVIEW_STATUS") or "").upper()
     ticket_id = str(row.get("CHANGE_TICKET_ID") or row.get("TICKET_ID") or "").strip()
     rollback_sql = str(row.get("ROLLBACK_SQL") or "").strip()
     execution_status = str(row.get("EXECUTION_STATUS") or "Not Executed").upper()
@@ -214,8 +214,8 @@ def _warehouse_setting_audit_readiness_for_row(row: pd.Series | dict) -> dict:
 
     blockers: list[str] = []
     generic_owners = {"", "DBA", "UNKNOWN", "N/A"}
-    owner_route_ready = bool(owner) and owner.upper() not in generic_owners and bool(owner_source or approver)
-    if not owner_route_ready:
+    workflow_route_ready = bool(owner) and owner.upper() not in generic_owners and bool(route_source or approver)
+    if not workflow_route_ready:
         blockers.append("escalation route")
     if approval_required and approval_state not in {"APPROVED", "APPROVAL NOT REQUIRED", "NOT REQUIRED"}:
         blockers.append("review status")
@@ -279,7 +279,7 @@ def _warehouse_setting_audit_readiness_for_row(row: pd.Series | dict) -> dict:
         "AUDIT_READINESS": readiness,
         "AUDIT_RANK": rank,
         "AUDIT_BLOCKERS": "; ".join(blockers) if blockers else "None",
-        "OWNER_ROUTE_READY": "Yes" if owner_route_ready else "No",
+        "WORKFLOW_ROUTE_READY": "Yes" if workflow_route_ready else "No",
         "NEXT_CONTROL_ACTION": next_action,
     }
 
@@ -690,7 +690,7 @@ def _build_warehouse_guardrail_coverage(
             route_deduction = 4
         else:
             route_state = "Ready"
-            route_action = "Escalation uses the loaded warehouse signal and DBA on-call context."
+            route_action = "Escalation uses the loaded warehouse signal and DBA review context."
             route_deduction = 0
 
         pressure_reasons: list[str] = []
@@ -770,7 +770,7 @@ def _build_warehouse_guardrail_coverage(
             f"auto_suspend={suspend_value if suspend_known else 'as needed'}",
             f"statement_timeout={statement_timeout_value if statement_timeout_known else 'as needed'}",
             f"queued_timeout={queued_timeout_value if queued_timeout_known else 'as needed'}",
-            f"route={control_state or 'DBA on-call'}",
+            f"route={control_state or 'DBA review'}",
             f"queued={queued:.2f}s",
             f"spill={spill:.2f} GB",
             f"p95={p95:.2f}s",
@@ -1108,8 +1108,8 @@ def _warehouse_setting_review_insert_sql(
             f"{sql_literal(row.get('SEVERITY', ''), 40)} AS SEVERITY, "
             f"{sql_literal(row.get('SIGNAL', ''), 120)} AS SIGNAL, "
             f"{sql_literal(row.get('OWNER', ''), 200)} AS OWNER, "
-            f"{sql_literal(row.get('ESCALATION_TARGET', ''), 200)} AS ESCALATION_TARGET, "
-            f"{sql_literal(row.get('OWNER_SOURCE', ''), 200)} AS OWNER_SOURCE, "
+            f"{sql_literal(row.get('REVIEW_TARGET', ''), 200)} AS REVIEW_TARGET, "
+            f"{sql_literal(row.get('ROUTE_SOURCE', ''), 200)} AS ROUTE_SOURCE, "
             f"{sql_literal(row.get('APPROVER', ''), 200)} AS APPROVER, "
             f"{sql_literal(row.get('APPROVAL_REQUIRED', ''), 20)} AS APPROVAL_REQUIRED, "
             f"{sql_literal(row.get('ROLLBACK_REQUIRED', ''), 20)} AS ROLLBACK_REQUIRED, "
@@ -1147,7 +1147,7 @@ def _warehouse_setting_review_insert_sql(
     return f"""
 INSERT INTO {fqn} (
     SNAPSHOT_ID, SNAPSHOT_TS, COMPANY, ENVIRONMENT, WAREHOUSE_NAME, SEVERITY,
-    SIGNAL, OWNER, ESCALATION_TARGET, OWNER_SOURCE, APPROVER, APPROVAL_REQUIRED,
+    SIGNAL, OWNER, REVIEW_TARGET, ROUTE_SOURCE, APPROVER, APPROVAL_REQUIRED,
     ROLLBACK_REQUIRED, SAFE_CHANGE_PATH, SETTING_CHANGE_CANDIDATE, CHANGE_RISK,
     POST_CHANGE_VERIFICATION, PRESSURE_EVIDENCE, BASELINE_CAPACITY_SCORE,
     BASELINE_QUEUED_QUERIES, BASELINE_SPILL_QUERIES, BASELINE_HIGH_LATENCY_QUERIES,

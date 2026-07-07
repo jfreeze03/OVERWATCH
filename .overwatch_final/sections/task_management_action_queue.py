@@ -7,7 +7,7 @@ from sections.task_management_models import (
     _task_environment,
     _task_metric,
     _task_owner,
-    _task_owner_approval_status,
+    _task_review_status,
 )
 from sections.task_management_sql import (
     _task_reliability_generated_sql,
@@ -57,14 +57,14 @@ def _queue_task_findings(session, df: pd.DataFrame, source: str) -> None:
             "Entity Type": "Task/Pipeline",
             "Entity": name,
             "Owner": owner_context.get("OWNER", "Data Engineering"),
-            "Owner Email": owner_context.get("OWNER_EMAIL", ""),
-            "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
-            "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
-            "Review Group": owner_context.get("APPROVAL_GROUP", ""),
-            "Escalation Target": owner_context.get("ESCALATION_TARGET", ""),
-            "Owner Source": owner_context.get("OWNER_SOURCE", ""),
-            "Owner Evidence": owner_context.get("OWNER_EVIDENCE", ""),
-            "Approver": owner_context.get("APPROVAL_GROUP", ""),
+            "Route Email": owner_context.get("ROUTE_EMAIL", ""),
+            "Review Primary": owner_context.get("REVIEW_PRIMARY", ""),
+            "Review Secondary": owner_context.get("REVIEW_SECONDARY", ""),
+            "Review Group": owner_context.get("REVIEW_GROUP", ""),
+            "Review Target": owner_context.get("REVIEW_TARGET", ""),
+            "Route Source": owner_context.get("ROUTE_SOURCE", ""),
+            "Route Evidence": owner_context.get("ROUTE_EVIDENCE", ""),
+            "Approver": owner_context.get("REVIEW_GROUP", ""),
             "Finding": finding,
             "Action": "Review error message, fix upstream dependency or SQL failure, then retry the task/pipeline.",
             "Estimated Monthly Savings": 0.0,
@@ -105,7 +105,7 @@ def _build_task_reliability_action(row: pd.Series, company: str, source: str) ->
     severity = str(row.get("SEVERITY") or ("High" if category != "Unclassified Failure" else "Medium"))
     incident_priority = str(row.get("INCIDENT_PRIORITY") or "").strip()
     recovery_readiness = str(row.get("RECOVERY_READINESS") or "").strip()
-    owner_approval_state = str(row.get("OWNER_APPROVAL_STATE") or "").strip()
+    review_state = str(row.get("REVIEW_STATE") or "").strip()
     recovery_state = str(row.get("RECOVERY_STATE") or "").strip()
     recovery_evidence = str(row.get("VERIFY_AFTER_FIX") or "").strip()
     owner_context = resolve_owner_context(
@@ -118,8 +118,8 @@ def _build_task_reliability_action(row: pd.Series, company: str, source: str) ->
     )
     if recovery_readiness and recovery_readiness.lower() not in action_text.lower():
         action_text += f" Recovery status: {recovery_readiness}."
-    if owner_approval_state and owner_approval_state.lower() not in action_text.lower():
-        action_text += f" Status: {owner_approval_state}."
+    if review_state and review_state.lower() not in action_text.lower():
+        action_text += f" Status: {review_state}."
     finding_prefix = f"{incident_priority}: " if incident_priority else ""
     finding = f"{finding_prefix}{signal}: {task}. {detail}".strip()
     if recovery_state:
@@ -141,14 +141,14 @@ def _build_task_reliability_action(row: pd.Series, company: str, source: str) ->
         "Entity Type": "Task/Procedure",
         "Entity": task,
         "Owner": owner_context.get("OWNER") or _task_owner(row),
-        "Owner Email": owner_context.get("OWNER_EMAIL", ""),
-        "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
-        "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
-        "Review Group": owner_context.get("APPROVAL_GROUP", ""),
-        "Escalation Target": owner_context.get("ESCALATION_TARGET", ""),
-        "Owner Source": owner_context.get("OWNER_SOURCE", ""),
-        "Owner Evidence": owner_context.get("OWNER_EVIDENCE", ""),
-        "Approver": owner_context.get("APPROVAL_GROUP") or row.get("APPROVER") or owner_context.get("ESCALATION_TARGET", ""),
+        "Route Email": owner_context.get("ROUTE_EMAIL", ""),
+        "Review Primary": owner_context.get("REVIEW_PRIMARY", ""),
+        "Review Secondary": owner_context.get("REVIEW_SECONDARY", ""),
+        "Review Group": owner_context.get("REVIEW_GROUP", ""),
+        "Review Target": owner_context.get("REVIEW_TARGET", ""),
+        "Route Source": owner_context.get("ROUTE_SOURCE", ""),
+        "Route Evidence": owner_context.get("ROUTE_EVIDENCE", ""),
+        "Approver": owner_context.get("REVIEW_GROUP") or row.get("APPROVER") or owner_context.get("REVIEW_TARGET", ""),
         "Finding": finding,
         "Action": action_text,
         "Estimated Monthly Savings": 0.0,
@@ -161,8 +161,8 @@ def _build_task_reliability_action(row: pd.Series, company: str, source: str) ->
         "Baseline Value": baseline_value,
         "Current Value": current_value,
         "Measured Delta": measured_delta,
-        "Verification Status": _task_owner_approval_status(row),
-        "Verification Note": owner_approval_state,
+        "Verification Status": _task_review_status(row),
+        "Verification Note": review_state,
         "Recovery SLA State": recovery_state,
         "Recovery SLA Hours": _task_metric(row, "RECOVERY_HOURS", "RECOVERY_SLA_HOURS"),
         "Recovery SLA Target Hours": _task_metric(row, "RECOVERY_SLA_TARGET_HOURS"),

@@ -89,6 +89,8 @@ def _infer_mode(path: str, upper: str) -> str:
         return "query_search"
     if "evidence" in normalized:
         return "evidence"
+    if "/validation/" in normalized or normalized.startswith("snowflake/validation/"):
+        return "deployment_validation"
     if "first_paint" in normalized or "packet_lookup" in normalized:
         return "app_first_paint"
     if "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL" in upper:

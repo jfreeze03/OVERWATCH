@@ -403,7 +403,7 @@ def _build_auto_release_readiness_gate(
                 "STATE": "Review",
                 "SEVERITY": "Medium",
                 "EVIDENCE": str(migration_error.iloc[0].get("ERROR", "Schema migration status unavailable."))[:260],
-                "NEXT_ACTION": "Run the reviewed release remediation or ask the DBA on-call to refresh status telemetry, then reload Control Room.",
+                "NEXT_ACTION": "Run the reviewed release remediation or ask the DBA review to refresh status telemetry, then reload Control Room.",
                 "ROUTE": "DBA Control Room",
                 "PROOF_REQUIRED": "release status telemetry is current and complete",
             })

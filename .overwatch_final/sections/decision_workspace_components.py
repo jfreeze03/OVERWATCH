@@ -2,7 +2,7 @@
 
 The attached React UI kit is used as visual direction only. These helpers emit
 safe HTML fragments that the Streamlit renderers can mount with ``st.html``.
-They do not contain demo data or runtime queries.
+They do not contain seeded example data or runtime queries.
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ def render_signal_panel(findings: Sequence[object], *, title: object = "What nee
         severity = _value(item, "severity", default="Info")
         signal = _value(item, "signal", "title", default="Review summary")
         entity = _value(item, "entity_name", "entity", "entity_id", default="Entity unavailable")
-        workflow = _value(item, "route_workflow", "workflow", "owner_name", "owner", default="Workflow unavailable")
+        workflow = _value(item, "route_workflow", "workflow", "route_section", "route_key", default="Workflow unavailable")
         sla = _value(item, "sla", "due_label", "sla_state", default="SLA unavailable")
         first_seen = _value(item, "first_seen_label", default="")
         due = _value(item, "due_label", default="")

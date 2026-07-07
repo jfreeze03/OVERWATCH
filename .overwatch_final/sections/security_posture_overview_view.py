@@ -299,7 +299,7 @@ def _security_action_brief(summary, exceptions, meta: dict, company: str, enviro
                 "detail": "Loaded telemetry does not match the active company, environment, filters, or lookback.",
             }
         return {
-            "state": "Loading current summary",
+            "state": "Refresh required",
             "headline": "Security command brief is the entry summary.",
             "detail": "Entry reads compact summary marts when available; open security details for current proof counts.",
         }
@@ -352,7 +352,7 @@ def _security_operating_snapshot(summary, meta: dict, company: str, environment:
             "loaded": False,
             "scope": str(company or "All"),
             "window": f"{safe_int(days, 30):d}d",
-            "evidence": "Loading current summary",
+            "evidence": "Refresh required",
             "focus": "Access",
         }
     row = summary.iloc[0]
@@ -370,7 +370,7 @@ def _render_security_operating_snapshot(snapshot: dict) -> None:
         render_shell_kpi_row((
             ("Scope", str(snapshot.get("scope") or "All")),
             ("Window", str(snapshot.get("window") or "30d")),
-            ("Telemetry", str(snapshot.get("evidence") or "Loading current summary")),
+            ("Telemetry", str(snapshot.get("evidence") or "Refresh required")),
         ))
         return
     render_shell_kpi_row((
@@ -399,10 +399,10 @@ def _render_security_overview_entry(summary, exceptions, meta: dict, company: st
         action_rows = _security_exception_strip_rows(summary, exceptions, meta, company, environment, days)
     else:
         render_shell_kpi_row((
-            ("Failed Logins", "Loading current summary"),
-            ("Risky Grants", "Loading current summary"),
-            ("Privilege Changes", "Loading current summary"),
-            ("Shared DBs", "Loading current summary"),
+            ("Failed Logins", "Refresh required"),
+            ("Risky Grants", "Refresh required"),
+            ("Privilege Changes", "Refresh required"),
+            ("Shared DBs", "Refresh required"),
         ))
         action_rows = [
             {
@@ -423,7 +423,7 @@ def _render_security_overview_entry(summary, exceptions, meta: dict, company: st
                 "severity": "Info",
                 "signal": "Review sharing exposure",
                 "entity": "Data sharing",
-                "detail": "Validate inbound/outbound shares, consumers, and owner route.",
+                "detail": "Validate inbound/outbound shares, consumers, and exposure status.",
                 "route": DATA_SHARING_EXPOSURE_WORKFLOW,
             },
         ]
@@ -444,25 +444,25 @@ def _security_command_lanes(snapshot: dict) -> list[dict[str, str]]:
         return [
             {
                 "label": "Failed logins",
-                "value": "Loading current summary",
+                "value": "Refresh required",
                 "state": "Identity",
                 "detail": "Fast summary checks login spikes, unusual sources, and failed auth before live proof.",
             },
             {
                 "label": "MFA gaps",
-                "value": "Loading current summary",
+                "value": "Refresh required",
                 "state": "Access",
                 "detail": "Review active users without exposed MFA signal.",
             },
             {
                 "label": "Grant changes",
-                "value": "Loading current summary",
+                "value": "Refresh required",
                 "state": "Privilege",
                 "detail": "Admin grants, ownership, and future grants route here.",
             },
             {
                 "label": "Shared data",
-                "value": "Loading current summary",
+                "value": "Refresh required",
                 "state": "Exposure",
                 "detail": "Shares, external stages, and broad grants stay visible for review.",
             },
@@ -665,7 +665,7 @@ def _render_security_operability_fact_gate(company: str, environment: str, days:
                 "TICKET_REQUIRED_ROWS", "REVIEW_BY_REQUIRED_ROWS",
                 "CAPABILITY_PROOF_ROWS", "NO_DATABASE_CONTEXT_ROWS",
                 "OPEN_ACTIONS", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION",
-                "VERIFIED_CLOSURES", "OWNER_APPROVAL_GAP_ROWS", "NEXT_CONTROL_ACTION",
+                "VERIFIED_CLOSURES", "REVIEW_GAP_ROWS", "NEXT_CONTROL_ACTION",
             ],
             sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "REVIEW_BLOCKER_ROWS"],
             ascending=[True, False, False, False],
@@ -1002,7 +1002,7 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
                     title="Security access-review status before queueing",
                     priority_columns=[
                         "SEVERITY", "REVIEW_READINESS", "ACCESS_REVIEW_STATE", "FINDING_TYPE", "ENTITY",
-                        "OWNER", "ESCALATION_TARGET", "APPROVER", "ROLE_CAPABILITY_STATE",
+                        "OWNER", "REVIEW_TARGET", "APPROVER", "ROLE_CAPABILITY_STATE",
                         "ACCESS_TICKET_ID", "REVIEW_BY_DATE", "IAM_APPROVAL_STATE",
                         "REVIEW_BLOCKERS", "REVIEW_SLA_HOURS", "TICKET_REQUIRED", "REVIEW_BY_REQUIRED", "DATABASE_CONTEXT",
                         "DATABASE_NAME", "ENVIRONMENT", "SCOPE_CONFIDENCE", "SCOPE_EVIDENCE",
@@ -1059,7 +1059,7 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
                             trend,
                             title="Security review findings still needing DBA status",
                             priority_columns=[
-                                "FINDING_TYPE", "SEVERITY", "OWNER", "ESCALATION_TARGET",
+                                "FINDING_TYPE", "SEVERITY", "OWNER", "REVIEW_TARGET",
                                 "REVIEW_ROWS", "TOTAL_EVENTS", "TICKET_REQUIRED_ROWS",
                                 "REVIEW_BY_REQUIRED_ROWS", "CAPABILITY_PROOF_ROWS",
                                 "REVIEW_BLOCKER_ROWS", "VERIFIED_REVIEW_ROWS",
@@ -1123,8 +1123,8 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
                                 "CATEGORY", "ENTITY_TYPE", "ENTITY", "CLOSURE_READINESS",
                                 "OWNER", "APPROVER", "TOTAL_ACTIONS", "OPEN_ACTIONS",
                                 "OVERDUE_OPEN", "VERIFIED_CLOSURES", "FIXED_WITHOUT_VERIFICATION",
-                                "OWNER_GAP_ROWS", "TICKET_GAP_ROWS", "APPROVER_GAP_ROWS",
-                                "OWNER_APPROVAL_GAP_ROWS", "VERIFICATION_QUERY_GAP_ROWS",
+                                "WORKFLOW_GAP_ROWS", "TICKET_GAP_ROWS", "APPROVER_GAP_ROWS",
+                                "REVIEW_GAP_ROWS", "VERIFICATION_QUERY_GAP_ROWS",
                                 "RECOVERY_RISK_ROWS", "NEXT_DUE_DATE", "LAST_STATUS", "NEXT_ACTION",
                             ],
                             sort_by=["CLOSURE_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "OPEN_ACTIONS"],

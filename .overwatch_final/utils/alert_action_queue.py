@@ -238,7 +238,7 @@ def _alert_recovery_sla_state(row: pd.Series | dict) -> str:
 
 def _alert_recovery_sql_guidance(row: pd.Series | dict, reliability_kind: str) -> str:
     entity = _row_value(row, "ENTITY_NAME", "ENTITY", default="Snowflake object")
-    owner = _row_value(row, "OWNER", "ESCALATION_TARGET", default="DBA / owner")
+    owner = _row_value(row, "OWNER", "REVIEW_TARGET", default="DBA / owner")
     noun = "task" if reliability_kind == "task" else "stored procedure"
     return "\n".join([
         f"-- reviewed {noun} recovery for {entity}",
@@ -285,8 +285,8 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
             alert_type=alert_type,
         )
         owner = owner_context.get("OWNER") or owner
-        escalation_target = _row_value(row, "ESCALATION_TARGET", default="") or owner_context.get("ESCALATION_TARGET", "")
-        approval_group = owner_context.get("APPROVAL_GROUP") or escalation_target or owner
+        review_target = _row_value(row, "REVIEW_TARGET", default="") or owner_context.get("REVIEW_TARGET", "")
+        review_group = owner_context.get("REVIEW_GROUP") or review_target or owner
         sla_target_hours = _alert_numeric_value(row, "SLA_TARGET_HOURS")
         if sla_target_hours is None:
             sla_target_hours = float(ALERT_SLA_HOURS.get(_normalize_alert_severity(_row_value(row, "SEVERITY", default="Medium")), 24))
@@ -322,13 +322,13 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
             "Verification Query": verification_query,
             "Company": _row_value(row, "COMPANY", default=company),
             "Environment": _row_value(row, "ENVIRONMENT", default="No Database Context"),
-            "Owner Email": owner_context.get("OWNER_EMAIL", ""),
-            "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
-            "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
-            "Review Group": approval_group,
-            "Escalation Target": escalation_target,
-            "Owner Source": owner_context.get("OWNER_SOURCE", ""),
-            "Owner Evidence": owner_context.get("OWNER_EVIDENCE", ""),
+            "Route Email": owner_context.get("ROUTE_EMAIL", ""),
+            "Review Primary": owner_context.get("REVIEW_PRIMARY", ""),
+            "Review Secondary": owner_context.get("REVIEW_SECONDARY", ""),
+            "Review Group": review_group,
+            "Review Target": review_target,
+            "Route Source": owner_context.get("ROUTE_SOURCE", ""),
+            "Route Evidence": owner_context.get("ROUTE_EVIDENCE", ""),
         }
         if reviewed_recovery:
             action.update({

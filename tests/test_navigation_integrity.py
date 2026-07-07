@@ -87,7 +87,6 @@ from sections.shell_helpers import (  # noqa: E402
     with_loaded_at,
 )
 from workflow_contracts import (  # noqa: E402
-    ABANDONED_PRIMARY_SECTION_TITLES,
     LEGACY_ROUTE_CONTRACT,
     PRIMARY_SECTION_TITLES,
     SECTION_WORKFLOW_CONTRACT,
@@ -458,15 +457,16 @@ class NavigationIntegrityTests(unittest.TestCase):
             self.assertEqual(target, "Executive Landing")
             self.assertEqual(st.session_state[EXECUTIVE_LANDING_WORKFLOW], "Executive Overview")
 
+            prior_executive_workflow = st.session_state.get(EXECUTIVE_LANDING_WORKFLOW)
             target = apply_navigation_state("Adoption Analytics")
-            self.assertEqual(target, "Executive Landing")
-            self.assertEqual(st.session_state[EXECUTIVE_LANDING_WORKFLOW], "Executive Admin / Advanced")
+            self.assertEqual(target, "Adoption Analytics")
+            self.assertEqual(st.session_state.get(EXECUTIVE_LANDING_WORKFLOW), prior_executive_workflow)
 
             target = apply_navigation_state("Account Health")
-            self.assertEqual(target, "DBA Control Room")
-            self.assertEqual(st.session_state[NAV_SECTION], "DBA Control Room")
-            self.assertEqual(st.session_state[PENDING_SECTION], "DBA Control Room")
-            self.assertEqual(st.session_state[DBA_CONTROL_ROOM_ACTIVE_VIEW], "Morning Cockpit")
+            self.assertEqual(target, "Account Health")
+            self.assertEqual(st.session_state[NAV_SECTION], "Account Health")
+            self.assertEqual(st.session_state[PENDING_SECTION], "Account Health")
+            self.assertNotIn(DBA_CONTROL_ROOM_ACTIVE_VIEW, st.session_state)
 
             target = apply_navigation_state("Security & Access")
             self.assertEqual(target, "Security Monitoring")
@@ -861,46 +861,18 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertEqual(SECTION_ALIASES[alias], target)
                 self.assertEqual(normalize_section_name(alias), target)
                 self.assertNotIn(alias, SECTION_BY_TITLE)
-        self.assertEqual(RETIRED_SECTION_REDIRECTS["Account Health"], SECTION_BY_TITLE["DBA Control Room"])
-        self.assertEqual(SECTION_ALIASES["Account Health"], SECTION_BY_TITLE["DBA Control Room"])
-        self.assertEqual(normalize_section_name("Account Health"), SECTION_BY_TITLE["DBA Control Room"])
-        self.assertEqual(
-            compatibility_state_for_section("Account Health"),
-            {
-                "dba_control_room_active_view": "Morning Cockpit",
-                "_dba_control_room_full_workspace_requested": True,
-                "_dba_control_room_brief_mode": False,
-            },
-        )
-        self.assertEqual(SECTION_ALIASES["Command Center"], SECTION_BY_TITLE["DBA Control Room"])
         self.assertEqual(SECTION_ALIASES["Usage Overview"], SECTION_BY_TITLE["DBA Control Room"])
-        self.assertEqual(SECTION_ALIASES["Service Health"], SECTION_BY_TITLE["DBA Control Room"])
-        self.assertEqual(SECTION_ALIASES["Fast Watch"], SECTION_BY_TITLE["DBA Control Room"])
-        self.assertEqual(SECTION_ALIASES["Morning Brief"], SECTION_BY_TITLE["DBA Control Room"])
-        self.assertEqual(compatibility_state_for_section("Command Center")["dba_control_room_active_view"], "Morning Cockpit")
         self.assertEqual(compatibility_state_for_section("Usage Overview")["dba_control_room_active_view"], "Cost Watch")
-        self.assertEqual(
-            compatibility_state_for_section("Service Health")["dba_control_room_active_view"],
-            "Control Room Admin / Advanced",
-        )
-        self.assertEqual(compatibility_state_for_section("Fast Watch")["dba_control_room_active_view"], "Morning Cockpit")
-        self.assertEqual(compatibility_state_for_section("Morning Brief")["dba_control_room_active_view"], "Morning Cockpit")
         self.assertEqual(SECTION_ALIASES["Credit Contract"], SECTION_BY_TITLE["Cost & Contract"])
-        self.assertEqual(SECTION_ALIASES["Cost Center"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Recommendations"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Cortex Monitor"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Security & Access"], SECTION_BY_TITLE["Security Monitoring"])
-        self.assertEqual(SECTION_ALIASES["Security Posture"], SECTION_BY_TITLE["Security Monitoring"])
         self.assertEqual(SECTION_ALIASES["Data Sharing"], SECTION_BY_TITLE["Security Monitoring"])
         self.assertEqual(SECTION_ALIASES["Failed Logins"], SECTION_BY_TITLE["Security Monitoring"])
         self.assertEqual(SECTION_ALIASES["Access posture"], SECTION_BY_TITLE["Security Monitoring"])
         self.assertNotIn("DBA Tools", SECTION_ALIASES)
         self.assertNotIn("Change & Drift", SECTION_ALIASES)
         self.assertNotIn("Who Changed What?", SECTION_ALIASES)
-        self.assertEqual(SECTION_ALIASES["Optimization"], SECTION_BY_TITLE["Cost & Contract"])
-        self.assertEqual(SECTION_ALIASES["Warehouse Health"], SECTION_BY_TITLE["Cost & Contract"])
-        self.assertEqual(compatibility_state_for_section("Cost Center")["cost_contract_workflow"], "Cost Explorer")
-        self.assertEqual(compatibility_state_for_section("Cost Center")["cc_explorer_lens"], "Warehouse")
         self.assertEqual(compatibility_state_for_section("Credit Contract")["cost_contract_workflow"], "Budget vs Actual")
         self.assertEqual(
             compatibility_state_for_section("Recommendations & Anomalies")["cost_contract_workflow"],
@@ -909,10 +881,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(compatibility_state_for_section("Recommendations")["cost_contract_workflow"], "Cost Recommendations")
         self.assertEqual(compatibility_state_for_section("Cortex Monitor")["cost_contract_workflow"], "Cortex AI")
         self.assertEqual(compatibility_state_for_section("AI & Cortex Monitor")["cost_contract_workflow"], "Cortex AI")
-        self.assertEqual(compatibility_state_for_section("Warehouse Health")["cost_contract_workflow"], "Waste Detection")
         self.assertEqual(compatibility_state_for_section("Storage Monitor")["cost_contract_workflow"], "Cost Overview")
         self.assertEqual(compatibility_state_for_section("Storage Monitor")["cost_contract_advanced_tool"], "Storage & Retention")
-        self.assertEqual(compatibility_state_for_section("SPCS Tracker")["cost_contract_advanced_tool"], "SPCS Spend")
         self.assertNotIn("Architecture", SECTION_ALIASES)
         self.assertNotIn("Architecture Readiness", SECTION_ALIASES)
         self.assertNotIn("Disaster Recovery", SECTION_ALIASES)
@@ -971,7 +941,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("normalize_executive_landing_workflow", executive_shell)
         self.assertIn('WORKFLOW_ALIASES_BY_SECTION["Executive Landing"]', executive_contracts)
         self.assertIn('"Executive Briefing": "Executive Overview"', route_registry_text)
-        self.assertIn('"Adoption Analytics": "Executive Admin / Advanced"', route_registry_text)
+        self.assertNotIn('"Adoption Analytics": "Executive Admin / Advanced"', route_registry_text)
         self.assertIn('"alert_center_active_view": "Active Alerts"', executive_overview + executive_data_health)
         self.assertIn('workflow_key="cost_contract_workflow"', executive_common + executive_cost)
         self.assertIn('workflow="Cost Explorer"', executive_cost)
@@ -1341,7 +1311,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(security_posture.WORKFLOW_MODULES["Failed Logins"], "sections.security_access")
         self.assertEqual(security_posture.WORKFLOW_MODULES["Risky Grants"], "sections.security_access")
         self.assertEqual(security_posture.WORKFLOW_MODULES["Data Sharing Exposure"], "sections.data_sharing")
-        self.assertEqual(compatibility_state_for_section("Security Posture")["security_posture_view"], "Security Overview")
+        self.assertEqual(compatibility_state_for_section("Security Posture"), {})
         self.assertEqual(compatibility_state_for_section("Security & Access")["security_posture_view"], "Risky Grants")
         self.assertEqual(compatibility_state_for_section("Data Sharing")["security_posture_view"], "Data Sharing Exposure")
         self.assertEqual(compatibility_state_for_section("Failed Logins")["security_posture_view"], "Failed Logins")
@@ -1400,8 +1370,7 @@ class NavigationIntegrityTests(unittest.TestCase):
     def test_workflow_contract_matches_primary_navigation(self):
         self.assertEqual(tuple(PRIMARY_SECTIONS), PRIMARY_SECTION_TITLES)
         self.assertEqual(set(SECTION_WORKFLOW_CONTRACT), set(PRIMARY_SECTIONS))
-        self.assertFalse(set(ABANDONED_PRIMARY_SECTION_TITLES) & set(PRIMARY_SECTIONS))
-        self.assertGreaterEqual(len(LEGACY_ROUTE_CONTRACT), 30)
+        self.assertGreaterEqual(len(LEGACY_ROUTE_CONTRACT), 20)
 
     def test_cost_contract_workflow_detail_renders_on_selection(self):
         from sections import cost_contract, cost_contract_contracts
@@ -1759,9 +1728,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn('with st.expander("Global Filters", expanded=False)', app_text + shell_text + layout_text)
         self.assertNotIn('with st.expander("Settings", expanded=False)', app_text + shell_text + layout_text)
         self.assertLess(shell_text.index("render_global_command_bar"), shell_text.index("render_sidebar("))
+        render_sidebar_body = layout_text[layout_text.index("def render_sidebar("):]
         self.assertLess(
-            layout_text.index("for group_name, group_all in NAV_GROUPS.items():"),
-            layout_text.index('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")'),
+            render_sidebar_body.index("for group_name, group_all in NAV_GROUPS.items():"),
+            render_sidebar_body.index("render_sidebar_utilities("),
         )
         self.assertLess(
             layout_text.index('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")'),

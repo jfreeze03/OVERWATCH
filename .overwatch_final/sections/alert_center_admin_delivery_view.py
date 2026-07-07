@@ -113,7 +113,7 @@ def _delivery_remediation_control_rows(
                 f"{len(native_registry):,} native candidate row(s); {enabled_native:,} enabled by default; {candidate_native:,} candidate(s)."
                 if not native_registry.empty else "Registry table not loaded or not deployed yet."
             ),
-            "NEXT_ACTION": "Review generated CREATE ALERT SQL and enable only after owner, threshold, and warehouse are approved.",
+            "NEXT_ACTION": "Review generated CREATE ALERT SQL and enable only after reviewer, threshold, and warehouse are approved.",
             "ROUTE": "Detection Catalog",
         },
         {
@@ -254,7 +254,7 @@ def render_alert_action_queue_routing(
                 title="Action queue routing preview",
                 priority_columns=[
                     "Severity", "Category", "Entity Type", "Entity", "Owner",
-                    "Oncall Primary", "Review Group",
+                    "Review Primary", "Review Group",
                     "Recovery SLA State", "Recovery SLA Target Hours",
                     "Action",
                 ],
@@ -281,7 +281,7 @@ def render_alert_action_queue_routing(
             title="Current action queue",
             priority_columns=[
                 "SEVERITY", "STATUS", "CATEGORY", "ENTITY_NAME", "OWNER",
-                "ONCALL_PRIMARY", "FINDING", "RECOMMENDED_ACTION",
+                "REVIEW_PRIMARY", "FINDING", "RECOMMENDED_ACTION",
                 "TICKET_ID", "DUE_STATE",
             ],
             sort_by=["SEVERITY", "STATUS", "UPDATED_AT"],

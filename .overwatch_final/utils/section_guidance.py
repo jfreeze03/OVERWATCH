@@ -190,7 +190,7 @@ SECTION_EVIDENCE_CONTRACT = {
         {
             "source": "Email delivery configuration",
             "confidence": "Email-first",
-            "decision_use": "Confirm outbound alert path and escalation target.",
+            "decision_use": "Confirm outbound alert path and review target.",
             "invalid_use": "Do not claim external delivery until a Snowflake notification integration exists.",
             "proof": "Delivery target, digest or alert delivery log, and routing note.",
         },

@@ -167,7 +167,7 @@ def render_chargeback(session, company: str, credit_price: float, max_wh_size_ex
                 QUERY_COUNT=("QUERY_COUNT", "sum"),
                 ALLOCATION_CONFIDENCE=("ALLOCATION_CONFIDENCE", _mixed_label),
                 CHARGEBACK_READY=("CHARGEBACK_READY", _chargeback_readiness_label),
-                ROUTE_TELEMETRY=("OWNER_SOURCE", _route_telemetry_label),
+                ROUTE_TELEMETRY=("ROUTE_SOURCE", _route_telemetry_label),
             )
             .sort_values("EST_COST", ascending=False)
         )
@@ -201,7 +201,7 @@ def render_chargeback(session, company: str, credit_price: float, max_wh_size_ex
                     QUERY_COUNT=("QUERY_COUNT", "sum"),
                     ALLOCATION_CONFIDENCE=("ALLOCATION_CONFIDENCE", _mixed_label),
                     CHARGEBACK_READY=("CHARGEBACK_READY", _chargeback_readiness_label),
-                    ROUTE_TELEMETRY=("OWNER_SOURCE", _route_telemetry_label),
+                    ROUTE_TELEMETRY=("ROUTE_SOURCE", _route_telemetry_label),
                 )
                 .sort_values("EST_COST", ascending=False)
             )
@@ -225,7 +225,7 @@ def render_chargeback(session, company: str, credit_price: float, max_wh_size_ex
                         EST_COST=("EST_COST", "sum"),
                         QUERY_COUNT=("QUERY_COUNT", "sum"),
                         ALLOCATION_CONFIDENCE=("ALLOCATION_CONFIDENCE", _mixed_label),
-                        ROUTE_TELEMETRY=("OWNER_SOURCE", _route_telemetry_label),
+                        ROUTE_TELEMETRY=("ROUTE_SOURCE", _route_telemetry_label),
                     )
                     .sort_values("EST_COST", ascending=False)
                 )
@@ -258,9 +258,9 @@ def render_chargeback(session, company: str, credit_price: float, max_wh_size_ex
                 "ALLOCATION_CONFIDENCE",
                 "CHARGEBACK_READY",
                 "SCOPE_REVIEW",
-                "COST_OWNER",
-                "OWNER_SOURCE",
-                "OWNER_EVIDENCE",
+                "COST_ATTRIBUTION",
+                "ROUTE_SOURCE",
+                "ROUTE_EVIDENCE",
                 "USER_NAME",
                 "ROLE_NAME",
                 "WAREHOUSE_NAME",

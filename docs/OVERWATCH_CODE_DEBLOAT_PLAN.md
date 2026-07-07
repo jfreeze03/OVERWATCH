@@ -145,7 +145,7 @@ release gates without clicking mutation controls.
 | `.overwatch_final/sections/security_posture_data.py` | 130 | Security summary SQL wrappers and mart-first/live-fallback summary loader preserving session-state keys and source labels. |
 | `.overwatch_final/sections/security_posture_alerts_view.py` | 52 | Loaded Security Alerts context renderer with existing Alert Center and drilldown buttons. |
 | `.overwatch_final/sections/security_posture_access_changes_view.py` | 58 | Explicit-load Security-Sensitive Changes detail renderer. |
-| `.overwatch_final/sections/security_posture_admin_view.py` | 307 | Advanced security evidence panels, score drivers, ownership coverage, action approvals, command findings, and data-health renderer. |
+| `.overwatch_final/sections/security_posture_admin_view.py` | 307 | Advanced security evidence panels, score drivers, workflow route coverage, action approvals, command findings, and data-health renderer. |
 | `.overwatch_final/sections/security_posture_overview_view.py` | 1104 | Security Overview controller, refresh/freshness behavior, exception loading, proof-table gates, summary download, and secondary control-detail panels. |
 | `.overwatch_final/sections/security_posture_access_review.py` | 1013 | Access-review DDL/migration SQL, verification SQL, review readiness, control-board, closure/fact SQL, and snapshot save helpers. |
 | `.overwatch_final/sections/security_posture_action_queue.py` | 247 | Security exception and privileged-grant action-queue writers with existing action payload contracts. |
@@ -177,7 +177,7 @@ release gates without clicking mutation controls.
 | `.overwatch_final/sections/cost_center_contracts.py` | 77 | Cost Center view names, labels, details, no-database-context sentinels, and Cost Explorer lens metadata. |
 | `.overwatch_final/sections/cost_center_models.py` | 848 | Allocation-quality, environment-rollup, forecast, Cost Explorer summary/gap, bill movement, finance bridge, service grouping, and Explain Bill markdown helpers. |
 | `.overwatch_final/sections/cost_center_sql.py` | 335 | Annual service projection, optional query-history expression probe, admin reconciliation, Cost Explorer live, chargeback verification, and warehouse cost verification SQL builders. |
-| `.overwatch_final/sections/cost_center_action_queue.py` | 359 | Review-only cost outlier and bill exception action-queue payload/writer helpers preserving owner route and verification contracts. |
+| `.overwatch_final/sections/cost_center_action_queue.py` | 359 | Review-only cost outlier and bill exception action-queue payload/writer helpers preserving workflow route and verification contracts. |
 | `.overwatch_final/sections/cost_center_explorer_view.py` | 259 | Cost Explorer renderer preserving lens, min-cost, department filter, load, source, and queue keys. |
 | `.overwatch_final/sections/cost_center_explain_view.py` | 635 | Explain This Bill renderer preserving all `cc_explain_*` loads, source metadata, finance movement, service-credit caveats, markdown download, and exception queue behavior. |
 | `.overwatch_final/sections/cost_center_user_leaderboard_view.py` | 181 | User Leaderboard renderer preserving user profile and leaderboard queue keys plus `cost_leaderboard.csv`. |

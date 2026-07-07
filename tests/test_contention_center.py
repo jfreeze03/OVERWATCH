@@ -151,8 +151,8 @@ class ContentionCenterTests(unittest.TestCase):
         self.assertIn("Lock wait / blocked transaction", set(decisions["BOTTLENECK_TYPE"]))
         self.assertIn("Repeated table/object lock hotspot", set(decisions["BOTTLENECK_TYPE"]))
         self.assertIn("Task graph overlap / blocked task write", set(decisions["BOTTLENECK_TYPE"]))
-        self.assertIn("Active Locks", set(decisions["OWNER_ROUTE"]))
-        self.assertIn("Pipeline & Task Health", set(decisions["OWNER_ROUTE"]))
+        self.assertIn("Active Locks", set(decisions["WORKFLOW_ROUTE"]))
+        self.assertIn("Pipeline & Task Health", set(decisions["WORKFLOW_ROUTE"]))
         self.assertIn("Serialize", " ".join(decisions["NEXT_ACTION"].astype(str)))
         self.assertIn("bigger warehouse", " ".join(decisions["COMPUTE_DECISION"].astype(str)).lower())
         self.assertIn("OVERLAP_POLICY = NO_OVERLAP", " ".join(decisions["SAFE_FIX"].astype(str)))
@@ -182,7 +182,7 @@ class ContentionCenterTests(unittest.TestCase):
         self.assertEqual(first["BLOCKER"], "transaction tx_blocker_123")
         self.assertEqual(first["WAITER"], "query 01a")
         self.assertEqual(first["LOCKED_OBJECT"], "APP_DB.CORE.FACT_POLICY")
-        self.assertIn("DBA on-call", first["INCIDENT_OWNER"])
+        self.assertIn("DBA review", first["INCIDENT_OWNER"])
         self.assertIn("Run the precheck", first["DECISION_GATE"])
         self.assertIn("VERIFY_SQL", cockpit.columns)
 
@@ -222,10 +222,10 @@ class ContentionCenterTests(unittest.TestCase):
         )
 
         by_signal = {row["SIGNAL"]: row for row in decisions.to_dict("records")}
-        self.assertEqual(by_signal["Long DML lock window"]["OWNER_ROUTE"], "Query Investigation")
+        self.assertEqual(by_signal["Long DML lock window"]["WORKFLOW_ROUTE"], "Query Investigation")
         self.assertEqual(by_signal["Long DML lock window"]["TARGET_OBJECT"], "APP_DB.CORE.FACT_POLICY")
         self.assertIn("batch", by_signal["Long DML lock window"]["SAFE_FIX"].lower())
-        self.assertEqual(by_signal["Warehouse queueing"]["OWNER_ROUTE"], "Cost & Contract")
+        self.assertEqual(by_signal["Warehouse queueing"]["WORKFLOW_ROUTE"], "Cost & Contract")
         self.assertIn("compute concurrency", by_signal["Warehouse queueing"]["COMPUTE_DECISION"])
         self.assertIn("AVG_QUEUED_LOAD", by_signal["Warehouse queueing"]["PROOF_REQUIRED"])
         self.assertEqual(by_signal["Warehouse queueing"]["CLEANUP_DECISION"], "No cancel - capacity review")
@@ -246,7 +246,7 @@ class ContentionCenterTests(unittest.TestCase):
         })
         queue_contract = build_contention_safe_action_contract({
             "SIGNAL": "Warehouse queueing",
-            "OWNER_ROUTE": "Cost & Contract",
+            "WORKFLOW_ROUTE": "Cost & Contract",
             "WAREHOUSE_NAME": "WH_TRXS_QUERY",
             "MAX_QUEUED_LOAD": 2.5,
         })
@@ -296,7 +296,7 @@ class ContentionCenterTests(unittest.TestCase):
                 "TARGET_OBJECT": "APP_DB.CORE.FACT_POLICY",
                 "FIRST_MOVE": "Run blocker precheck SQL.",
                 "PROOF_REQUIRED": "LOCK_WAIT_HISTORY",
-                "OWNER_ROUTE": "Active Locks",
+                "WORKFLOW_ROUTE": "Active Locks",
                 "CLEANUP_DECISION": "Abort blocker transaction candidate",
             },
             {
@@ -306,7 +306,7 @@ class ContentionCenterTests(unittest.TestCase):
                 "ENTITY": "LOAD_FACT_POLICY",
                 "FIRST_MOVE": "Set NO_OVERLAP.",
                 "PROOF_REQUIRED": "TASK_HISTORY",
-                "OWNER_ROUTE": "Pipeline & Task Health",
+                "WORKFLOW_ROUTE": "Pipeline & Task Health",
                 "CLEANUP_DECISION": "Task schedule cleanup",
             },
             {
@@ -316,7 +316,7 @@ class ContentionCenterTests(unittest.TestCase):
                 "ENTITY": "WH_TRXS_LOAD",
                 "FIRST_MOVE": "Review concurrency.",
                 "PROOF_REQUIRED": "WAREHOUSE_LOAD_HISTORY",
-                "OWNER_ROUTE": "Cost & Contract",
+                "WORKFLOW_ROUTE": "Cost & Contract",
                 "CLEANUP_DECISION": "No cancel - capacity review",
             },
         ]))
@@ -448,12 +448,12 @@ class ContentionCenterTests(unittest.TestCase):
 
         self.assertFalse(live_rows.empty)
         by_signal = {row["SIGNAL"]: row for row in live_rows.to_dict("records")}
-        self.assertEqual(by_signal["Active lock"]["OWNER_ROUTE"], "Active Locks")
-        self.assertEqual(by_signal["Live blocked query"]["OWNER_ROUTE"], "Active Locks")
+        self.assertEqual(by_signal["Active lock"]["WORKFLOW_ROUTE"], "Active Locks")
+        self.assertEqual(by_signal["Live blocked query"]["WORKFLOW_ROUTE"], "Active Locks")
         self.assertEqual(by_signal["Live blocked query"]["TARGET_OBJECT"], "APP_DB.CORE.FACT_POLICY")
         self.assertIn("transaction fix first", by_signal["Live blocked query"]["COMPUTE_DECISION"].lower())
-        self.assertEqual(by_signal["Live warehouse queueing"]["OWNER_ROUTE"], "Cost & Contract")
-        self.assertEqual(by_signal["Current task graph"]["OWNER_ROUTE"], "Pipeline & Task Health")
+        self.assertEqual(by_signal["Live warehouse queueing"]["WORKFLOW_ROUTE"], "Cost & Contract")
+        self.assertEqual(by_signal["Current task graph"]["WORKFLOW_ROUTE"], "Pipeline & Task Health")
         self.assertIn("OVERLAP_POLICY = NO_OVERLAP", by_signal["Current task graph"]["SAFE_FIX"])
         self.assertIn("WAREHOUSE_LOAD_HISTORY", by_signal["Live warehouse pressure"]["PROOF_REQUIRED"])
         self.assertEqual(by_signal["Active lock"]["CLEANUP_DECISION"], "Abort active transaction candidate")
@@ -468,5 +468,5 @@ class ContentionCenterTests(unittest.TestCase):
         cockpit = _incident_cockpit_view(live_rows)
         by_class = {row["INCIDENT_CLASS"]: row for row in cockpit.to_dict("records")}
         self.assertEqual(by_class["Active lock"]["BLOCKER"], "transaction tx123")
-        self.assertIn("DBA on-call", by_class["Active lock"]["INCIDENT_OWNER"])
+        self.assertIn("DBA review", by_class["Active lock"]["INCIDENT_OWNER"])
         self.assertEqual(by_class["Live warehouse queueing"]["BLOCKER"], "No blocker proven")

@@ -285,8 +285,8 @@ setup script no longer creates them:
 | `SP_OVERWATCH_REFRESH_AUTOMATION` | Cost monitoring and executive observability refresh procedures |
 | `OVERWATCH_AUTOMATION_REFRESH` | Current cost and executive refresh task chain |
 | `OVERWATCH_COST_SAVINGS_VERIFICATION_RUN`, `OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V`, `SP_OVERWATCH_VERIFY_COST_SAVINGS`, `OVERWATCH_COST_SAVINGS_VERIFY` | Removed cost-savings verification workflow; current advisor estimates stay in app/session telemetry. |
-| `OVERWATCH_EXTERNAL_CONTROL_FEED`, `OVERWATCH_SOURCE_CONTROL_CHANGE`, `OVERWATCH_OWNER_APPROVAL` | Removed external/change-governance placeholders; DBA monitoring keeps only current Snowflake telemetry and action queue state. |
-| `OVERWATCH_OWNER_DIRECTORY`, `OVERWATCH_OWNER_DIRECTORY_ACTIVE_V` | Removed owner directory workflow; owner tag configuration remains in `OVERWATCH_OWNER_TAG_NAMES` and `DIM_COST_OWNER_TAG`. |
+| `OVERWATCH_EXTERNAL_CONTROL_FEED`, `OVERWATCH_SOURCE_CONTROL_CHANGE`, `OVERWATCH_REVIEW_STATUS` | Removed external/change-governance placeholders; DBA monitoring keeps only current Snowflake telemetry and action queue state. |
+| `OVERWATCH_OWNER_DIRECTORY`, `OVERWATCH_OWNER_DIRECTORY_ACTIVE_V` | Removed owner directory workflow; owner tag configuration remains in `OVERWATCH_ATTRIBUTION_TAG_NAMES` and `DIM_COST_ATTRIBUTION_TAG`. |
 | `OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER`, `OVERWATCH_PLATFORM_FUTURES_EVIDENCE`, platform futures views | Removed architecture/futures readiness workflow; current scope is operational monitoring. |
 | `OVERWATCH_COMMAND_INTELLIGENCE_CAPABILITY`, `OVERWATCH_REFRESH_POLICY`, `OVERWATCH_COMPANY_SCOPE`, `OVERWATCH_COMPLIANCE_READINESS_V` | Removed static metadata/control tables; current contracts live in docs, Python config, and validation SQL. |
 

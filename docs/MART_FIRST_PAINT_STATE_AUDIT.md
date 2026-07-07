@@ -1,4 +1,4 @@
-﻿# Mart First-Paint State Audit
+# Mart First-Paint State Audit
 
 Generated for the first-paint placeholder cleanup. Scope: primary mart-backed OVERWATCH sections and shared renderers.
 

@@ -63,7 +63,7 @@ COST_EXPLORER_LENS_COLUMNS = {
     "User / Role": ["USER_NAME", "ROLE_NAME"],
     "Database": ["DATABASE_NAME"],
     "Service": ["SERVICE_CATEGORY"],
-    "Tag / Application": ["OWNER_SOURCE", "COST_OWNER"],
+    "Tag / Application": ["ROUTE_SOURCE", "COST_ATTRIBUTION"],
     "Role": ["ROLE_NAME"],
     "User": ["USER_NAME"],
     "Environment": ["ENVIRONMENT_ROLLUP"],

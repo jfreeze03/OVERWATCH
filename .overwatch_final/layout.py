@@ -65,7 +65,6 @@ from runtime_state import (
     set_state,
     sync_exceptions_only_mode,
 )
-from theme import render_theme_picker
 from utils.cache import clear_all_cache
 from utils.company_filter import get_environment_label
 from utils.idle import (
@@ -79,7 +78,7 @@ from utils.idle import (
 SECTION_SUBTITLES = {
     "Executive Landing": "Risk, cost movement, action closure, and telemetry trust.",
     "DBA Control Room": "Morning triage, route status, data health, and release risk.",
-    "Alert Center": "Active alerts, owner routing, impact, recommended actions, and investigation paths.",
+    "Alert Center": "Active alerts, workflow routing, impact, recommended actions, and investigation paths.",
     "Workload Operations": "Query/contention triage plus task, procedure, and pipeline health.",
     "Cost & Contract": "Spend attribution, contract utilization, chargeback, savings, and action queue.",
     "Security Monitoring": "Login risk, privileged grants, public access, data sharing, and security alerts.",
@@ -290,6 +289,99 @@ def fresh_section_container(slot):
     return slot.container()
 
 
+def render_sidebar_utilities(
+    *,
+    active_company: str,
+    admin_access_allowed: bool,
+    credit_price: float,
+) -> float:
+    """Render app utility controls below primary navigation."""
+
+    st.divider()
+    st.caption("APP CONTROLS")
+
+    if sidebar_panel_toggle("Advanced Scope", "advanced_scope"):
+        render_advanced_scope_controls(active_company)
+
+    if sidebar_panel_toggle("Settings", "settings"):
+        credit_price = st.number_input(
+            "$/credit (compute)",
+            min_value=0.50, max_value=20.00,
+            value=get_state(CREDIT_PRICE, DEFAULTS["credit_price"]),
+            step=0.10, key=CREDIT_PRICE_INPUT,
+        )
+        set_state(CREDIT_PRICE, credit_price)
+
+        ai_credit_price = st.number_input(
+            "$/AI credit (Cortex)",
+            min_value=0.50, max_value=20.00,
+            value=get_state(AI_CREDIT_PRICE, DEFAULTS["ai_credit_price"]),
+            step=0.10, key=AI_CREDIT_PRICE_INPUT,
+        )
+        set_state(AI_CREDIT_PRICE, ai_credit_price)
+
+        storage_cost = st.number_input(
+            "$/TB/month (storage)",
+            min_value=1.0, max_value=100.0,
+            value=get_state(STORAGE_COST_PER_TB, DEFAULTS["storage_cost_per_tb"]),
+            step=1.0, key=STORAGE_COST_INPUT,
+        )
+        set_state(STORAGE_COST_PER_TB, storage_cost)
+        alert_email_targets = st.text_input(
+            "Alert email recipients",
+            value=get_state(ALERT_EMAIL_TARGETS, DEFAULT_ALERT_EMAIL),
+            key=ALERT_EMAIL_TARGETS_INPUT,
+            help="Comma-separated Snowflake notification recipients for generated alert SQL.",
+        )
+        configured_alert_email = str(alert_email_targets or "").strip()
+        set_state(ALERT_EMAIL_TARGETS, configured_alert_email)
+        if not configured_alert_email:
+            st.warning(
+                "Alert email is not configured. Set OVERWATCH_SETTINGS.DEFAULT_ALERT_EMAIL "
+                "in Snowflake, or enter recipients here before enabling scheduled email delivery."
+            )
+        st.caption("Cost estimates use configured credit rates.")
+
+        current_metric_signature = metric_settings_signature()
+        previous_metric_signature = get_state(PREV_METRIC_SETTINGS_SIGNATURE)
+        if previous_metric_signature is None:
+            set_state(PREV_METRIC_SETTINGS_SIGNATURE, current_metric_signature)
+        elif previous_metric_signature != current_metric_signature:
+            clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)
+            set_state(PREV_METRIC_SETTINGS_SIGNATURE, current_metric_signature)
+
+        st.selectbox(
+            "Live refresh interval",
+            [15, 30, 60, 120], index=1,
+            format_func=lambda x: f"{x}s",
+            key=LIVE_REFRESH_INTERVAL,
+        )
+        idle_timeout_options = [300, 600, 900, 1800, 3600]
+        current_idle_timeout = get_idle_timeout_seconds()
+        if current_idle_timeout not in idle_timeout_options:
+            idle_timeout_options.append(current_idle_timeout)
+            idle_timeout_options = sorted(set(idle_timeout_options))
+        st.selectbox(
+            "Idle query pause",
+            idle_timeout_options,
+            index=idle_timeout_options.index(current_idle_timeout),
+            format_func=lambda x: f"{int(x / 60)} min",
+            key=IDLE_TIMEOUT_SECONDS,
+            help="Pauses OVERWATCH Snowflake queries after inactivity. Resume keeps Live Monitor auto-refresh off.",
+        )
+        if admin_access_allowed:
+            st.button(
+                "Open Setup Health",
+                key="settings_open_setup_health",
+                type="secondary",
+                width="stretch",
+                on_click=_open_decision_setup_health,
+            )
+            if bool(get_state(SETUP_HEALTH_PANEL_OPEN_KEY, False)):
+                _render_decision_setup_health_panel()
+    return credit_price
+
+
 def render_sidebar(
     *,
     active_company: str,
@@ -342,90 +434,11 @@ def render_sidebar(
                     args=(section_name,),
                 )
 
-        st.divider()
-
-        if sidebar_panel_toggle("Advanced Scope", "advanced_scope"):
-            render_advanced_scope_controls(active_company)
-
-        st.divider()
-
-        if sidebar_panel_toggle("Settings", "settings"):
-            render_theme_picker()
-            credit_price = st.number_input(
-                "$/credit (compute)",
-                min_value=0.50, max_value=20.00,
-                value=get_state(CREDIT_PRICE, DEFAULTS["credit_price"]),
-                step=0.10, key=CREDIT_PRICE_INPUT,
-            )
-            set_state(CREDIT_PRICE, credit_price)
-
-            ai_credit_price = st.number_input(
-                "$/AI credit (Cortex)",
-                min_value=0.50, max_value=20.00,
-                value=get_state(AI_CREDIT_PRICE, DEFAULTS["ai_credit_price"]),
-                step=0.10, key=AI_CREDIT_PRICE_INPUT,
-            )
-            set_state(AI_CREDIT_PRICE, ai_credit_price)
-
-            storage_cost = st.number_input(
-                "$/TB/month (storage)",
-                min_value=1.0, max_value=100.0,
-                value=get_state(STORAGE_COST_PER_TB, DEFAULTS["storage_cost_per_tb"]),
-                step=1.0, key=STORAGE_COST_INPUT,
-            )
-            set_state(STORAGE_COST_PER_TB, storage_cost)
-            alert_email_targets = st.text_input(
-                "Alert email recipients",
-                value=get_state(ALERT_EMAIL_TARGETS, DEFAULT_ALERT_EMAIL),
-                key=ALERT_EMAIL_TARGETS_INPUT,
-                help="Comma-separated Snowflake notification recipients for generated alert SQL.",
-            )
-            configured_alert_email = str(alert_email_targets or "").strip()
-            set_state(ALERT_EMAIL_TARGETS, configured_alert_email)
-            if not configured_alert_email:
-                st.warning(
-                    "Alert email is not configured. Set OVERWATCH_SETTINGS.DEFAULT_ALERT_EMAIL "
-                    "in Snowflake, or enter recipients here before enabling scheduled email delivery."
-                )
-            st.caption("Cost estimates use configured credit rates.")
-
-            current_metric_signature = metric_settings_signature()
-            previous_metric_signature = get_state(PREV_METRIC_SETTINGS_SIGNATURE)
-            if previous_metric_signature is None:
-                set_state(PREV_METRIC_SETTINGS_SIGNATURE, current_metric_signature)
-            elif previous_metric_signature != current_metric_signature:
-                clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)
-                set_state(PREV_METRIC_SETTINGS_SIGNATURE, current_metric_signature)
-
-            st.selectbox(
-                "Live refresh interval",
-                [15, 30, 60, 120], index=1,
-                format_func=lambda x: f"{x}s",
-                key=LIVE_REFRESH_INTERVAL,
-            )
-            idle_timeout_options = [300, 600, 900, 1800, 3600]
-            current_idle_timeout = get_idle_timeout_seconds()
-            if current_idle_timeout not in idle_timeout_options:
-                idle_timeout_options.append(current_idle_timeout)
-                idle_timeout_options = sorted(set(idle_timeout_options))
-            st.selectbox(
-                "Idle query pause",
-                idle_timeout_options,
-                index=idle_timeout_options.index(current_idle_timeout),
-                format_func=lambda x: f"{int(x / 60)} min",
-                key=IDLE_TIMEOUT_SECONDS,
-                help="Pauses OVERWATCH Snowflake queries after inactivity. Resume keeps Live Monitor auto-refresh off.",
-            )
-            if admin_access_allowed:
-                st.button(
-                    "Open Setup Health",
-                    key="settings_open_setup_health",
-                    type="secondary",
-                    width="stretch",
-                    on_click=_open_decision_setup_health,
-                )
-                if bool(get_state(SETUP_HEALTH_PANEL_OPEN_KEY, False)):
-                    _render_decision_setup_health_panel()
+        credit_price = render_sidebar_utilities(
+            active_company=active_company,
+            admin_access_allowed=admin_access_allowed,
+            credit_price=credit_price,
+        )
 
     return SidebarState(
         active_company=active_company,

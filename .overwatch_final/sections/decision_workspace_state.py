@@ -75,7 +75,7 @@ def decision_fixture_enabled() -> bool:
     """Return whether deterministic visual Decision Briefs may be rendered.
 
     Fixture mode is deliberately harder to enable than the old session-state
-    switch. A stale ``st.session_state`` value cannot activate mockup data in a
+    switch. A stale ``st.session_state`` value cannot activate fixture data in a
     normal app session, and production Snowflake Native runtime always wins.
     """
     if snowflake_native_app_runtime():

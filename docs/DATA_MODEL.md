@@ -11,7 +11,7 @@ layer. The full source of truth remains `snowflake/OVERWATCH_MART_SETUP.sql`.
 | `MART_EXECUTIVE_OBSERVABILITY` | Transient mart | Executive monitoring wall: spend, Cortex, runtime, queue, spill, alerts, actions, storage, cost drivers, query database mix, execution status, and warehouse pressure. |
 | `MART_SECTION_COMMAND_BRIEF` | Transient mart | Primary-section command brief parent packet keyed by `BRIEF_ID`: state, headline, summary, resolved scope, source objects, source snapshot, freshness, stale flag, source coverage, confidence, and top signal. |
 | `MART_SECTION_COMMAND_METRIC` | Transient mart | Typed metric rows keyed by `BRIEF_ID`, including numeric/text value fields, format, unit, trend points, delta fields, tone, availability state, unavailable reason, source key, confidence, and display order for the compact metric strip. |
-| `MART_SECTION_COMMAND_EXCEPTION` | Transient mart | Top signal/exception rows keyed by `BRIEF_ID` with deterministic severity, priority score, impact, owner route, SLA, and route context. |
+| `MART_SECTION_COMMAND_EXCEPTION` | Transient mart | Top signal/exception rows keyed by `BRIEF_ID` with deterministic severity, priority score, impact, workflow route, SLA, and route context. |
 | `MART_SECTION_COMMAND_ACTION` | Transient mart | Allowlisted route action references keyed by `BRIEF_ID`; action rows provide `ACTION_KEY`, `ROUTE_KEY`, and `CTA_LABEL` instead of arbitrary app state mutation. |
 | `OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG` | Table | Authoritative source-trust catalog for each primary section: source key/object, required flag, target freshness, default confidence, and enabled state. |
 | `MART_SECTION_COMMAND_SOURCE` | Transient mart | Source-level availability, freshness, stale/data-gap, confidence, and gap-reason rows keyed by `BRIEF_ID`. Missing sources stay missing and cannot be converted into healthy zeros. |
@@ -61,12 +61,12 @@ Finding -> Owner -> Trust Level -> Business Impact -> Action -> Value Verified.
 
 | Object | Type | Purpose |
 |---|---|---|
-| `OVERWATCH_DATA_TRUST_SOURCE` | Table | Source freshness policy, owner route, business impact, and confidence label catalog. |
+| `OVERWATCH_DATA_TRUST_SOURCE` | Table | Source freshness policy, workflow route, business impact, and confidence label catalog. |
 | `OVERWATCH_DATA_TRUST_STATUS` | Transient table | Source-level trust diagnostics for DBA Control Room explicit loads. |
 | `MART_DATA_TRUST_SUMMARY` | Transient mart | Compact trust rollup for Executive Landing first paint. |
-| `OVERWATCH_OPERATIONAL_OWNER_MAP` | Table | Operational route fallback by entity type; it is not a generic owner directory. |
-| `MART_OPERATIONAL_OWNER_COVERAGE` | Transient mart | Ownership coverage and route gaps for Alert Center and Security Monitoring. |
-| `OVERWATCH_VALUE_LEDGER` | Table | Expected savings, actual verified savings, confidence, evidence, owner route, status, and rollback notes. |
+| `OVERWATCH_OPERATIONAL_ROUTE_MAP` | Table | Operational route fallback by entity type; it is not a generic owner directory. |
+| `MART_OPERATIONAL_ROUTE_COVERAGE` | Transient mart | Workflow route coverage and route gaps for Alert Center and Security Monitoring. |
+| `OVERWATCH_VALUE_LEDGER` | Table | Expected savings, actual verified savings, confidence, evidence, workflow route, status, and rollback notes. |
 | `MART_EXECUTIVE_VALUE_LEDGER` | Transient mart | Executive value rollup. Verified savings and unverified estimates are separate. |
 | `OVERWATCH_APP_OBSERVABILITY` | Transient table | App runtime detail from OVERWATCH usage logs. |
 | `MART_APP_OBSERVABILITY_SUMMARY` | Transient mart | Compact app health rollup for Executive Landing/DBA Control Room. |
@@ -98,7 +98,7 @@ value/risk is tied to the signal.
 
 | Object | Type | Purpose |
 |---|---|---|
-| `OVERWATCH_EXECUTIVE_SCORECARD_CONFIG` | Table | Score catalog, thresholds, owner routes, driver sources, and default recommended actions. |
+| `OVERWATCH_EXECUTIVE_SCORECARD_CONFIG` | Table | Score catalog, thresholds, workflow routes, driver sources, and default recommended actions. |
 | `OVERWATCH_EXECUTIVE_SCORECARD_HISTORY` | Transient table | Score snapshots and driver history for explicit Load panels. |
 | `MART_EXECUTIVE_SCORECARD_SUMMARY` | Transient mart | Compact first-paint Executive Landing scorecard source. |
 | `SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD` | Procedure | Refreshes all six leadership scores from existing OVERWATCH marts and app tables. |
@@ -109,7 +109,7 @@ Details and manual validation steps live in `docs/EXECUTIVE_SCORECARD.md`.
 
 | Object | Type | Purpose |
 | --- | --- | --- |
-| `OVERWATCH_FORECAST_CONFIG` | Table | Forecast catalog, owner route, methodology, confidence rule, source object list, and recommended action defaults. |
+| `OVERWATCH_FORECAST_CONFIG` | Table | Forecast catalog, workflow route, methodology, confidence rule, source object list, and recommended action defaults. |
 | `OVERWATCH_FORECAST_HISTORY` | Transient table | Forecast snapshots and historical driver rows for explicit Load panels. |
 | `MART_EXECUTIVE_FORECAST_SUMMARY` | Transient mart | Compact first-paint Executive Landing forecast summary. |
 | `SP_OVERWATCH_REFRESH_FORECASTING` | Procedure | Refreshes leadership forecasts from existing OVERWATCH cost, storage, query, task, and procedure facts. |
@@ -124,7 +124,7 @@ issue without claiming unsupported root cause.
 
 | Object | Type | Purpose |
 | --- | --- | --- |
-| `OVERWATCH_CHANGE_RULE` | Table | Change category catalog, risk label, owner route, confidence label, and default business impact. |
+| `OVERWATCH_CHANGE_RULE` | Table | Change category catalog, risk label, workflow route, confidence label, and default business impact. |
 | `OVERWATCH_CHANGE_EVENT` | Transient table | Normalized warehouse, role, grant, task, procedure, network policy, integration, object, and security-sensitive changes. |
 | `OVERWATCH_CHANGE_CORRELATION` | Transient table | Explicit-load possible correlation rows between changes and later alert, cost, security, or workload signals. |
 | `MART_CHANGE_INTELLIGENCE_SUMMARY` | Transient mart | Compact first-paint recent-change and risk summary for Executive Landing. |
@@ -139,8 +139,8 @@ verification, measured value, and closure. It does not execute remediation.
 
 | Object | Type | Purpose |
 | --- | --- | --- |
-| `OVERWATCH_ACTION_WORKFLOW` | Transient table | Action lifecycle rows with finding, source telemetry, owner route, business impact, risk, approval status, review text, rollback guidance, verification, savings, evidence, and closure state. |
-| `OVERWATCH_ACTION_APPROVAL` | Transient table | Approval proof rows with status, approver, approval timestamp, risk, owner route, and recommended action. |
+| `OVERWATCH_ACTION_WORKFLOW` | Transient table | Action lifecycle rows with finding, source telemetry, workflow route, business impact, risk, approval status, review text, rollback guidance, verification, savings, evidence, and closure state. |
+| `OVERWATCH_ACTION_APPROVAL` | Transient table | Approval proof rows with status, approver, approval timestamp, risk, workflow route, and recommended action. |
 | `OVERWATCH_ACTION_EXECUTION_PLAN` | Transient table | Review-gated SQL/action text, rollback guidance, dangerous-action flag, and explicit in-app execution block. |
 | `OVERWATCH_ACTION_VERIFICATION` | Transient table | Verification status, verification window, evidence, expected savings, and actual verified savings. |
 | `OVERWATCH_ACTION_EVIDENCE` | Transient table | Evidence trail for workflow, source telemetry, business impact, rollback, verification, and closure context. |

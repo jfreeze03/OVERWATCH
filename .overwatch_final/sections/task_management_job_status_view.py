@@ -371,7 +371,7 @@ def _render_task_ops_brief(session) -> None:
             blocked = int(recovery_board["COMMAND_STATE"].astype(str).eq("Blocked").sum())
             p1_p2 = int(recovery_board["INCIDENT_PRIORITY"].astype(str).str.startswith(("P1", "P2")).sum())
             owner_review = int(
-                recovery_board["OWNER_APPROVAL_STATE"].fillna("").astype(str).str.upper().str.contains("REQUIRED|REQUESTED", na=False).sum()
+                recovery_board["REVIEW_STATE"].fillna("").astype(str).str.upper().str.contains("REQUIRED|REQUESTED", na=False).sum()
             )
             render_shell_snapshot((
                 ("Recovery Items", f"{len(recovery_board):,}"),
@@ -385,8 +385,8 @@ def _render_task_ops_brief(session) -> None:
                 priority_columns=[
                     "COMMAND_STATE", "INCIDENT_PRIORITY", "SIGNAL", "TASK_NAME",
                     "ROOT_TASK_NAME", "GRAPH_ROLE", "DOWNSTREAM_TASK_COUNT",
-                    "RECOVERY_STATE", "RECOVERY_READINESS", "OWNER_APPROVAL_STATE",
-                    "ONCALL_PRIMARY", "APPROVAL_GROUP", "NEXT_WORKFLOW",
+                    "RECOVERY_STATE", "RECOVERY_READINESS", "REVIEW_STATE",
+                    "REVIEW_PRIMARY", "REVIEW_GROUP", "NEXT_WORKFLOW",
                     "NEXT_ACTION", "VERIFY_AFTER_FIX",
                 ],
                 sort_by=["COMMAND_STATE", "INCIDENT_PRIORITY", "DOWNSTREAM_TASK_COUNT"],
@@ -445,8 +445,8 @@ def _render_task_ops_brief(session) -> None:
                 priority_columns=[
                     "INCIDENT_PRIORITY", "RECOVERY_STATE", "TASK_NAME", "ROOT_TASK_NAME",
                     "GRAPH_ROLE", "DOWNSTREAM_TASK_COUNT", "LAST_FAILURE_AT", "RECOVERY_AT",
-                    "RECOVERY_HOURS", "RECOVERY_SLA_TARGET_HOURS", "OWNER", "OWNER_APPROVAL_STATE",
-                    "ONCALL_PRIMARY", "APPROVAL_GROUP", "OWNER_SOURCE",
+                    "RECOVERY_HOURS", "RECOVERY_SLA_TARGET_HOURS", "OWNER", "REVIEW_STATE",
+                    "REVIEW_PRIMARY", "REVIEW_GROUP", "ROUTE_SOURCE",
                     "ERROR_SIGNATURE", "VERIFY_AFTER_FIX",
                 ],
                 sort_by=["INCIDENT_PRIORITY", "DOWNSTREAM_TASK_COUNT", "LAST_FAILURE_AT"],
@@ -463,7 +463,7 @@ def _render_task_ops_brief(session) -> None:
                 priority_columns=[
                     "INCIDENT_PRIORITY", "SEVERITY", "SIGNAL", "TASK_NAME", "ROOT_TASK_NAME",
                     "GRAPH_ROLE", "DOWNSTREAM_TASK_COUNT", "BLAST_RADIUS",
-                    "PROCEDURE_NAME", "RECOVERY_STATE", "RECOVERY_HOURS", "OWNER_APPROVAL_STATE",
+                    "PROCEDURE_NAME", "RECOVERY_STATE", "RECOVERY_HOURS", "REVIEW_STATE",
                     "RECOVERY_READINESS", "DETAIL", "NEXT_WORKFLOW", "NEXT_ACTION",
                 ],
                 sort_by=["INCIDENT_PRIORITY", "SEVERITY", "DOWNSTREAM_TASK_COUNT", "SIGNAL", "TASK_NAME"],

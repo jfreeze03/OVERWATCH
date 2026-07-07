@@ -108,7 +108,7 @@ Those secondary systems are not worthless, but they should not be daily operator
 | `executive_landing.py` | Daily | High | High | MERGE into `OVERWATCH COMMAND CENTER`. |
 | `dba_control_room` package | Daily | High | Very high | MERGE into command center and incident queue. |
 | `alert_center.py` | Daily | High | High | SIMPLIFY into one incident inbox. |
-| `cost_contract.py` | Weekly/daily for cost owners | High | Very high | MERGE into optimization workspace. |
+| `cost_contract.py` | Weekly/daily for cost attributions | High | Very high | MERGE into optimization workspace. |
 | `workload_operations.py` | Daily | High | Medium | MERGE into incidents with workload filters. |
 | `security_posture.py` | Weekly/daily for security incidents | Medium | High | MERGE into incidents and settings. |
 | `warehouse_health.py` | Daily/weekly | High | Very high | MERGE into optimization. |
@@ -231,7 +231,7 @@ flowchart TD
 | `ALERT_THRESHOLDS` | KEEP | Required thresholds. |
 | `ALERT_EVENTS` | MERGE | Merge with `OVERWATCH_ALERTS` into one incident event model. |
 | `ALERT_ACKNOWLEDGEMENTS` | KEEP | Useful for operator state. |
-| `ALERT_OWNER_ROUTING` | KEEP | Directly supports "who owns this?" |
+| `ALERT_WORKFLOW_ROUTING` | KEEP | Directly supports "who owns this?" |
 | `ALERT_NOTIFICATION_LOG` | KEEP | Useful for delivery proof, settings-only. |
 | `FACT_WAREHOUSE_HOURLY` | KEEP | Core cost/performance telemetry. |
 | `FACT_QUERY_HOURLY` | KEEP | Core workload telemetry. |
@@ -259,7 +259,7 @@ flowchart TD
 | `OVERWATCH_COMMAND_CENTER_QUESTION`, `OVERWATCH_COMMAND_CENTER_FINDING`, `OVERWATCH_COMMAND_CENTER_EVIDENCE`, `OVERWATCH_COMMAND_CENTER_RECOMMENDATION`, `MART_COMMAND_CENTER_SUMMARY` | MERGE | Keep command center output, remove overmodeled question/evidence hierarchy. |
 | `OVERWATCH_DATA_TRUST_SOURCE`, `OVERWATCH_DATA_TRUST_STATUS`, `MART_DATA_TRUST_SUMMARY` | SIMPLIFY | Replace with a simple freshness/status field on command center summary. |
 | `OVERWATCH_PRODUCTION_CHECKLIST`, `OVERWATCH_ROLE_READINESS_REQUIREMENT`, `OVERWATCH_PRIVILEGE_READINESS_REQUIREMENT`, `OVERWATCH_PRODUCTION_VALIDATION_STATUS`, `MART_PRODUCTION_READINESS_SUMMARY` | MOVE OUT OF APP | This is release management, not daily operations. |
-| `OVERWATCH_OPERATIONAL_OWNER_MAP`, `MART_OPERATIONAL_OWNER_COVERAGE`, `OVERWATCH_OWNER_TAG_NAMES`, `DIM_COST_OWNER_TAG` | SIMPLIFY | Keep owner on incidents/actions; remove generic coverage score. |
+| `OVERWATCH_OPERATIONAL_ROUTE_MAP`, `MART_OPERATIONAL_ROUTE_COVERAGE`, `OVERWATCH_ATTRIBUTION_TAG_NAMES`, `DIM_COST_ATTRIBUTION_TAG` | SIMPLIFY | Keep owner on incidents/actions; remove generic coverage score. |
 | `OVERWATCH_VALUE_LEDGER`, `MART_EXECUTIVE_VALUE_LEDGER` | REMOVE/MERGE | Use action queue with expected savings and actual verified savings only when evidence exists. |
 | `OVERWATCH_APP_OBSERVABILITY`, `MART_APP_OBSERVABILITY_SUMMARY` | SETTINGS-ONLY | Useful for app owner, not front-line operators. |
 | `OVERWATCH_DBA_CHECKLIST_HISTORY`, `OVERWATCH_CHANGE_CONTROL_EVIDENCE`, `OVERWATCH_WAREHOUSE_SETTING_REVIEW`, `OVERWATCH_SECURITY_ACCESS_REVIEW` | MERGE | Replace with one action/audit trail if still needed. |
@@ -401,7 +401,7 @@ One queue with filters:
 - Severity: Critical, Warning, Info.
 - Category: Cost, Performance, Security, Pipeline, Change, Data Freshness.
 - Company: ALL, ALFA, Trexis.
-- Owner: owner or owner gap.
+- Workflow: owner or workflow gap.
 
 ### OPTIMIZATION
 
@@ -438,7 +438,7 @@ The following features appear technically interesting but too heavy for the curr
 | Command Center question/evidence/recommendation object hierarchy | ENGINEERING VANITY | Overmodeled for current usage. Keep the command center, simplify the storage. |
 | Data Trust Layer as visible product | ENGINEERING VANITY | Freshness matters, but trust taxonomy does not need daily screen space. |
 | Production readiness dashboard in operator UI | ENGINEERING VANITY | Release validation is important, but it is not an operator workflow. |
-| Ownership coverage scoring | ENGINEERING VANITY | Operators need the owner for this incident, not a coverage report. |
+| Workflow route coverage scoring | ENGINEERING VANITY | Operators need the owner for this incident, not a coverage report. |
 | Value ledger and verification workflow | ENGINEERING VANITY | Keep savings on recommendations; remove proof ceremony until demanded. |
 | Alert deployment registry and remediation dry-run UI | ENGINEERING VANITY | Admin implementation detail. |
 | Deep Cortex object catalog | ENGINEERING VANITY unless Cortex spend is material | Keep Cortex spend risk, not every AI usage object. |
@@ -494,7 +494,7 @@ The following features appear technically interesting but too heavy for the curr
 - Value ledger proof workflow.
 - Closed-loop approval/evidence workflow.
 - Alert deployment registry/dry-run details.
-- Generic ownership coverage reports.
+- Generic workflow route coverage reports.
 
 ### Move to Settings/Admin
 
@@ -514,7 +514,7 @@ The following features appear technically interesting but too heavy for the curr
 - Failed query/task/procedure detection.
 - Security posture alerts.
 - Recent changes.
-- Owner routing.
+- Workflow routing.
 - Company split: ALL, ALFA, Trexis.
 
 ## Data Source Reduction Plan
@@ -570,7 +570,7 @@ The following features appear technically interesting but too heavy for the curr
 - Data Trust Score.
 - Production Readiness Score.
 - Forecast confidence scores.
-- Ownership coverage score.
+- Workflow route coverage score.
 - Value verification score.
 - App render-time score.
 - Proof coverage metrics.
@@ -610,7 +610,7 @@ OVERWATCH should be a Snowflake command center that tells an operator:
 1. Something is broken.
 2. Something is getting expensive.
 3. Something changed.
-4. Someone owns it or there is an owner gap.
+4. Someone owns it or there is an workflow gap.
 5. Here is what to do next.
 
 If a feature does not support one of those five outcomes, remove it from the primary product.

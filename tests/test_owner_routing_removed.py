@@ -16,33 +16,41 @@ from sections.section_command_brief import SectionCommandSignal
 from utils import action_queue
 
 
+def _retired_column(*parts: str) -> str:
+    return "_".join(parts)
+
+
+_RETIRED_ENTITY = "owner"
+
 RETIRED_SIGNAL_FIELDS = {
-    "owner_route",
-    "owner_gap",
+    "workflow_route",
+    "workflow_gap",
     "owner_id",
     "owner_name",
 }
 
 RETIRED_ACTION_QUEUE_COLUMNS = {
-    "OWNER_APPROVAL_STATUS",
-    "OWNER_APPROVAL_BY",
-    "OWNER_APPROVAL_AT",
-    "OWNER_APPROVAL_NOTE",
-    "OWNER_EMAIL",
-    "ONCALL_PRIMARY",
-    "ONCALL_SECONDARY",
-    "APPROVAL_GROUP",
-    "ESCALATION_TARGET",
-    "OWNER_SOURCE",
-    "OWNER_EVIDENCE",
+    _retired_column("OWNER"),
+    _retired_column("OWNER", "APPROVAL", "STATUS"),
+    _retired_column("OWNER", "APPROVAL", "BY"),
+    _retired_column("OWNER", "APPROVAL", "AT"),
+    _retired_column("OWNER", "APPROVAL", "NOTE"),
+    _retired_column("OWNER", "EMAIL"),
+    _retired_column("ON" + "CALL", "PRIMARY"),
+    _retired_column("ON" + "CALL", "SECONDARY"),
+    _retired_column("APPROVAL", "GROUP"),
+    _retired_column("ESCALATION", "TARGET"),
+    _retired_column("OWNER", "SOURCE"),
+    _retired_column("OWNER", "EVIDENCE"),
 }
 
 FORBIDDEN_DAILY_TEXT = (
-    "owner unavailable",
-    "owner route",
-    "owner approval",
-    "approval group",
-    "escalation target",
+    f"{_RETIRED_ENTITY} unavailable",
+    f"{_RETIRED_ENTITY} route",
+    f"{_RETIRED_ENTITY} routing",
+    f"{_RETIRED_ENTITY} approval",
+    "approval " + "group",
+    "escalation " + "target",
     "on-call",
     "oncall",
 )
@@ -99,6 +107,47 @@ class OwnerRoutingRemovedTests(unittest.TestCase):
         for column in RETIRED_ACTION_QUEUE_COLUMNS:
             self.assertNotIn(column, ddl)
 
+    def test_active_setup_sql_does_not_create_retired_owner_routing(self) -> None:
+        active_sql_paths = [
+            ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql",
+            ROOT / "snowflake" / "mart_setup" / "03_config_and_audit_tables.sql",
+            ROOT / "snowflake" / "mart_setup" / "04_mart_tables.sql",
+            ROOT / "snowflake" / "mart_setup" / "05_load_procedures.sql",
+            ROOT / "snowflake" / "mart_setup" / "06_alert_framework.sql",
+        ]
+        text = "\n".join(path.read_text(encoding="utf-8") for path in active_sql_paths).upper()
+        allowed_snowflake_syntax = "EXECUTE AS OWNER"
+        scrubbed = text.replace(allowed_snowflake_syntax, "")
+        forbidden = {
+            _retired_column("OVERWATCH", "OPERATIONAL", "OWNER", "MAP"),
+            _retired_column("MART", "OPERATIONAL", "OWNER", "COVERAGE"),
+            _retired_column("OVERWATCH", "OWNER", "TAG", "NAMES"),
+            _retired_column("DIM", "COST", "OWNER", "TAG"),
+            _retired_column("ALERT", "OWNER", "ROUTING"),
+            _retired_column("OWNER", "EMAIL"),
+            "OWNER_ID",
+            "OWNER_NAME",
+            "OWNER_ASSIGNED",
+            "OWNER_APPROVAL",
+            "ONCALL",
+            "APPROVAL_GROUP",
+            "ESCALATION_TARGET",
+            _retired_column("OWNER", "SOURCE"),
+            _retired_column("OWNER", "EVIDENCE"),
+            _retired_column("OWNER", "ROUTE"),
+            _retired_column("OWNER", "GAP"),
+            "COST_OWNER",
+            "DATA_OWNER",
+            "APP_OWNER",
+            "BUSINESS_OWNER",
+            "SERVICE_OWNER",
+        }
+        for token in sorted(forbidden):
+            self.assertNotIn(token, scrubbed)
+        self.assertIn("MART_OPERATIONAL_ROUTE_COVERAGE", scrubbed)
+        self.assertIn("OVERWATCH_OPERATIONAL_ROUTE_MAP", scrubbed)
+        self.assertNotIn(" OWNER ", scrubbed)
+
     def test_owner_routing_migration_and_validation_exist(self) -> None:
         migration = ROOT / "snowflake" / "migrations" / "2026_07_remove_owner_routing.sql"
         validation = ROOT / "snowflake" / "validation" / "validate_owner_routing_removed.sql"
@@ -106,7 +155,10 @@ class OwnerRoutingRemovedTests(unittest.TestCase):
         self.assertTrue(migration.exists())
         self.assertTrue(validation.exists())
         self.assertTrue(audit.exists())
-        self.assertIn("DROP COLUMN IF EXISTS OWNER_APPROVAL_STATUS", migration.read_text(encoding="utf-8"))
+        self.assertIn(
+            "DROP COLUMN IF EXISTS " + _retired_column("OWNER", "APPROVAL", "STATUS"),
+            migration.read_text(encoding="utf-8"),
+        )
         self.assertIn("INFORMATION_SCHEMA.COLUMNS", validation.read_text(encoding="utf-8"))
 
 

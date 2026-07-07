@@ -670,7 +670,7 @@ def _packet_row(section: str) -> dict[str, object]:
             "FIRST_SEEN_TS": "2026-06-26T09:00:00",
             "DUE_TS": "2026-06-26T17:00:00",
             "OWNER_NAME": "Platform Route",
-            "OWNER_GAP": False,
+            "WORKFLOW_GAP": False,
             "SLA_STATE": "Due soon",
             "ROUTE_KEY": route_key,
         }
@@ -734,7 +734,7 @@ def _packet_row(section: str) -> dict[str, object]:
             "DUE_TS": "2026-07-05T00:00:00",
             "OWNER_ID": "JDOE",
             "OWNER_NAME": "Jane Doe",
-            "OWNER_GAP": False,
+            "WORKFLOW_GAP": False,
             "SLA_STATE": "Due soon",
             "ROUTE_KEY": "security_credential_expirations",
         }]
@@ -784,7 +784,7 @@ def _packet_row(section: str) -> dict[str, object]:
             "DUE_TS": "2026-07-05T00:00:00",
             "OWNER_ID": "JDOE",
             "OWNER_NAME": "Jane Doe",
-            "OWNER_GAP": False,
+            "WORKFLOW_GAP": False,
             "SLA_STATE": "Due soon",
             "ROUTE_KEY": "security_credential_expirations",
         }]
@@ -1263,16 +1263,12 @@ class RuntimeValidationHarness:
             if key:
                 state[str(key)] = selected
             artifact_key = str(key or "")
-            no_key_reason = ""
-            if str(label) == "Theme" and not key:
-                artifact_key = "settings_theme_picker"
-                no_key_reason = "Runtime-stable artifact key; Streamlit widget key is intentionally omitted to avoid default/session-state conflicts."
             capture.controls.append({
                 "kind": "select",
                 "label": str(label),
                 "key": artifact_key,
                 "value": str(selected or ""),
-                "no_key_reason": no_key_reason,
+                "no_key_reason": "",
                 "source": "runtime_render",
                 "proof_source": "runtime_render",
             })
@@ -2313,9 +2309,9 @@ class RuntimeValidationHarness:
                     "ENVIRONMENT": "PROD",
                     "SCOPE_CONFIDENCE": "Exact",
                     "OWNER": "Security Route",
-                    "OWNER_ROUTE_READY": True,
-                    "ONCALL_PRIMARY": "Security",
-                    "APPROVAL_GROUP": "Security Review",
+                    "WORKFLOW_ROUTE_READY": True,
+                    "REVIEW_PRIMARY": "Security",
+                    "REVIEW_GROUP": "Security Review",
                     "GRANTED_BY": "SECURITYADMIN",
                     "CREATED_ON": "2026-06-20T12:00:00",
                     "PROOF_REQUIRED": "Review",
@@ -2525,13 +2521,13 @@ class RuntimeValidationHarness:
             security_privilege_mod = importlib.import_module("sections.security_posture_privilege_sprawl_view")
             owner_context = {
                 "owner": "Security Route",
-                "owner_email": "security@example.com",
-                "oncall_primary": "Security",
-                "oncall_secondary": "",
-                "approval_group": "Security Review",
+                "route_email": "security@example.com",
+                "review_primary": "Security",
+                "review_secondary": "",
+                "review_group": "Security Review",
                 "escalation": "DBA / Security Route",
                 "source": "Runtime validation owner registry",
-                "owner_evidence": "Validated owner context",
+                "route_evidence": "Validated owner context",
             }
             if hasattr(security_privilege_mod, "_security_owner_context"):
                 patches.append(patch.object(security_privilege_mod, "_security_owner_context", return_value=owner_context))
@@ -2544,12 +2540,12 @@ class RuntimeValidationHarness:
             if hasattr(security_access_review_mod, "resolve_owner_context"):
                 patches.append(patch.object(security_access_review_mod, "resolve_owner_context", return_value={
                     "OWNER": owner_context["owner"],
-                    "OWNER_EMAIL": owner_context["owner_email"],
-                    "ONCALL_PRIMARY": owner_context["oncall_primary"],
-                    "ONCALL_SECONDARY": owner_context["oncall_secondary"],
-                    "ESCALATION_TARGET": owner_context["escalation"],
-                    "OWNER_SOURCE": owner_context["source"],
-                    "OWNER_EVIDENCE": owner_context["owner_evidence"],
+                    "ROUTE_EMAIL": owner_context["route_email"],
+                    "REVIEW_PRIMARY": owner_context["review_primary"],
+                    "REVIEW_SECONDARY": owner_context["review_secondary"],
+                    "REVIEW_TARGET": owner_context["escalation"],
+                    "ROUTE_SOURCE": owner_context["source"],
+                    "ROUTE_EVIDENCE": owner_context["route_evidence"],
                 }))
             if hasattr(security_overview_mod, "_load_security_brief"):
                 if block_evidence:
@@ -5413,7 +5409,7 @@ class RuntimeValidationHarness:
             row for row in [*evidence_results, *evidence_loader_call_matrix]
             if not bool(row.get("passed", True))
         ]
-        slow_action_owner_gap_count = sum(
+        slow_action_workflow_gap_count = sum(
             1 for row in slow_action_rows
             if not str(row.get("owner") or row.get("recommendation") or "")
         )
@@ -5474,7 +5470,7 @@ class RuntimeValidationHarness:
         add_hard_gate_failure("query_search", bool(query_search_failures), "Query Search runtime validation failed.", len(query_search_failures))
         add_hard_gate_failure("exports", bool(export_failures or case_payload_failures), "Export/download/case payload validation failed.", len(export_failures) + len(case_payload_failures))
         add_hard_gate_failure("evidence_loader_boundaries", bool(evidence_failures), "Evidence loader boundary validation failed.", len(evidence_failures))
-        add_hard_gate_failure("slow_actions_without_owner", slow_action_owner_gap_count > 0, "Slow actions exceeded threshold without an owner or recommendation.", slow_action_owner_gap_count)
+        add_hard_gate_failure("slow_actions_without_owner", slow_action_workflow_gap_count > 0, "Slow actions exceeded threshold without an owner or recommendation.", slow_action_workflow_gap_count)
         cleanup_gate_passed = cleanup_unknown_sql_object_count == 0 and cleanup_dead_route_count == 0 and stale_artifact_count == 0
         performance_gate_passed = (
             bool(query_budget_results["passed"])
@@ -5483,7 +5479,7 @@ class RuntimeValidationHarness:
             and not route_query_leaks
             and not first_paint_query_leaks
             and not account_usage_unconfirmed_leaks
-            and slow_action_owner_gap_count == 0
+            and slow_action_workflow_gap_count == 0
         )
         live_feature_gate_passed = live_feature_failure_count == 0 and all(bool(row.get("passed", True)) for row in live_feature_results)
         export_gate_passed = export_payload_risk_count == 0 and not export_failures and not case_payload_failures
@@ -5579,7 +5575,7 @@ class RuntimeValidationHarness:
             "export_payload_risk_count": export_payload_risk_count,
             "live_feature_failure_count": live_feature_failure_count,
             "evidence_over_budget_count": evidence_over_budget_count,
-            "slow_action_owner_gap_count": slow_action_owner_gap_count,
+            "slow_action_workflow_gap_count": slow_action_workflow_gap_count,
             "raw_sql_included": False,
         }
         summary["all_passed"] = hard_gate_passed

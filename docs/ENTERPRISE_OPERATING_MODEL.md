@@ -14,7 +14,7 @@ explicit Load buttons.
 | Capability | Primary section | Detail section | First-paint source | Detail load |
 |---|---|---|---|---|
 | Data Trust Layer | Executive Landing | DBA Control Room | `MART_DATA_TRUST_SUMMARY` | `OVERWATCH_DATA_TRUST_STATUS` |
-| Ownership Map | Alert Center, Security Monitoring | Alert Center, Security Monitoring | `MART_OPERATIONAL_OWNER_COVERAGE` | Existing alert/security detail lanes |
+| Workflow Route Map | Alert Center, Security Monitoring | Alert Center, Security Monitoring | `MART_OPERATIONAL_ROUTE_COVERAGE` | Existing alert/security detail lanes |
 | Executive Value Ledger | Executive Landing | Cost & Contract | `MART_EXECUTIVE_VALUE_LEDGER` | `OVERWATCH_VALUE_LEDGER` plus cost action queue rows |
 | App Self-Observability | Executive Landing | DBA Control Room | `MART_APP_OBSERVABILITY_SUMMARY` | `OVERWATCH_APP_OBSERVABILITY` |
 | Production Readiness | Executive Landing | DBA Control Room | `MART_PRODUCTION_READINESS_SUMMARY` | `OVERWATCH_PRODUCTION_VALIDATION_STATUS` |
@@ -31,8 +31,8 @@ explicit Load buttons.
 | `OVERWATCH_DATA_TRUST_SOURCE` | Source freshness policy and confidence catalog. |
 | `OVERWATCH_DATA_TRUST_STATUS` | Latest source-level trust diagnostics. |
 | `MART_DATA_TRUST_SUMMARY` | Compact trust rollup for first paint. |
-| `OVERWATCH_OPERATIONAL_OWNER_MAP` | Operational route fallback by entity type; not a generic directory. |
-| `MART_OPERATIONAL_OWNER_COVERAGE` | Alert/security/action ownership coverage and route gaps. |
+| `OVERWATCH_OPERATIONAL_ROUTE_MAP` | Operational route fallback by entity type; not a generic directory. |
+| `MART_OPERATIONAL_ROUTE_COVERAGE` | Alert/security/action workflow route coverage and route gaps. |
 | `OVERWATCH_VALUE_LEDGER` | Durable value proof rows with expected and actual verified savings. |
 | `MART_EXECUTIVE_VALUE_LEDGER` | Compact value rollup that separates verified savings from unverified estimates. |
 | `OVERWATCH_APP_OBSERVABILITY` | Recent app runtime health detail from app logs. |
@@ -40,15 +40,15 @@ explicit Load buttons.
 | `SP_OVERWATCH_REFRESH_ENTERPRISE_OPERATING_MODEL` | Refreshes all enterprise operating-model summaries from existing OVERWATCH data. |
 | `MART_PRODUCTION_READINESS_SUMMARY` | Compact Phase 2A deployment, validation, privilege, refresh, config, freshness, and environment readiness rollup. |
 | `OVERWATCH_PRODUCTION_VALIDATION_STATUS` | Explicit-load Phase 2A validation proof rows. |
-| `OVERWATCH_EXECUTIVE_SCORECARD_CONFIG` | Phase 2B leadership score thresholds, owner routes, and action defaults. |
+| `OVERWATCH_EXECUTIVE_SCORECARD_CONFIG` | Phase 2B leadership score thresholds, workflow routes, and action defaults. |
 | `OVERWATCH_EXECUTIVE_SCORECARD_HISTORY` | Explicit-load Phase 2B score driver history. |
 | `MART_EXECUTIVE_SCORECARD_SUMMARY` | Compact Phase 2B leadership health score summary. |
 | `SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD` | Refreshes leadership scores from existing OVERWATCH marts and app tables. |
-| `OVERWATCH_FORECAST_CONFIG` | Phase 2C forecast catalog, owner routes, methodology, and confidence rules. |
+| `OVERWATCH_FORECAST_CONFIG` | Phase 2C forecast catalog, workflow routes, methodology, and confidence rules. |
 | `OVERWATCH_FORECAST_HISTORY` | Explicit-load Phase 2C forecast driver history. |
 | `MART_EXECUTIVE_FORECAST_SUMMARY` | Compact Phase 2C leadership forecasting summary. |
 | `SP_OVERWATCH_REFRESH_FORECASTING` | Refreshes cost, contract, storage, pressure, and SLA forecasts from OVERWATCH facts. |
-| `OVERWATCH_CHANGE_RULE` | Phase 2D change category, owner route, risk, confidence, source, and business-impact catalog. |
+| `OVERWATCH_CHANGE_RULE` | Phase 2D change category, workflow route, risk, confidence, source, and business-impact catalog. |
 | `OVERWATCH_CHANGE_EVENT` | Explicit-load Phase 2D normalized change event history. |
 | `OVERWATCH_CHANGE_CORRELATION` | Explicit-load Phase 2D possible correlation history. |
 | `MART_CHANGE_INTELLIGENCE_SUMMARY` | Compact Phase 2D recent-change and risk summary. |
@@ -84,7 +84,7 @@ Validation SQL checks these labels across the new objects.
 - No detail evidence loads run unless the operator clicks a Load button.
 - No remediation is silently executed.
 - Value estimates are not counted as realized savings unless verified telemetry exists.
-- Ownership coverage is operational routing only; it is not an owner directory or governance approval system.
+- Workflow route coverage is operational routing only; it is not an owner directory or governance approval system.
 - Production readiness role and privilege proof stays explicit; see `docs/PRODUCTION_READINESS.md`.
 - Change Intelligence uses `possible correlation` until separate evidence proves
   causality; it does not execute remediation.

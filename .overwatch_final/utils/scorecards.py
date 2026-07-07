@@ -111,9 +111,9 @@ DBA_CONTROL_PLANE_SECTION_BASELINE = DBA_CONTROL_PLANE_SECTION_READINESS_INPUTS
 DBA_CONTROL_PLANE_SECTION_NEXT_MOVES = {
     "Executive Landing": "Connect executive decisions to live monitoring status and measured closure back on the landing page.",
     "DBA Control Room": "Connect the operating board to status writes for measured auto-close.",
-    "Alert Center": "Replace placeholder notification rows with production distribution lists and sync alert lifecycle to closure telemetry.",
+    "Alert Center": "Configure production distribution lists and sync alert lifecycle to closure telemetry.",
     "Workload Operations": "Wire recovery command-board rows to successful rerun telemetry.",
-    "Cost & Contract": "Replace placeholder email routes with production cost distribution lists and measured savings auto-close.",
+    "Cost & Contract": "Configure production cost distribution lists and measured savings auto-close.",
     "Security Monitoring": "Keep security posture focused on login risk, grant exposure, public access, data sharing, and alert telemetry.",
 }
 
@@ -182,7 +182,7 @@ def platform_operating_score_from_signals(metrics: dict) -> dict:
     penalties = {
         "Cost movement": min(18.0, spend_pct * 35.0),
         "Critical/high alerts": min(24.0, critical_high * 8.0),
-        "Open owner actions": min(18.0, open_actions * 1.2),
+        "Open workflow actions": min(18.0, open_actions * 1.2),
         "Task failures": min(18.0, failed_tasks * 4.0),
         "Query failures": min(14.0, failed_queries * 0.8),
         "Queue pressure": min(10.0, queue_seconds / 600.0),
@@ -199,7 +199,7 @@ def platform_operating_score_from_signals(metrics: dict) -> dict:
     if failed_tasks:
         caps.append((88.0, f"{int(failed_tasks)} failed task run(s) in scope."))
     if open_actions >= 10:
-        caps.append((90.0, f"{int(open_actions)} owner action(s) remain open."))
+        caps.append((90.0, f"{int(open_actions)} workflow action(s) remain open."))
     if freshness_sources <= 0:
         caps.append((78.0, "No freshness proof rows were available for the monitoring summary."))
 
@@ -233,8 +233,8 @@ def _platform_driver_evidence(driver: str, metrics: dict) -> str:
         return f"${float(metrics.get('spend_delta_cost_usd', 0) or 0):,.0f} spend movement."
     if driver == "Critical/high alerts":
         return f"{int(float(metrics.get('critical_high_alerts', 0) or 0)):,} critical/high alert(s)."
-    if driver == "Open owner actions":
-        return f"{int(float(metrics.get('open_actions', 0) or 0)):,} open owner action(s)."
+    if driver == "Open workflow actions":
+        return f"{int(float(metrics.get('open_actions', 0) or 0)):,} open workflow action(s)."
     if driver == "Task failures":
         return f"{int(float(metrics.get('failed_tasks', 0) or 0)):,} failed task run(s)."
     if driver == "Query failures":
@@ -252,9 +252,9 @@ def _platform_driver_action(driver: str) -> str:
     actions = {
         "Cost movement": "Open Cost & Contract and prove the top cost driver before changing cost controls.",
         "Critical/high alerts": "Open Alert Center and assign owner, SLA, and remediation state.",
-        "Open owner actions": "Open DBA Control Room and work the owner action queue.",
+        "Open workflow actions": "Open DBA Control Room and work the workflow action queue.",
         "Task failures": "Open Workload Operations > Pipeline & Task Health and inspect failed root/child task evidence.",
-        "Query failures": "Open Query Investigation with failed query evidence and owner route.",
+        "Query failures": "Open Query Investigation with failed query evidence and workflow route.",
         "Queue pressure": "Open Workload Operations and separate capacity queueing from lock contention.",
         "Remote spill": "Open Query Investigation and inspect joins, scans, and warehouse memory pressure.",
         "Stale sources": "Refresh or repair the scheduled mart task before acting on stale evidence.",

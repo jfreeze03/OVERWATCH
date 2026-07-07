@@ -53,8 +53,8 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
             "OVERWATCH_DATA_TRUST_SOURCE",
             "OVERWATCH_DATA_TRUST_STATUS",
             "MART_DATA_TRUST_SUMMARY",
-            "OVERWATCH_OPERATIONAL_OWNER_MAP",
-            "MART_OPERATIONAL_OWNER_COVERAGE",
+            "OVERWATCH_OPERATIONAL_ROUTE_MAP",
+            "MART_OPERATIONAL_ROUTE_COVERAGE",
             "OVERWATCH_VALUE_LEDGER",
             "MART_EXECUTIVE_VALUE_LEDGER",
             "OVERWATCH_APP_OBSERVABILITY",
@@ -63,7 +63,7 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
         ]:
             with self.subTest(name=name):
                 self.assertIn(name, sql)
-        self.assertIn("FINDING -> OWNER -> TRUST LEVEL -> BUSINESS IMPACT -> ACTION -> VALUE VERIFIED", sql)
+        self.assertIn("FINDING -> WORKFLOW ROUTE -> TRUST LEVEL -> BUSINESS IMPACT -> ACTION -> VALUE VERIFIED", sql)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_ENTERPRISE_OPERATING_MODEL()", sql)
 
     def test_validation_contract_tracks_new_objects_and_confidence_labels(self):
@@ -72,7 +72,7 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
         self.assertIn("('PROCEDURE', 23)", validation)
         for name in [
             "MART_DATA_TRUST_SUMMARY",
-            "MART_OPERATIONAL_OWNER_COVERAGE",
+            "MART_OPERATIONAL_ROUTE_COVERAGE",
             "MART_EXECUTIVE_VALUE_LEDGER",
             "MART_APP_OBSERVABILITY_SUMMARY",
             "CONFIDENCE_LABELS",
@@ -88,7 +88,7 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
         helper = _read(APP_ROOT / "utils" / "enterprise_operating_model.py").upper()
         rollup_source = helper.split("DEF LOAD_ENTERPRISE_OPERATING_ROLLUPS", 1)[1].split("DEF LOAD_DATA_TRUST_DETAIL", 1)[0]
         self.assertIn("MART_DATA_TRUST_SUMMARY", rollup_source)
-        self.assertIn("MART_OPERATIONAL_OWNER_COVERAGE", rollup_source)
+        self.assertIn("MART_OPERATIONAL_ROUTE_COVERAGE", rollup_source)
         self.assertIn("MART_EXECUTIVE_VALUE_LEDGER", rollup_source)
         self.assertIn("MART_APP_OBSERVABILITY_SUMMARY", rollup_source)
         self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE", rollup_source)

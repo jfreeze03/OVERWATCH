@@ -22,15 +22,15 @@ def _alert_command_lanes(
     if not loaded:
         source_text = ", ".join(sorted(required_sources)) if required_sources else "no source load required"
         return [
-            {"label": "Critical / high", "value": "Loading current summary", "state": "Severity", "detail": f"{active_view} will read: {source_text}."},
-            {"label": "Overdue SLA", "value": "Loading current summary", "state": "Aging", "detail": "Open alerts need route, acknowledgement, suppression, or resolution."},
-            {"label": "Security risk", "value": "Loading current summary", "state": "Security", "detail": "Failed logins, risky grants, exfiltration, and policy drift route here."},
-            {"label": "Cost", "value": "Loading current summary", "state": "Spend", "detail": "Runaway spend, warehouse spikes, Cortex spend, and spend risk."},
-            {"label": "Cortex predictive alerts", "value": "Loading current summary", "state": "AI cost", "detail": "Forecasted Cortex spend, usage anomalies, and contract/run-rate exposure."},
-            {"label": "Performance", "value": "Loading current summary", "state": "Queries", "detail": "Long, queued, failed, spilling, and blocked query signals."},
-            {"label": "Pipeline reliability", "value": "Loading current summary", "state": "Tasks", "detail": "Failed, skipped, late, or suspended task/procedure paths."},
+            {"label": "Critical / high", "value": "Refresh required", "state": "Severity", "detail": f"{active_view} will read: {source_text}."},
+            {"label": "Overdue SLA", "value": "Refresh required", "state": "Aging", "detail": "Open alerts need route, acknowledgement, suppression, or resolution."},
+            {"label": "Security risk", "value": "Refresh required", "state": "Security", "detail": "Failed logins, risky grants, exfiltration, and policy drift route here."},
+            {"label": "Cost", "value": "Refresh required", "state": "Spend", "detail": "Runaway spend, warehouse spikes, Cortex spend, and spend risk."},
+            {"label": "Cortex predictive alerts", "value": "Refresh required", "state": "AI cost", "detail": "Forecasted Cortex spend, usage anomalies, and contract/run-rate exposure."},
+            {"label": "Performance", "value": "Refresh required", "state": "Queries", "detail": "Long, queued, failed, spilling, and blocked query signals."},
+            {"label": "Pipeline reliability", "value": "Refresh required", "state": "Tasks", "detail": "Failed, skipped, late, or suspended task/procedure paths."},
             {"label": "Data quality", "value": "Configured", "state": "Rules", "detail": "Metadata-driven freshness, row count, null, duplicate, and schema checks."},
-            {"label": "Notification route", "value": "Loading current summary", "state": "Delivery", "detail": "Email/webhook/native-alert delivery remains audit-backed."},
+            {"label": "Notification route", "value": "Refresh required", "state": "Delivery", "detail": "Email/webhook/native-alert delivery remains audit-backed."},
         ]
 
     alerts = alerts if isinstance(alerts, pd.DataFrame) else pd.DataFrame()

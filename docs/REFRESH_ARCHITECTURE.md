@@ -70,7 +70,7 @@ labels are reserved for transient spinners while a query is actively running.
 | Alert Center | `MART_SECTION_COMMAND_BRIEF` packet from alert, action, and notification summaries | 15 min | No |
 | Cost & Contract | `MART_SECTION_COMMAND_BRIEF` packet from cost, Cortex, forecast, value, and monitoring facts | 60 min | Explicit proof refresh |
 | Workload Operations | `MART_SECTION_COMMAND_BRIEF` packet from query, task, procedure, copy/load, change, and reliability summaries | 30 min | Explicit live triage |
-| Security Monitoring | `MART_SECTION_COMMAND_BRIEF` packet from security, alert, owner coverage, and change summaries | 60 min | Explicit drilldown only |
+| Security Monitoring | `MART_SECTION_COMMAND_BRIEF` packet from security, alert, workflow coverage, and change summaries | 60 min | Explicit drilldown only |
 
 `SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()` is the shared packet builder
 called by `SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()`,
@@ -79,7 +79,7 @@ called by `SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()`,
 builders (`executive_decision`, `dba_decision`, `alert_decision`,
 `cost_decision`, `workload_decision`, and `security_decision`) before packaging
 the current packet. Each builder owns the section state, headline, top signal,
-impact, owner route, evidence source, primary route key, and action label.
+impact, workflow route, evidence source, primary route key, and action label.
 Cost movement cannot change Security state, workload failures cannot become Cost
 state without cost evidence, and Cortex predictive alerts route to Cortex/Cost
 unless the source signal is genuinely security-related.

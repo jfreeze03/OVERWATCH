@@ -524,7 +524,7 @@ def _build_warehouse_advisor_recommendations(
             "VERIFICATION_WINDOW_DAYS": _warehouse_advisor_verification_window(),
             "CONFIDENCE": "Medium - savings are directional until post-change metering confirms lower idle burn.",
             "EXPECTED_VERIFICATION_IMPACT": "Lower idle credits with no increase in failures, queue seconds, spill GB, or p95 runtime.",
-            "DO_NOT_EXECUTE_UNTIL": "Do not shorten suspend until workload schedule, auto-resume behavior, and owner expectations are confirmed.",
+            "DO_NOT_EXECUTE_UNTIL": "Do not shorten suspend until workload schedule, auto-resume behavior, and workflow expectations are confirmed.",
         })
 
     overview_view = overview if isinstance(overview, pd.DataFrame) else pd.DataFrame()
@@ -631,7 +631,7 @@ def _build_warehouse_advisor_recommendations(
                 "VERIFICATION_WINDOW_DAYS": _warehouse_advisor_verification_window(),
                 "CONFIDENCE": "Low - savings use a conservative one-step-down assumption and require validation.",
                 "EXPECTED_VERIFICATION_IMPACT": "Credits should fall while p95, queue, spill, and failures stay within baseline tolerance.",
-                "DO_NOT_EXECUTE_UNTIL": "Do not downsize until workload owner confirms latency tolerance and a rollback window exists.",
+                "DO_NOT_EXECUTE_UNTIL": "Do not downsize until workload reviewer confirms latency tolerance and a rollback window exists.",
             })
 
     plan_view = plan if isinstance(plan, pd.DataFrame) else pd.DataFrame()
@@ -919,7 +919,7 @@ def _render_automation_health(session):
                 try:
                     st.session_state["rec_action_queue"] = load_action_queue(session)
                 except Exception as e:
-                    st.info(f"The action queue is not available in this environment yet. Ask the DBA on-call to enable it, then retry. ({format_snowflake_error(e)})")
+                    st.info(f"The action queue is not available in this environment yet. Ask the DBA review to enable it, then retry. ({format_snowflake_error(e)})")
                     st.session_state["rec_action_queue"] = pd.DataFrame()
     with c_hint:
         st.caption("Generate recommendations and/or load the action queue, then use this board to decide what can be safely packaged.")
@@ -1470,7 +1470,7 @@ def render():
                 columns=[
                     "Generated SQL Fix", "Generated SQL", "Proof Query", "Verification Query",
                     "APPROVAL_GATE", "PROOF_QUERY", "VERIFICATION_QUERY", "Generated DDL",
-                    "Owner", "Owner Route", "Owner Evidence", "Owner Source",
+                    "Owner", "Escalation Route", "Route Evidence", "Route Source",
                 ],
                 errors="ignore",
             )

@@ -149,7 +149,7 @@ def _render_workload_forecast_detail(company: str, environment: str) -> None:
             priority_columns=[
                 "FORECAST_NAME", "FORECAST_VALUE", "VALUE_UNIT", "CURRENT_ACTUAL",
                 "PRIOR_PERIOD_VALUE", "TREND_DIRECTION", "CONFIDENCE",
-                "MAIN_DRIVER", "RECOMMENDED_ACTION", "OWNER_ROUTE",
+                "MAIN_DRIVER", "RECOMMENDED_ACTION", "WORKFLOW_ROUTE",
                 "LAST_REFRESHED_TS",
             ],
             sort_by=["SNAPSHOT_TS", "FORECAST_KEY"],
@@ -200,7 +200,7 @@ def _render_workload_change_detail(company: str, environment: str) -> None:
                 title="Task, procedure, and object changes",
                 priority_columns=[
                     "CHANGE_TS", "CHANGE_TYPE", "OBJECT_TYPE", "OBJECT_NAME",
-                    "CHANGED_BY", "RISK_LEVEL", "BUSINESS_IMPACT", "OWNER_ROUTE",
+                    "CHANGED_BY", "RISK_LEVEL", "BUSINESS_IMPACT", "WORKFLOW_ROUTE",
                     "RELATED_ALERT_COUNT", "CONFIDENCE",
                 ],
                 sort_by=["CHANGE_TS"],
@@ -219,7 +219,7 @@ def _render_workload_change_detail(company: str, environment: str) -> None:
                 priority_columns=[
                     "RELATED_TS", "CHANGE_TS", "CHANGE_TYPE", "OBJECT_NAME",
                     "RELATED_SIGNAL", "RELATED_ENTITY", "CORRELATION_LABEL",
-                    "EVIDENCE", "OWNER_ROUTE", "CONFIDENCE",
+                    "EVIDENCE", "WORKFLOW_ROUTE", "CONFIDENCE",
                 ],
                 sort_by=["RELATED_TS", "CHANGE_TS"],
                 ascending=[False, False],
@@ -265,7 +265,7 @@ def _render_workload_closed_loop_detail(company: str, environment: str) -> None:
                 title="Operational remediation workflow",
                 priority_columns=[
                     "ACTION_DOMAIN", "FINDING", "ENTITY_TYPE", "ENTITY_NAME",
-                    "RISK_LEVEL", "OWNER_ROUTE", "APPROVAL_STATUS",
+                    "RISK_LEVEL", "WORKFLOW_ROUTE", "APPROVAL_STATUS",
                     "EXECUTION_MODE", "VERIFICATION_STATUS", "BUSINESS_IMPACT",
                     "RECOMMENDED_ACTION", "LAST_REFRESHED_TS",
                 ],
@@ -330,7 +330,7 @@ def _render_workload_command_findings(company: str, environment: str) -> None:
                 priority_columns=[
                     "INVESTIGATION_TYPE", "QUESTION_TEXT", "ROOT_CAUSE_CANDIDATE",
                     "CAUSALITY_LABEL", "EVIDENCE_SUMMARY", "CONFIDENCE",
-                    "TECHNICAL_IMPACT", "OWNER_ROUTE", "RELATED_CHANGES",
+                    "TECHNICAL_IMPACT", "WORKFLOW_ROUTE", "RELATED_CHANGES",
                     "RELATED_ALERTS", "RELATED_FORECASTS", "RECOMMENDED_ACTION",
                     "RISK_LEVEL", "EXECUTION_PLAN_REF", "VERIFICATION_PATH",
                 ],
@@ -346,7 +346,7 @@ def _render_workload_command_findings(company: str, environment: str) -> None:
             title="Workload investigation recommendations",
             priority_columns=[
                 "INVESTIGATION_TYPE", "RECOMMENDED_ACTION", "RISK_LEVEL",
-                "OWNER_ROUTE", "EXECUTION_PLAN_REF", "REVIEW_REQUIRED",
+                "WORKFLOW_ROUTE", "EXECUTION_PLAN_REF", "REVIEW_REQUIRED",
                 "VERIFICATION_PATH", "SAFETY_NOTE", "LAST_REFRESHED_TS",
             ],
             sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],

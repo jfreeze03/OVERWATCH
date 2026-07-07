@@ -30,6 +30,10 @@ class SafeQuery:
 def bind_identifier(value: object) -> str:
     """Return a conservative Snowflake identifier component."""
     text = str(value or "").strip().upper()
+    if text == "ALFA_EDW_PROD":
+        text = "ALFA_EDW_PRD"
+    elif text.startswith("WH_ALFA_") and text.endswith("_PROD"):
+        text = text[:-5] + "_PRD"
     if not text or not re.fullmatch(r"[A-Z_][A-Z0-9_]{0,254}", text):
         raise ValueError("Identifier cannot be blank")
     return text

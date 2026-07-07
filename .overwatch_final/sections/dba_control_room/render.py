@@ -333,20 +333,20 @@ def _render_executive_scorecard_driver_gate(company: str, environment: str) -> N
             st.info("No Executive Scorecard driver rows are available for this scope yet.")
             return
         red_yellow = safe_int(detail.get("STATUS", pd.Series(dtype=str)).fillna("").astype(str).isin(["Red", "Yellow"]).sum())
-        owner_gaps = safe_int(pd.to_numeric(detail.get("OWNER_GAP", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        workflow_gaps = safe_int(pd.to_numeric(detail.get("WORKFLOW_GAP", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
         value_risk = safe_float(pd.to_numeric(detail.get("VALUE_AT_RISK_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
         render_shell_snapshot((
             ("Rows", f"{len(detail):,}"),
             ("Red/Yellow", f"{red_yellow:,}"),
-            ("Owner Gaps", f"{owner_gaps:,}"),
+            ("Workflow Gaps", f"{workflow_gaps:,}"),
             ("Value/Risk", f"${value_risk:,.0f}"),
         ))
         render_priority_dataframe(
             detail,
-            title="Executive score drivers and owner routes",
+            title="Executive score drivers and workflow routes",
             priority_columns=[
                 "SCORE_NAME", "CURRENT_SCORE", "STATUS", "TREND", "RISK_LEVEL",
-                "TOP_DRIVER", "RECOMMENDED_ACTION", "OWNER_ROUTE", "OWNER_GAP",
+                "TOP_DRIVER", "RECOMMENDED_ACTION", "WORKFLOW_ROUTE", "WORKFLOW_GAP",
                 "VALUE_AT_RISK_USD", "CONFIDENCE", "LAST_REFRESHED_TS",
             ],
             sort_by=["STATUS", "CURRENT_SCORE", "SNAPSHOT_TS"],
@@ -395,7 +395,7 @@ def _render_forecast_exception_gate(company: str, environment: str) -> None:
             priority_columns=[
                 "FORECAST_NAME", "FORECAST_DOMAIN", "FORECAST_VALUE", "VALUE_UNIT",
                 "CURRENT_ACTUAL", "PRIOR_PERIOD_VALUE", "TREND_DIRECTION",
-                "CONFIDENCE", "MAIN_DRIVER", "RECOMMENDED_ACTION", "OWNER_ROUTE",
+                "CONFIDENCE", "MAIN_DRIVER", "RECOMMENDED_ACTION", "WORKFLOW_ROUTE",
                 "VALUE_AT_RISK_USD", "SOURCE_OBJECTS", "LAST_REFRESHED_TS",
             ],
             sort_by=["SNAPSHOT_TS", "FORECAST_KEY"],
@@ -437,19 +437,19 @@ def _render_change_intelligence_gate(company: str, environment: str) -> None:
             st.info("No high-risk change events are available for this scope yet.")
         else:
             risk = events.get("RISK_LEVEL", pd.Series(dtype=str)).fillna("").astype(str)
-            owner_gaps = pd.to_numeric(events.get("OWNER_GAP", pd.Series(dtype=float)), errors="coerce").fillna(0)
+            workflow_gaps = pd.to_numeric(events.get("WORKFLOW_GAP", pd.Series(dtype=float)), errors="coerce").fillna(0)
             render_shell_snapshot((
                 ("Events", f"{len(events):,}"),
                 ("Critical", f"{safe_int(risk.eq('Critical').sum()):,}"),
                 ("High", f"{safe_int(risk.eq('High').sum()):,}"),
-                ("Owner Gaps", f"{safe_int(owner_gaps.sum()):,}"),
+                ("Workflow Gaps", f"{safe_int(workflow_gaps.sum()):,}"),
             ))
             render_priority_dataframe(
                 events,
                 title="High-risk recent changes",
                 priority_columns=[
                     "CHANGE_TS", "CHANGE_TYPE", "OBJECT_TYPE", "OBJECT_NAME",
-                    "CHANGED_BY", "RISK_LEVEL", "BUSINESS_IMPACT", "OWNER_ROUTE",
+                    "CHANGED_BY", "RISK_LEVEL", "BUSINESS_IMPACT", "WORKFLOW_ROUTE",
                     "RELATED_ALERT_COUNT", "RELATED_INCIDENTS", "CONFIDENCE",
                     "LAST_REFRESHED_TS",
                 ],
@@ -470,7 +470,7 @@ def _render_change_intelligence_gate(company: str, environment: str) -> None:
                     "RELATED_TS", "CHANGE_TS", "CHANGE_TYPE", "OBJECT_NAME",
                     "CORRELATION_TYPE", "RELATED_SIGNAL", "RELATED_ENTITY",
                     "CORRELATION_STRENGTH", "CORRELATION_LABEL", "EVIDENCE",
-                    "OWNER_ROUTE", "CONFIDENCE",
+                    "WORKFLOW_ROUTE", "CONFIDENCE",
                 ],
                 sort_by=["RELATED_TS", "CHANGE_TS"],
                 ascending=[False, False],
@@ -533,7 +533,7 @@ def _render_closed_loop_operations_gate(company: str, environment: str) -> None:
                 workflows,
                 title="Closed-loop action queue",
                 priority_columns=[
-                    "ACTION_DOMAIN", "FINDING", "RISK_LEVEL", "OWNER_ROUTE",
+                    "ACTION_DOMAIN", "FINDING", "RISK_LEVEL", "WORKFLOW_ROUTE",
                     "BUSINESS_IMPACT", "APPROVAL_STATUS", "EXECUTION_MODE",
                     "VERIFICATION_STATUS", "EXPECTED_SAVINGS_USD",
                     "ACTUAL_VERIFIED_SAVINGS_USD", "RECOMMENDED_ACTION",
@@ -622,7 +622,7 @@ def _render_command_center_investigation_gate(company: str, environment: str) ->
             st.info("No correlated investigation findings are available for this scope yet.")
         else:
             risk = findings.get("RISK_LEVEL", pd.Series(dtype=str)).fillna("").astype(str)
-            owner_gap = pd.to_numeric(findings.get("OWNER_GAP", pd.Series(dtype=float)), errors="coerce").fillna(0)
+            workflow_gap = pd.to_numeric(findings.get("WORKFLOW_GAP", pd.Series(dtype=float)), errors="coerce").fillna(0)
             value = pd.to_numeric(
                 findings.get("EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", pd.Series(dtype=float)),
                 errors="coerce",
@@ -630,7 +630,7 @@ def _render_command_center_investigation_gate(company: str, environment: str) ->
             render_shell_snapshot((
                 ("Findings", f"{len(findings):,}"),
                 ("High Risk", f"{safe_int(risk.isin(['Critical', 'High']).sum()):,}"),
-                ("Owner Gaps", f"{safe_int(owner_gap.sum()):,}"),
+                ("Workflow Gaps", f"{safe_int(workflow_gap.sum()):,}"),
                 ("Value/Risk", f"${safe_float(value.sum()):,.0f}"),
             ))
             render_priority_dataframe(
@@ -639,8 +639,8 @@ def _render_command_center_investigation_gate(company: str, environment: str) ->
                 priority_columns=[
                     "INVESTIGATION_TYPE", "QUESTION_TEXT", "ROOT_CAUSE_CANDIDATE",
                     "CAUSALITY_LABEL", "EVIDENCE_SUMMARY", "CONFIDENCE",
-                    "BUSINESS_IMPACT", "TECHNICAL_IMPACT", "OWNER_ROUTE",
-                    "OWNER_GAP", "RELATED_CHANGES", "RELATED_ALERTS",
+                    "BUSINESS_IMPACT", "TECHNICAL_IMPACT", "WORKFLOW_ROUTE",
+                    "WORKFLOW_GAP", "RELATED_CHANGES", "RELATED_ALERTS",
                     "RELATED_SCORECARD_DRIVERS", "RELATED_FORECASTS",
                     "RECOMMENDED_ACTION", "RISK_LEVEL", "EXECUTION_PLAN_REF",
                     "EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", "VERIFICATION_PATH",
@@ -679,7 +679,7 @@ def _render_command_center_investigation_gate(company: str, environment: str) ->
                 title="Review-gated correlated investigation recommendations",
                 priority_columns=[
                     "INVESTIGATION_TYPE", "RECOMMENDED_ACTION", "RISK_LEVEL",
-                    "OWNER_ROUTE", "EXECUTION_PLAN_REF", "REVIEW_REQUIRED",
+                    "WORKFLOW_ROUTE", "EXECUTION_PLAN_REF", "REVIEW_REQUIRED",
                     "EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", "VERIFICATION_PATH",
                     "SAFETY_NOTE", "LAST_REFRESHED_TS",
                 ],
@@ -790,7 +790,7 @@ def _render_morning_cockpit_empty(load_callback) -> None:
         ("Security", "Pending"),
         ("Changes", "Pending"),
     ))
-    st.caption("Load the morning cockpit when you need current DBA-owned exceptions, owner routes, and action status.")
+    st.caption("Load the morning cockpit when you need current DBA-owned exceptions, workflow routes, and action status.")
     c1, _spacer = st.columns(2)
     with c1:
         if st.button("Load Morning Cockpit", key="dba_morning_cockpit_load_empty", type="primary", width="stretch"):
@@ -1659,9 +1659,9 @@ def render() -> None:
                 priority_columns = [
                     "SEVERITY", "DUE_STATE", "COMMAND_STATE", "COMMAND_EXECUTION_GATE",
                     "COMMAND_ROUTE_READINESS", "CATEGORY", "ENTITY_NAME",
-                    "OWNER", "OWNER_EMAIL", "ONCALL_PRIMARY", "APPROVAL_GROUP",
+                    "OWNER", "ROUTE_EMAIL", "REVIEW_PRIMARY", "REVIEW_GROUP",
                     "STATUS", "CONTROL_GAP", "NEXT_ACTION", "TICKET_ID",
-                    "APPROVER", "OWNER_SOURCE", "VERIFICATION_STATUS", "ROUTE",
+                    "APPROVER", "ROUTE_SOURCE", "VERIFICATION_STATUS", "ROUTE",
                 ]
                 sort_by = ["QUEUE_PRIORITY", "SEVERITY"]
                 ascending = [True, True]

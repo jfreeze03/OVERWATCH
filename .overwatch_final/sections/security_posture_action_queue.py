@@ -93,13 +93,13 @@ def _privileged_grant_action_payload(row: pd.Series | dict, *, company: str, env
         "Entity Type": "Privileged Grant",
         "Entity": entity,
         "Owner": row.get("OWNER", "Security/DBA"),
-        "Owner Email": row.get("OWNER_EMAIL", ""),
-        "Oncall Primary": row.get("ONCALL_PRIMARY", ""),
-        "Oncall Secondary": row.get("ONCALL_SECONDARY", ""),
-        "Review Group": row.get("ESCALATION_TARGET", "Security"),
-        "Escalation Target": row.get("ESCALATION_TARGET", "DBA / Security Route"),
-        "Owner Source": row.get("OWNER_SOURCE", ""),
-        "Owner Evidence": row.get("OWNER_EVIDENCE", ""),
+        "Route Email": row.get("ROUTE_EMAIL", ""),
+        "Review Primary": row.get("REVIEW_PRIMARY", ""),
+        "Review Secondary": row.get("REVIEW_SECONDARY", ""),
+        "Review Group": row.get("REVIEW_TARGET", "Security"),
+        "Review Target": row.get("REVIEW_TARGET", "DBA / Security Route"),
+        "Route Source": row.get("ROUTE_SOURCE", ""),
+        "Route Evidence": row.get("ROUTE_EVIDENCE", ""),
         "Finding": finding,
         "Action": (
             "Review privileged grant before granting, revoking, or narrowing access. "
@@ -120,11 +120,11 @@ def _privileged_grant_action_payload(row: pd.Series | dict, *, company: str, env
         "Verification Query": verification_query,
         "Verification Status": "Pending",
         "Ticket ID": "",
-        "Reviewer": row.get("ESCALATION_TARGET", "Security"),
+        "Reviewer": row.get("REVIEW_TARGET", "Security"),
         "Review Status": "Requested",
         "Review Note": (
             f"{row.get('GRANT_REVIEW_STATE', '')}; status {row.get('GRANT_REVIEW_READINESS', '')}; "
-            f"assignment ready {row.get('OWNER_ROUTE_READY', '')}; scope {row.get('SCOPE_CONFIDENCE', '')}."
+            f"assignment ready {row.get('WORKFLOW_ROUTE_READY', '')}; scope {row.get('SCOPE_CONFIDENCE', '')}."
         ),
         "Recovery Evidence": (
             f"Telemetry basis: {row.get('PROOF_REQUIRED', '')}. "
@@ -160,13 +160,13 @@ def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
             "Entity Type": entity_type,
             "Entity": entity,
             "Owner": row.get("OWNER", "Security/DBA"),
-            "Owner Email": row.get("OWNER_EMAIL", ""),
-            "Oncall Primary": row.get("ONCALL_PRIMARY", ""),
-            "Oncall Secondary": row.get("ONCALL_SECONDARY", ""),
-            "Review Group": row.get("ESCALATION_TARGET", row.get("APPROVER", "Security")),
-            "Escalation Target": row.get("ESCALATION_TARGET", "DBA Lead"),
-            "Owner Source": row.get("OWNER_SOURCE", ""),
-            "Owner Evidence": row.get("OWNER_EVIDENCE", ""),
+            "Route Email": row.get("ROUTE_EMAIL", ""),
+            "Review Primary": row.get("REVIEW_PRIMARY", ""),
+            "Review Secondary": row.get("REVIEW_SECONDARY", ""),
+            "Review Group": row.get("REVIEW_TARGET", row.get("APPROVER", "Security")),
+            "Review Target": row.get("REVIEW_TARGET", "DBA Lead"),
+            "Route Source": row.get("ROUTE_SOURCE", ""),
+            "Route Evidence": row.get("ROUTE_EVIDENCE", ""),
             "Finding": finding,
             "Action": (
                 f"{action} Review with {row.get('APPROVER', 'Security')} is required; "
@@ -188,7 +188,7 @@ def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
             "Review Status": row.get("IAM_REVIEW_STATE", "Requested"),
             "Review Note": (
                 f"{row.get('ACCESS_REVIEW_STATE', '')}; status {row.get('REVIEW_READINESS', '')}; "
-                f"blockers {row.get('REVIEW_BLOCKERS', '')}; escalation {row.get('ESCALATION_TARGET', 'DBA Lead')}; "
+                f"blockers {row.get('REVIEW_BLOCKERS', '')}; escalation {row.get('REVIEW_TARGET', 'DBA Lead')}; "
                 f"ticket required {row.get('TICKET_REQUIRED', 'Yes')}; review-by required {row.get('REVIEW_BY_REQUIRED', 'Yes')}."
             ),
             "Recovery Evidence": (

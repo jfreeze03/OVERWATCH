@@ -31,7 +31,7 @@ class DecisionWorkspaceComponentsTests(unittest.TestCase):
                     signal="Warehouse pressure",
                     detail="Review queue and spill evidence",
                     entity_name="WH_XS",
-                    owner="Cost",
+                    workflow="Cost Explorer",
                     sla="Due soon",
                 ),
             ),

@@ -86,7 +86,7 @@ def recommendation_execution_contract(row: Mapping | pd.Series | dict) -> dict[s
     """Return the review and telemetry boundary for one advisory row."""
     source_key = _source_key(row)
     entity = _entity(row)
-    route = _text(row, "Escalation Route", "Owner Route", "Route", "Owner", "OWNER", default="DBA route")
+    route = _text(row, "Escalation Route", "Escalation Route", "Route", "Owner", "OWNER", default="DBA route")
     proof = _text(row, "Proof Required", "PROOF_REQUIRED", default="Telemetry must show the condition cleared.")
     evidence = _text(row, "Evidence Packet", "EVIDENCE_PACKET", default="")
     generated_sql = _text(row, "Generated SQL Fix", "GENERATED_SQL_FIX")
@@ -299,7 +299,7 @@ def harden_recommendation(rec: Mapping | pd.Series | dict) -> dict:
         proof = "Execution count, total elapsed seconds, or scan volume must fall for the same query signature."
         do_not = "Do not create a materialized object until ownership, freshness, and reuse are proven."
         escalation_route = _text(out, "Escalation Route", "Route", "Owner", "OWNER", default="Query reviewer / DBA lead")
-        confidence = "Medium - repeated query telemetry is directional until workload ownership is confirmed."
+        confidence = "Medium - repeated query telemetry is directional until workload reviewership is confirmed."
         decision_gate = "Review finding"
 
     out["Decision"] = decision
@@ -366,7 +366,7 @@ def _verification_is_proved(row: Mapping | pd.Series | dict) -> bool:
 
 
 def _approval_state(row: Mapping | pd.Series | dict) -> str:
-    return _text(row, "Verification Status", "OWNER_APPROVAL_STATUS", "APPROVAL_STATE").upper()
+    return _text(row, "Verification Status", "REVIEW_STATUS", "APPROVAL_STATE").upper()
 
 
 def _automation_blockers(row: Mapping | pd.Series | dict, hardened: Mapping | dict) -> list[str]:
@@ -375,8 +375,8 @@ def _automation_blockers(row: Mapping | pd.Series | dict, hardened: Mapping | di
         hardened, "Proof Query", "Verification Query"
     )
     generated_sql = _text(row, "Generated SQL Fix", "GENERATED_SQL_FIX") or _text(hardened, "Generated SQL Fix")
-    owner = _text(row, "Owner", "OWNER") or _text(hardened, "Owner Route", "Owner")
-    approver = _text(row, "Approver", "APPROVER", "Review Group", "APPROVAL_GROUP")
+    owner = _text(row, "Owner", "OWNER") or _text(hardened, "Escalation Route", "Owner")
+    approver = _text(row, "Approver", "APPROVER", "Review Group", "REVIEW_GROUP")
     approval = _approval_state(row)
     blob = _upper_blob(
         _text(row, "Category", "CATEGORY"),
@@ -428,7 +428,7 @@ def automation_readiness_for_row(row: Mapping | pd.Series | dict, *, source_surf
         score += 15
     if approval in {"APPROVED", "VERIFIED", "NOT REQUIRED"}:
         score += 10
-    if _truthy_text(_text(row, "Owner", "OWNER", "Owner Route")):
+    if _truthy_text(_text(row, "Owner", "OWNER", "Escalation Route")):
         score += 5
     score -= len(blockers) * 12
 

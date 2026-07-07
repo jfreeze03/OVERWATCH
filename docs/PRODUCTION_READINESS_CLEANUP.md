@@ -51,14 +51,14 @@ Release-candidate classifications:
 | `OVERWATCH_COMPANY_SCOPE` | Table | migration candidate | Review for useful ALFA/Trexis scope rules before dropping. |
 | `OVERWATCH_COST_SAVINGS_VERIFICATION_RUN` | Table | migration candidate | Move useful proof to `OVERWATCH_ACTION_VERIFICATION` or `OVERWATCH_VALUE_LEDGER`. |
 | `OVERWATCH_ITSM_TICKET` | Table | required retention | Potential ticket/audit history. Export or migrate before any drop. |
-| `OVERWATCH_OWNER_DIRECTORY` | Table | migration candidate | Move active routes to `OVERWATCH_OPERATIONAL_OWNER_MAP`; generic directory is retired. |
+| `OVERWATCH_OWNER_DIRECTORY` | Table | migration candidate | Move active routes to `OVERWATCH_OPERATIONAL_ROUTE_MAP`; generic directory is retired. |
 | `OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER` | Table | cleanup candidate | Retired platform futures scope. |
 | `OVERWATCH_PLATFORM_FUTURES_EVIDENCE` | Table | cleanup candidate | Retired platform futures evidence. |
 | `OVERWATCH_ROI_LOG` | Table | migration candidate | Move useful value proof to `OVERWATCH_VALUE_LEDGER`. |
 | `OVERWATCH_SOURCE_CONTROL_CHANGE` | Table | migration candidate | Move useful change rows to `OVERWATCH_CHANGE_EVENT`. |
 | `PERF_TEST_*` tables/views/procedure | Mixed | approved legacy | Retain as validation/history evidence until local perf history is formally retired. |
 | `OVERWATCH_COST_SAVINGS_VERIFICATION_*` views | View | migration candidate | Replace with closed-loop verification/value ledger detail. |
-| `OVERWATCH_OWNER_DIRECTORY_ACTIVE_V` | View | migration candidate | Drop after owner routes are migrated. |
+| `OVERWATCH_OWNER_DIRECTORY_ACTIVE_V` | View | migration candidate | Drop after workflow routes are migrated. |
 | `OVERWATCH_PLATFORM_FUTURES_*` views | View | cleanup candidate | Retired platform futures scope. |
 | `SP_OVERWATCH_REFRESH_COST_GOVERNANCE` | Procedure | cleanup candidate | Old cost governance refresh outside current scope. |
 | `SP_OVERWATCH_VERIFY_COST_SAVINGS` | Procedure | migration candidate | Replace with closed-loop verification workflow. |

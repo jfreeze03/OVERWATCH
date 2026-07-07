@@ -177,7 +177,7 @@ def _task_reliability_generated_sql(row: pd.Series) -> str:
     task_fqn = str(row.get("TASK_FQN") or row.get("TASK_NAME") or "UNKNOWN_TASK")
     incident_priority = str(row.get("INCIDENT_PRIORITY") or "").strip()
     recovery_readiness = str(row.get("RECOVERY_READINESS") or "").strip()
-    owner_approval_state = str(row.get("OWNER_APPROVAL_STATE") or "").strip()
+    review_state = str(row.get("REVIEW_STATE") or "").strip()
     if retry_sql and not retry_sql.startswith("--"):
         retry_line = retry_sql
     else:
@@ -187,7 +187,7 @@ def _task_reliability_generated_sql(row: pd.Series) -> str:
         f"-- Task: {task_fqn}\n"
         f"-- Priority: {incident_priority or 'Unranked'}\n"
         f"-- Recovery status: {recovery_readiness or 'DBA review required'}\n"
-        f"-- Status: {owner_approval_state or 'Required before close'}\n"
+        f"-- Status: {review_state or 'Required before close'}\n"
         f"-- Graph role: {row.get('GRAPH_ROLE', '')}; downstream tasks: {safe_int(row.get('DOWNSTREAM_TASK_COUNT'))}\n"
         f"-- Linked procedure: {row.get('PROCEDURE_NAME', '')}\n"
         f"-- Impact objects: {row.get('IMPACT_OBJECTS', '')}\n"

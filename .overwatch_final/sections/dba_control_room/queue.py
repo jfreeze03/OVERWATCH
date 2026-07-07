@@ -102,9 +102,17 @@ def _enrich_command_owner_context(view: pd.DataFrame) -> pd.DataFrame:
 def _command_closure_issue_flags(row: pd.Series) -> dict:
     status = str(row.get("STATUS") or "").strip().upper()
     due_state = str(row.get("DUE_STATE") or "").strip()
-    verification_status = str(row.get("VERIFICATION_STATUS") or "").strip().upper()
-    owner_approval_status = str(row.get("OWNER_APPROVAL_STATUS") or "").strip().upper()
-    recovery_state = str(row.get("RECOVERY_SLA_STATE") or "").strip().upper()
+    def _status(value: object) -> str:
+        try:
+            if pd.isna(value):
+                return ""
+        except Exception:
+            pass
+        return str(value or "").strip().upper()
+
+    verification_status = _status(row.get("VERIFICATION_STATUS"))
+    review_status = _status(row.get("REVIEW_STATUS"))
+    recovery_state = _status(row.get("RECOVERY_SLA_STATE"))
     is_open = status not in {"FIXED", "IGNORED"}
     is_fixed = status == "FIXED"
     verified = (
@@ -114,11 +122,11 @@ def _command_closure_issue_flags(row: pd.Series) -> dict:
     )
     fixed_without_verification = is_fixed and not verified
     metadata_gaps = {
-        "OWNER_GAP_ROWS": 0 if _command_named_owner(row) else 1,
+        "WORKFLOW_GAP_ROWS": 0 if _command_named_owner(row) else 1,
         "TICKET_GAP_ROWS": 0 if _command_value_present(row, "TICKET_ID") else 1,
         "APPROVER_GAP_ROWS": 0 if _command_value_present(row, "APPROVER") else 1,
         "VERIFICATION_QUERY_GAP_ROWS": 0 if _command_value_present(row, "VERIFICATION_QUERY", "PROOF_QUERY") else 1,
-        "OWNER_APPROVAL_GAP_ROWS": 1 if owner_approval_status in {"", "PENDING", "REQUESTED", "REQUIRED"} else 0,
+        "REVIEW_GAP_ROWS": 1 if review_status in {"", "PENDING", "REQUESTED", "REQUIRED"} else 0,
     }
     recovery_risk = (
         "BREACH" in recovery_state
@@ -151,11 +159,11 @@ def _command_closure_next_action(row: pd.Series | dict) -> str:
     if safe_int(row.get("RECOVERY_RISK_ROWS", 0)):
         return "Track recovery status or reopen items with breached/late closure state."
     metadata_gaps = (
-        safe_int(row.get("OWNER_GAP_ROWS", 0))
+        safe_int(row.get("WORKFLOW_GAP_ROWS", 0))
         + safe_int(row.get("TICKET_GAP_ROWS", 0))
         + safe_int(row.get("APPROVER_GAP_ROWS", 0))
         + safe_int(row.get("VERIFICATION_QUERY_GAP_ROWS", 0))
-        + safe_int(row.get("OWNER_APPROVAL_GAP_ROWS", 0))
+        + safe_int(row.get("REVIEW_GAP_ROWS", 0))
     )
     if metadata_gaps:
         return "Complete route, ticket, reviewer, and telemetry metadata."
@@ -179,9 +187,9 @@ def _command_queue_closure_readiness(queue: pd.DataFrame, today: str | pd.Timest
         view[column] = flags[column]
 
     blocker_cols = [
-        "FIXED_WITHOUT_VERIFICATION", "OVERDUE_OPEN", "OWNER_GAP_ROWS",
+        "FIXED_WITHOUT_VERIFICATION", "OVERDUE_OPEN", "WORKFLOW_GAP_ROWS",
         "TICKET_GAP_ROWS", "APPROVER_GAP_ROWS", "VERIFICATION_QUERY_GAP_ROWS",
-        "OWNER_APPROVAL_GAP_ROWS", "RECOVERY_RISK_ROWS", "CLOSURE_BLOCKER_ROWS",
+        "REVIEW_GAP_ROWS", "RECOVERY_RISK_ROWS", "CLOSURE_BLOCKER_ROWS",
     ]
     source_series = view.get("SOURCE", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str)
     category_series = view.get("CATEGORY", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str)
@@ -203,11 +211,11 @@ def _command_queue_closure_readiness(queue: pd.DataFrame, today: str | pd.Timest
         for column in blocker_cols:
             totals[column] = int(group[column].sum())
         metadata_gaps = (
-            totals["OWNER_GAP_ROWS"]
+            totals["WORKFLOW_GAP_ROWS"]
             + totals["TICKET_GAP_ROWS"]
             + totals["APPROVER_GAP_ROWS"]
             + totals["VERIFICATION_QUERY_GAP_ROWS"]
-            + totals["OWNER_APPROVAL_GAP_ROWS"]
+            + totals["REVIEW_GAP_ROWS"]
         )
         if totals["OVERDUE_OPEN"]:
             readiness, rank = "Overdue closure", 0
@@ -252,17 +260,17 @@ def _command_execution_metadata(row: pd.Series) -> dict:
     category = str(row.get("CATEGORY") or "").upper()
     severity = str(row.get("SEVERITY") or "").upper()
     due_state = str(row.get("DUE_STATE") or "")
-    approval_status = str(row.get("OWNER_APPROVAL_STATUS") or "").strip().upper()
+    approval_status = str(row.get("REVIEW_STATUS") or "").strip().upper()
     requires_approval = _command_requires_approval(row)
-    route_ready = _command_value_present(row, "OWNER_EMAIL") and (
-        _command_value_present(row, "ONCALL_PRIMARY") or _command_value_present(row, "APPROVAL_GROUP")
+    route_ready = _command_value_present(row, "ROUTE_EMAIL") and (
+        _command_value_present(row, "REVIEW_PRIMARY") or _command_value_present(row, "REVIEW_GROUP")
     )
 
     gaps: list[str] = []
     if not _command_named_owner(row):
         gaps.append("Named route")
     if not route_ready:
-        gaps.append("On-call route")
+        gaps.append("Review route")
     if not _command_value_present(row, "TICKET_ID"):
         gaps.append("Ticket/change ID")
     if not _command_value_present(row, "APPROVER"):
@@ -348,7 +356,7 @@ def _command_queue_summary(queue: pd.DataFrame) -> dict:
             "overdue": 0,
             "ready": 0,
             "control_gaps": 0,
-            "owner_gaps": 0,
+            "workflow_gaps": 0,
             "approval_gaps": 0,
             "ticket_gaps": 0,
             "high_risk": 0,
@@ -376,7 +384,7 @@ def _command_queue_summary(queue: pd.DataFrame) -> dict:
         "overdue": int(due_state.eq("Overdue").sum()),
         "ready": ready if "COMMAND_EXECUTION_GATE" in queue.columns else int(evidence.eq("Ready to work").sum()),
         "control_gaps": int(evidence.ne("Ready to work").sum()),
-        "owner_gaps": int(evidence_rollup.str.contains("named owner", case=False, na=False).sum()),
+        "workflow_gaps": int(evidence_rollup.str.contains("workflow gap", case=False, na=False).sum()),
         "approval_gaps": int(evidence_rollup.str.contains("reviewer|Review status", case=False, na=False).sum()),
         "ticket_gaps": int(evidence_rollup.str.contains("ticket|change ID", case=False, na=False).sum()),
         "high_risk": int(severity.isin(["CRITICAL", "HIGH"]).sum()),
@@ -407,7 +415,7 @@ def _command_queue_route_readiness(queue: pd.DataFrame) -> pd.DataFrame:
         elif summary["execution_ready"]:
             next_action = "Work ready items, then monitor telemetry before closure."
         else:
-            next_action = "Triage route and assign accountable DBA on-call."
+            next_action = "Triage route and assign accountable DBA review."
         rows.append({
             "ROUTE": route,
             "OPEN_ACTIONS": summary["open"],
@@ -415,7 +423,7 @@ def _command_queue_route_readiness(queue: pd.DataFrame) -> pd.DataFrame:
             "EXECUTION_READY": summary["execution_ready"],
             "AUDIT_READY": summary["audit_ready"],
             "ROUTE_READY": summary["route_ready"],
-            "OWNER_GAPS": summary["owner_gaps"],
+            "WORKFLOW_GAPS": summary["workflow_gaps"],
             "APPROVAL_BLOCKS": summary["approval_blocks"],
             "METADATA_BLOCKS": summary["metadata_blocks"],
             "CONTROL_READY_PCT": summary["control_ready_pct"],
@@ -834,8 +842,8 @@ def _render_command_queue_control(
             priority_columns=[
                 "ROUTE", "CLOSURE_READINESS", "TOTAL_ACTIONS", "OPEN_ACTIONS",
                 "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "RECOVERY_RISK_ROWS",
-                "OWNER_GAP_ROWS", "TICKET_GAP_ROWS", "APPROVER_GAP_ROWS",
-                "OWNER_APPROVAL_GAP_ROWS", "VERIFICATION_QUERY_GAP_ROWS",
+                "WORKFLOW_GAP_ROWS", "TICKET_GAP_ROWS", "APPROVER_GAP_ROWS",
+                "REVIEW_GAP_ROWS", "VERIFICATION_QUERY_GAP_ROWS",
                 "LAST_STATUS", "LAST_SEVERITY", "NEXT_CONTROL_ACTION",
             ],
             sort_by=["CLOSURE_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "CLOSURE_BLOCKER_ROWS"],
@@ -856,7 +864,7 @@ def _render_command_queue_control(
             title="Action status by DBA route",
             priority_columns=[
                 "ROUTE", "OPEN_ACTIONS", "OVERDUE", "EXECUTION_READY", "AUDIT_READY",
-                "ROUTE_READY", "OWNER_GAPS", "APPROVAL_BLOCKS", "METADATA_BLOCKS",
+                "ROUTE_READY", "WORKFLOW_GAPS", "APPROVAL_BLOCKS", "METADATA_BLOCKS",
                 "CONTROL_READY_PCT", "NEXT_CONTROL_ACTION",
             ],
             sort_by=["OVERDUE", "METADATA_BLOCKS", "APPROVAL_BLOCKS", "OPEN_ACTIONS"],
@@ -872,9 +880,9 @@ def _render_command_queue_control(
         priority_columns=[
             "SEVERITY", "DUE_STATE", "COMMAND_STATE", "COMMAND_EXECUTION_GATE",
             "COMMAND_ROUTE_READINESS", "COMMAND_AUDIT_READINESS", "CATEGORY", "ENTITY_NAME",
-            "OWNER", "OWNER_EMAIL", "ONCALL_PRIMARY", "APPROVAL_GROUP",
+            "OWNER", "ROUTE_EMAIL", "REVIEW_PRIMARY", "REVIEW_GROUP",
             "STATUS", "COMMAND_EVIDENCE_REQUIRED", "NEXT_ACTION", "TICKET_ID",
-            "APPROVER", "OWNER_SOURCE", "ROUTE",
+            "APPROVER", "ROUTE_SOURCE", "ROUTE",
         ],
         sort_by=["QUEUE_PRIORITY", "SEVERITY"],
         ascending=[True, True],

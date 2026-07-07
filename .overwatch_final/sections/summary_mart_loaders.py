@@ -7,7 +7,9 @@ summary, and every query is scoped to the section-summary boundary.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
+import re
 from typing import Any
 
 import pandas as pd
@@ -22,6 +24,18 @@ DEFAULT_SUMMARY_LIMIT = 200
 SUMMARY_TTL_SECONDS = 300
 
 
+@dataclass(frozen=True)
+class SummaryResult:
+    data: pd.DataFrame
+    state: DataState
+    source_object: str
+    snapshot_ts: str | None
+    freshness_minutes: float | None
+    row_count: int
+    safe_error: str
+    is_fallback: bool
+
+
 def _sql_literal(value: Any) -> str:
     return "'" + str(value or "").replace("'", "''") + "'"
 
@@ -34,42 +48,69 @@ def _limit(value: int | None) -> int:
     return max(1, min(parsed, DEFAULT_SUMMARY_LIMIT))
 
 
-def _fallback_frame(
-    section: str,
-    workflow: str,
-    *,
-    max_rows: int,
-    state: DataState = DataState.REFRESH_REQUIRED,
-) -> pd.DataFrame:
+def _source_object_from_sql(sql: str) -> str:
+    match = re.search(r"\bFROM\s+([A-Z0-9_.$]+)", str(sql or ""), flags=re.IGNORECASE)
+    if not match:
+        return "summary_mart"
+    return match.group(1).split(".")[-1].upper()
+
+
+def _safe_summary_error(exc: BaseException | None) -> str:
+    if exc is None:
+        return ""
+    text = str(exc or "").lower()
+    if "does not exist" in text or "not exist" in text or "invalid identifier" in text:
+        return "Required source object is missing or not configured."
+    if "connection" in text or "session" in text or "auth" in text:
+        return "Snowflake connection is unavailable."
+    if "permission" in text or "access" in text:
+        return "This summary query failed. Review Setup Health for safe details."
+    return "This summary query failed. Review Setup Health for safe details."
+
+
+def _state_from_exception(exc: BaseException) -> DataState:
+    text = str(exc or "").lower()
+    if "does not exist" in text or "not exist" in text or "invalid identifier" in text:
+        return DataState.SETUP_REQUIRED
+    if "connection" in text or "session" in text or "auth" in text:
+        return DataState.CONNECTION_UNAVAILABLE
+    return DataState.QUERY_FAILED
+
+
+def _result_frame(result: SummaryResult, *, section: str, workflow: str, max_rows: int) -> pd.DataFrame:
+    frame = result.data.copy()
+    state = result.state
     status = data_state_label(state)
-    return pd.DataFrame(
-        [
-            {
-                "SECTION": section,
-                "WORKFLOW": workflow,
-                "SOURCE_STATUS": status,
-                "SUMMARY_STATUS": status,
-                "DATA_STATE": state.value,
-                "FRESHNESS_TS": datetime.now(UTC).isoformat(timespec="seconds"),
-                "SOURCE_FAMILY": "summary_mart",
-                "IS_FALLBACK": True,
-                "ROW_LIMIT": max_rows,
-                "ROW_COUNT": 0,
-                "RAW_SQL_INCLUDED": False,
-            }
-        ]
+    frame.attrs.update(
+        {
+            "SECTION": section,
+            "WORKFLOW": workflow,
+            "SOURCE_STATUS": status,
+            "SUMMARY_STATUS": status,
+            "DATA_STATE": state.value,
+            "FRESHNESS_TS": result.snapshot_ts or datetime.now(UTC).isoformat(timespec="seconds"),
+            "SOURCE_FAMILY": "summary_mart",
+            "SOURCE_OBJECT": result.source_object,
+            "IS_FALLBACK": bool(result.is_fallback),
+            "ROW_LIMIT": max_rows,
+            "ROW_COUNT": result.row_count,
+            "RAW_SQL_INCLUDED": False,
+            "SAFE_ERROR": result.safe_error,
+        }
     )
+    return frame
 
 
-def _summary_query(
+def _summary_result(
     *,
     section: str,
     workflow: str,
     ttl_key: str,
     sql: str,
     limit: int | None = None,
-) -> pd.DataFrame:
+) -> SummaryResult:
     max_rows = _limit(limit)
+    source_object = _source_object_from_sql(sql)
     with query_budget_context(
         "section_summary_autoload",
         section=section,
@@ -81,17 +122,64 @@ def _summary_query(
                 sql,
                 ttl_key=ttl_key,
                 use_cache=True,
-                spinner_msg="Preparing current summary...",
+                spinner_msg="Reading current summary...",
                 tier="section_summary",
                 section=section,
                 max_rows=max_rows,
                 query_boundary="section_summary_autoload",
             )
             if isinstance(result, pd.DataFrame) and not result.empty:
-                return result
-            return _fallback_frame(section, workflow, max_rows=max_rows, state=DataState.REFRESH_REQUIRED)
-        except Exception:
-            return _fallback_frame(section, workflow, max_rows=max_rows, state=DataState.QUERY_FAILED)
+                frame = result.head(max_rows).copy()
+                return SummaryResult(
+                    data=frame,
+                    state=DataState.LOADED_CURRENT,
+                    source_object=source_object,
+                    snapshot_ts=datetime.now(UTC).isoformat(timespec="seconds"),
+                    freshness_minutes=None,
+                    row_count=len(frame),
+                    safe_error="",
+                    is_fallback=False,
+                )
+            return SummaryResult(
+                data=pd.DataFrame(),
+                state=DataState.REFRESH_REQUIRED,
+                source_object=source_object,
+                snapshot_ts=datetime.now(UTC).isoformat(timespec="seconds"),
+                freshness_minutes=None,
+                row_count=0,
+                safe_error="",
+                is_fallback=True,
+            )
+        except Exception as exc:
+            return SummaryResult(
+                data=pd.DataFrame(),
+                state=_state_from_exception(exc),
+                source_object=source_object,
+                snapshot_ts=datetime.now(UTC).isoformat(timespec="seconds"),
+                freshness_minutes=None,
+                row_count=0,
+                safe_error=_safe_summary_error(exc),
+                is_fallback=True,
+            )
+
+
+def _summary_query(
+    *,
+    section: str,
+    workflow: str,
+    ttl_key: str,
+    sql: str,
+    limit: int | None = None,
+) -> pd.DataFrame:
+    max_rows = _limit(limit)
+    result = _summary_result(
+        section=section,
+        workflow=workflow,
+        ttl_key=ttl_key,
+        sql=sql,
+        limit=max_rows,
+    )
+    return _result_frame(result, section=section, workflow=workflow, max_rows=max_rows)
 
 
 def _safe_window_days(value: int) -> int:
@@ -391,6 +479,7 @@ def load_executive_packet_current(
 
 
 __all__ = [
+    "SummaryResult",
     "load_cortex_daily_usage",
     "load_executive_packet_current",
     "load_login_security_daily",

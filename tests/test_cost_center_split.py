@@ -106,8 +106,8 @@ class CostCenterSplitTests(unittest.TestCase):
         ready = cost_center._cost_allocation_quality({
             "DATABASE_NAME": "ALFA_EDW_PRD",
             "ENVIRONMENT": "PROD",
-            "OWNER_SOURCE": "WAREHOUSE_TAG",
-            "COST_OWNER": "Finance",
+            "ROUTE_SOURCE": "WAREHOUSE_TAG",
+            "COST_ATTRIBUTION": "Finance",
         })
         self.assertEqual(ready["ENVIRONMENT_ROLLUP"], "PROD")
         self.assertEqual(ready["CHARGEBACK_READY"], "Ready")
@@ -124,10 +124,10 @@ class CostCenterSplitTests(unittest.TestCase):
             "USER_NAME": "ANALYST",
             "TOTAL_CREDITS": 5,
         }]))
-        for column in ("COST_OWNER", "OWNER_SOURCE", "OWNER_EVIDENCE", "ENVIRONMENT_ROLLUP"):
+        for column in ("COST_ATTRIBUTION", "ROUTE_SOURCE", "ROUTE_EVIDENCE", "ENVIRONMENT_ROLLUP"):
             self.assertIn(column, annotated.columns)
-        self.assertEqual(annotated["COST_OWNER"].iloc[0], "ANALYST")
-        self.assertEqual(annotated["OWNER_SOURCE"].iloc[0], "QUERY_USER")
+        self.assertEqual(annotated["COST_ATTRIBUTION"].iloc[0], "ANALYST")
+        self.assertEqual(annotated["ROUTE_SOURCE"].iloc[0], "QUERY_USER")
 
     def test_chargeback_renderer_imports_shared_aggregation_labels(self):
         self.assertIs(chargeback_view._mixed_label, models._mixed_label)
@@ -246,7 +246,7 @@ class CostCenterSplitTests(unittest.TestCase):
         self.assertEqual(action["Source"], "Cost & Contract - Chargeback")
         self.assertEqual(action["Category"], "Chargeback Review")
         self.assertEqual(action["Entity Type"], "Database/User/Warehouse")
-        self.assertEqual(action["Owner"], "DBA / Cost owner")
+        self.assertEqual(action["Owner"], "DBA / Cost attribution")
         self.assertIn("no state-changing SQL", action["Generated SQL Fix"])
         for forbidden in ("ALTER ", "DROP ", "CREATE "):
             self.assertNotIn(forbidden, action["Generated SQL Fix"].upper())

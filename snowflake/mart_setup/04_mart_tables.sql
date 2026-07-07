@@ -38,7 +38,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS FACT_WAREHOUSE_OPERABILITY_DAILY (
   OVERDUE_OPEN                 NUMBER,
   FIXED_WITHOUT_VERIFICATION   NUMBER,
   VERIFIED_CLOSURES            NUMBER,
-  OWNER_APPROVAL_GAP_ROWS      NUMBER,
+  REVIEW_GAP_ROWS      NUMBER,
   NEXT_CONTROL_ACTION          VARCHAR(4000),
   LAST_ACTIVITY_TS             TIMESTAMP_NTZ,
   LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
@@ -68,7 +68,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS FACT_SECURITY_OPERABILITY_DAILY (
   OVERDUE_OPEN                 NUMBER,
   FIXED_WITHOUT_VERIFICATION   NUMBER,
   VERIFIED_CLOSURES            NUMBER,
-  OWNER_APPROVAL_GAP_ROWS      NUMBER,
+  REVIEW_GAP_ROWS      NUMBER,
   NEXT_CONTROL_ACTION          VARCHAR(4000),
   LAST_ACTIVITY_TS             TIMESTAMP_NTZ,
   LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
@@ -95,7 +95,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY (
   OVERDUE_OPEN                 NUMBER,
   FIXED_WITHOUT_VERIFICATION   NUMBER,
   VERIFIED_CLOSURES            NUMBER,
-  OWNER_APPROVAL_GAP_ROWS      NUMBER,
+  REVIEW_GAP_ROWS      NUMBER,
   RECOVERY_RISK_ROWS           NUMBER,
   NEXT_CONTROL_ACTION          VARCHAR(4000),
   LAST_ACTIVITY_TS             TIMESTAMP_NTZ,
@@ -176,21 +176,21 @@ CREATE TRANSIENT TABLE IF NOT EXISTS FACT_CHARGEBACK_DAILY (
   ALLOCATION_BASIS             VARCHAR(1000),
   CHARGEBACK_READY             VARCHAR(100),
   SCOPE_REVIEW                 VARCHAR(1000),
-  COST_OWNER                   VARCHAR(300),
-  OWNER_SOURCE                 VARCHAR(100),
-  OWNER_EVIDENCE               VARCHAR(1000),
+  COST_ATTRIBUTION                   VARCHAR(300),
+  ROUTE_SOURCE                 VARCHAR(100),
+  ROUTE_EVIDENCE               VARCHAR(1000),
   LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
-CREATE TRANSIENT TABLE IF NOT EXISTS DIM_COST_OWNER_TAG (
+CREATE TRANSIENT TABLE IF NOT EXISTS DIM_COST_ATTRIBUTION_TAG (
   SNAPSHOT_DATE                DATE,
-  OWNER_SCOPE                  VARCHAR(100),
+  ATTRIBUTION_SCOPE                  VARCHAR(100),
   OBJECT_DATABASE              VARCHAR(300),
   OBJECT_SCHEMA                VARCHAR(300),
   OBJECT_NAME                  VARCHAR(500),
   TAG_NAME                     VARCHAR(300),
   TAG_VALUE                    VARCHAR(1000),
-  OWNER_TYPE                   VARCHAR(100),
+  ATTRIBUTION_TYPE                   VARCHAR(100),
   PRIORITY                     NUMBER,
   LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
@@ -232,7 +232,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS FACT_TASK_CRITICAL_PATH (
   BLAST_RADIUS                 VARCHAR(100),
   WAREHOUSES                   VARCHAR,
   PROCEDURES                   VARCHAR,
-  OWNER_ROLE                   VARCHAR(300),
+  CONTROL_ROLE                   VARCHAR(300),
   APPROVAL_PATH                VARCHAR(1000),
   SOURCE_FRESHNESS             VARCHAR(1000),
   LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
@@ -261,7 +261,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS DIM_PROCEDURE_SNAPSHOT (
   ENVIRONMENT                  VARCHAR(100),
   SCHEMA_NAME                  VARCHAR(300),
   PROCEDURE_NAME               VARCHAR(500),
-  OWNER_ROLE                   VARCHAR(300),
+  CONTROL_ROLE                   VARCHAR(300),
   PROCEDURE_LANGUAGE           VARCHAR(100),
   ARGUMENT_SIGNATURE           VARCHAR,
   LAST_ALTERED                 TIMESTAMP_NTZ,
@@ -322,8 +322,8 @@ CREATE TRANSIENT TABLE IF NOT EXISTS FACT_CHANGE_CONTROL_OPERABILITY_DAILY (
   CONTROL_KEY                  VARCHAR(500),
   FINDING_TYPE                 VARCHAR(120),
   ENTITY                       VARCHAR(500),
-  OWNER                        VARCHAR(200),
-  ESCALATION_TARGET            VARCHAR(200),
+  WORKFLOW_ROUTE                        VARCHAR(200),
+  REVIEW_TARGET            VARCHAR(200),
   SEVERITY                     VARCHAR(40),
   EVIDENCE_ROWS                NUMBER,
   HIGH_RISK_CHANGES            NUMBER,
@@ -337,7 +337,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS FACT_CHANGE_CONTROL_OPERABILITY_DAILY (
   OVERDUE_OPEN                 NUMBER,
   FIXED_WITHOUT_VERIFICATION   NUMBER,
   VERIFIED_CLOSURES            NUMBER,
-  OWNER_APPROVAL_GAP_ROWS      NUMBER,
+  REVIEW_GAP_ROWS      NUMBER,
   CONTROL_STATE                VARCHAR(120),
   CONTROL_RANK                 NUMBER,
   NEXT_CONTROL_ACTION          VARCHAR(4000),
@@ -691,12 +691,12 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_SECTION_COMMAND_EXCEPTION (
   PRIORITY_SCORE               NUMBER,
   IMPACT_VALUE                 NUMBER(18,2),
   IMPACT_UNIT                  VARCHAR(80),
-  OWNER_ROUTE                  VARCHAR(200),
-  OWNER_GAP                    BOOLEAN,
+  WORKFLOW_ROUTE                  VARCHAR(200),
+  WORKFLOW_GAP                    BOOLEAN,
   FIRST_SEEN_TS                TIMESTAMP_NTZ,
   DUE_TS                       TIMESTAMP_NTZ,
-  OWNER_ID                     VARCHAR(300),
-  OWNER_NAME                   VARCHAR(300),
+  ROUTE_ID                     VARCHAR(300),
+  ROUTE_NAME                   VARCHAR(300),
   AGE_MINUTES                  NUMBER,
   SLA_STATE                    VARCHAR(80),
   SORT_ORDER                   NUMBER,
@@ -767,7 +767,7 @@ SELECT
       'settings', 'action_queue', 'executive_observability', 'executive_scorecard',
       'executive_forecast', 'closed_loop', 'production_readiness', 'data_trust',
       'app_observability', 'dba_control_room', 'notification_log',
-      'acknowledgements', 'owner_coverage', 'login_daily', 'grant_daily',
+      'acknowledgements', 'workflow_route_coverage', 'login_daily', 'grant_daily',
       'credential_expiration'
     ) THEN 'all_fallback'
     ELSE 'not_applicable'
@@ -822,7 +822,7 @@ FROM VALUES
     ('Security Monitoring','grant_daily','FACT_GRANT_DAILY',TRUE,60,'allocated',TRUE),
     ('Security Monitoring','credential_expiration','MART_SECURITY_CREDENTIAL_EXPIRATIONS_CURRENT',TRUE,60,'allocated',TRUE),
     ('Security Monitoring','security_alerts','ALERT_EVENTS',TRUE,60,'allocated',TRUE),
-    ('Security Monitoring','owner_coverage','MART_OPERATIONAL_OWNER_COVERAGE',TRUE,60,'allocated',TRUE),
+    ('Security Monitoring','workflow_route_coverage','MART_OPERATIONAL_ROUTE_COVERAGE',TRUE,60,'allocated',TRUE),
     ('Security Monitoring','change_summary','MART_CHANGE_INTELLIGENCE_SUMMARY',FALSE,60,'allocated',TRUE)
   AS v(SECTION_NAME, SOURCE_KEY, SOURCE_OBJECT, REQUIRED, TARGET_FRESHNESS_MINUTES, DEFAULT_CONFIDENCE, ENABLED)
 WHERE NOT EXISTS (
@@ -847,7 +847,7 @@ USING (
         'settings', 'action_queue', 'executive_observability', 'executive_scorecard',
         'executive_forecast', 'closed_loop', 'production_readiness', 'data_trust',
         'app_observability', 'dba_control_room', 'notification_log',
-        'acknowledgements', 'owner_coverage', 'login_daily', 'grant_daily',
+        'acknowledgements', 'workflow_route_coverage', 'login_daily', 'grant_daily',
         'credential_expiration'
       ) THEN 'all_fallback'
       ELSE 'not_applicable'
@@ -900,7 +900,7 @@ USING (
     ('Security Monitoring','login_daily'),
     ('Security Monitoring','grant_daily'),
     ('Security Monitoring','security_alerts'),
-    ('Security Monitoring','owner_coverage'),
+    ('Security Monitoring','workflow_route_coverage'),
     ('Security Monitoring','change_summary')
   AS v(SECTION_NAME, SOURCE_KEY)
 ) src
@@ -1497,8 +1497,8 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_EXECUTIVE_DECISION_INBOX (
   ENTITY                       VARCHAR(500),
   IMPACT_VALUE                 NUMBER(18,2),
   IMPACT_UNIT                  VARCHAR(80),
-  OWNER_ROUTE                  VARCHAR(200),
-  OWNER_GAP                    BOOLEAN,
+  WORKFLOW_ROUTE                  VARCHAR(200),
+  WORKFLOW_GAP                    BOOLEAN,
   AGE_MINUTES                  NUMBER,
   SLA_STATE                    VARCHAR(80),
   ROUTE_KEY                    VARCHAR(200),
@@ -1798,13 +1798,13 @@ ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS EV
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS EVIDENCE_QUERY VARCHAR(16000);
 --ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS FIRST_SEEN_TS TIMESTAMP_NTZ;
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS DUE_TS TIMESTAMP_NTZ;
-ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS OWNER_ID VARCHAR(300);
-ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS OWNER_NAME VARCHAR(300);
+ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS ROUTE_ID VARCHAR(300);
+ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS ROUTE_NAME VARCHAR(300);
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS PRIORITY_SCORE NUMBER;
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS IMPACT_VALUE NUMBER(18,2);
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS IMPACT_UNIT VARCHAR(80);
-ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS OWNER_ROUTE VARCHAR(200);
-ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS OWNER_GAP BOOLEAN;
+ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS WORKFLOW_ROUTE VARCHAR(200);
+ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS WORKFLOW_GAP BOOLEAN;
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS AGE_MINUTES NUMBER;
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS SLA_STATE VARCHAR(80);
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_ACTION ADD COLUMN IF NOT EXISTS BRIEF_ID VARCHAR(64);
@@ -1821,7 +1821,7 @@ ALTER TABLE IF EXISTS MART_SECTION_COMMAND_BRIEF ADD COLUMN IF NOT EXISTS PRIMAR
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_BRIEF ADD COLUMN IF NOT EXISTS PRIMARY_ACTION_DETAIL VARCHAR(1200);
 
 -- -----------------------------------------------------------------------------
--- Enterprise operating model: Finding -> Owner -> Trust -> Impact -> Action -> Value
+-- Enterprise operating model: Finding -> Workflow Route -> Trust Level -> Business Impact -> Action -> Value Verified
 -- -----------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS OVERWATCH_DATA_TRUST_SOURCE (
@@ -1833,7 +1833,7 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_DATA_TRUST_SOURCE (
   TARGET_FRESHNESS_MIN         NUMBER,
   DEFAULT_CONFIDENCE           VARCHAR(40),
   BUSINESS_IMPACT              VARCHAR(1000),
-  OWNER_ROUTE                  VARCHAR(200),
+  WORKFLOW_ROUTE                  VARCHAR(200),
   ENABLED                      BOOLEAN DEFAULT TRUE,
   CREATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
   UPDATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
@@ -1842,17 +1842,17 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_DATA_TRUST_SOURCE (
 MERGE INTO OVERWATCH_DATA_TRUST_SOURCE tgt
 USING (
   SELECT * FROM VALUES
-    ('FACT_COST_DAILY', 'Cost facts', 'FACT_COST_DAILY', 'MART', 'Cost & Contract', 1440, 'allocated', 'Cost and contract metrics may be incomplete or stale.', 'DBA / Cost owner', TRUE),
+    ('FACT_COST_DAILY', 'Cost facts', 'FACT_COST_DAILY', 'MART', 'Cost & Contract', 1440, 'allocated', 'Cost and contract metrics may be incomplete or stale.', 'DBA / Cost attribution', TRUE),
     ('FACT_CORTEX_DAILY', 'Cortex facts', 'FACT_CORTEX_DAILY', 'MART', 'Cost & Contract', 1440, 'allocated', 'Cortex spend and anomaly alerts may understate AI cost exposure.', 'DBA / AI cost route', TRUE),
-    ('FACT_QUERY_HOURLY', 'Query performance facts', 'FACT_QUERY_HOURLY', 'MART', 'Workload Operations', 120, 'allocated', 'Runtime, queue, spill, and warehouse pressure may be stale.', 'DBA / Workload owner', TRUE),
-    ('FACT_QUERY_DETAIL_RECENT', 'Query detail facts', 'FACT_QUERY_DETAIL_RECENT', 'MART', 'Workload Operations', 120, 'exact', 'Failure/root-cause samples may be stale for drilldowns.', 'DBA / Workload owner', TRUE),
-    ('FACT_TASK_RUN', 'Task run facts', 'FACT_TASK_RUN', 'MART', 'Workload Operations', 120, 'exact', 'Task failure and dependency views may miss current failures.', 'DBA / Pipeline owner', TRUE),
-    ('ALERT_EVENTS', 'Alert events', 'ALERT_EVENTS', 'APP_TABLE', 'Alert Center', 60, 'exact', 'Alert Center may miss active incidents or routed ownership gaps.', 'DBA / Alert owner', TRUE),
-    ('OVERWATCH_ACTION_QUEUE', 'Action queue', 'OVERWATCH_ACTION_QUEUE', 'APP_TABLE', 'DBA Control Room', 60, 'estimated', 'Owned action, closure, and savings proof may be incomplete.', 'DBA On-Call', TRUE),
-    ('MART_DBA_CONTROL_ROOM', 'Control-room summary', 'MART_DBA_CONTROL_ROOM', 'MART', 'DBA Control Room', 120, 'allocated', 'Executive and DBA triage may not reflect the latest operational state.', 'DBA On-Call', TRUE),
+    ('FACT_QUERY_HOURLY', 'Query performance facts', 'FACT_QUERY_HOURLY', 'MART', 'Workload Operations', 120, 'allocated', 'Runtime, queue, spill, and warehouse pressure may be stale.', 'DBA / Workload reviewer', TRUE),
+    ('FACT_QUERY_DETAIL_RECENT', 'Query detail facts', 'FACT_QUERY_DETAIL_RECENT', 'MART', 'Workload Operations', 120, 'exact', 'Failure/root-cause samples may be stale for drilldowns.', 'DBA / Workload reviewer', TRUE),
+    ('FACT_TASK_RUN', 'Task run facts', 'FACT_TASK_RUN', 'MART', 'Workload Operations', 120, 'exact', 'Task failure and dependency views may miss current failures.', 'DBA / Pipeline route', TRUE),
+    ('ALERT_EVENTS', 'Alert events', 'ALERT_EVENTS', 'APP_TABLE', 'Alert Center', 60, 'exact', 'Alert Center may miss active incidents or routed ownership gaps.', 'DBA / Alert reviewer', TRUE),
+    ('OVERWATCH_ACTION_QUEUE', 'Action queue', 'OVERWATCH_ACTION_QUEUE', 'APP_TABLE', 'DBA Control Room', 60, 'estimated', 'Owned action, closure, and savings proof may be incomplete.', 'DBA Review', TRUE),
+    ('MART_DBA_CONTROL_ROOM', 'Control-room summary', 'MART_DBA_CONTROL_ROOM', 'MART', 'DBA Control Room', 120, 'allocated', 'Executive and DBA triage may not reflect the latest operational state.', 'DBA Review', TRUE),
     ('MART_EXECUTIVE_OBSERVABILITY', 'Executive observability', 'MART_EXECUTIVE_OBSERVABILITY', 'MART', 'Executive Landing', 120, 'allocated', 'Leadership first paint may be stale or incomplete.', 'DBA / Platform', TRUE),
     ('OVERWATCH_USAGE_LOG', 'App usage and query log', 'OVERWATCH_USAGE_LOG', 'APP_TABLE', 'DBA Control Room', 1440, 'fallback', 'App self-observability may have no query-tag/runtime evidence.', 'DBA / Platform', TRUE)
-  AS t(SOURCE_KEY, SOURCE_NAME, SOURCE_OBJECT, SOURCE_CLASS, SURFACE, TARGET_FRESHNESS_MIN, DEFAULT_CONFIDENCE, BUSINESS_IMPACT, OWNER_ROUTE, ENABLED)
+  AS t(SOURCE_KEY, SOURCE_NAME, SOURCE_OBJECT, SOURCE_CLASS, SURFACE, TARGET_FRESHNESS_MIN, DEFAULT_CONFIDENCE, BUSINESS_IMPACT, WORKFLOW_ROUTE, ENABLED)
 ) src
 ON tgt.SOURCE_KEY = src.SOURCE_KEY
 WHEN MATCHED THEN UPDATE SET
@@ -1863,16 +1863,16 @@ WHEN MATCHED THEN UPDATE SET
   TARGET_FRESHNESS_MIN = src.TARGET_FRESHNESS_MIN,
   DEFAULT_CONFIDENCE = src.DEFAULT_CONFIDENCE,
   BUSINESS_IMPACT = src.BUSINESS_IMPACT,
-  OWNER_ROUTE = src.OWNER_ROUTE,
+  WORKFLOW_ROUTE = src.WORKFLOW_ROUTE,
   ENABLED = src.ENABLED,
   UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (
   SOURCE_KEY, SOURCE_NAME, SOURCE_OBJECT, SOURCE_CLASS, SURFACE,
-  TARGET_FRESHNESS_MIN, DEFAULT_CONFIDENCE, BUSINESS_IMPACT, OWNER_ROUTE, ENABLED
+  TARGET_FRESHNESS_MIN, DEFAULT_CONFIDENCE, BUSINESS_IMPACT, WORKFLOW_ROUTE, ENABLED
 )
 VALUES (
   src.SOURCE_KEY, src.SOURCE_NAME, src.SOURCE_OBJECT, src.SOURCE_CLASS, src.SURFACE,
-  src.TARGET_FRESHNESS_MIN, src.DEFAULT_CONFIDENCE, src.BUSINESS_IMPACT, src.OWNER_ROUTE, src.ENABLED
+  src.TARGET_FRESHNESS_MIN, src.DEFAULT_CONFIDENCE, src.BUSINESS_IMPACT, src.WORKFLOW_ROUTE, src.ENABLED
 );
 
 CREATE TRANSIENT TABLE IF NOT EXISTS OVERWATCH_DATA_TRUST_STATUS (
@@ -1890,7 +1890,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS OVERWATCH_DATA_TRUST_STATUS (
   STATUS                       VARCHAR(40),
   CONFIDENCE                   VARCHAR(40),
   BUSINESS_IMPACT              VARCHAR(1000),
-  OWNER_ROUTE                  VARCHAR(200),
+  WORKFLOW_ROUTE                  VARCHAR(200),
   NEXT_ACTION                  VARCHAR(1000),
   LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
@@ -1908,64 +1908,64 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_DATA_TRUST_SUMMARY (
   VALUE_USD                    FLOAT,
   FRESHNESS_MINUTES            NUMBER,
   SOURCE_OBJECT                VARCHAR(500),
-  OWNER_ROUTE                  VARCHAR(200),
+  WORKFLOW_ROUTE                  VARCHAR(200),
   BUSINESS_IMPACT              VARCHAR(1000),
   NEXT_ACTION                  VARCHAR(1000),
   LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
-CREATE TABLE IF NOT EXISTS OVERWATCH_OPERATIONAL_OWNER_MAP (
+CREATE TABLE IF NOT EXISTS OVERWATCH_OPERATIONAL_ROUTE_MAP (
   ENTITY_TYPE                  VARCHAR(100),
   ENTITY_PATTERN               VARCHAR(500),
   COMPANY                      VARCHAR(100) DEFAULT 'ALL',
   ENVIRONMENT                  VARCHAR(100) DEFAULT 'ALL',
-  OWNER_ROUTE                  VARCHAR(200),
-  OWNER_EMAIL                  VARCHAR(500),
-  ONCALL_PRIMARY               VARCHAR(200),
-  ESCALATION_TARGET            VARCHAR(200),
+  WORKFLOW_ROUTE                  VARCHAR(200),
+  ROUTE_EMAIL                  VARCHAR(500),
+  REVIEW_PRIMARY               VARCHAR(200),
+  REVIEW_TARGET            VARCHAR(200),
   SOURCE                       VARCHAR(200),
   ACTIVE                       BOOLEAN DEFAULT TRUE,
   CREATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
   UPDATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
-MERGE INTO OVERWATCH_OPERATIONAL_OWNER_MAP tgt
+MERGE INTO OVERWATCH_OPERATIONAL_ROUTE_MAP tgt
 USING (
   SELECT * FROM VALUES
-    ('WAREHOUSE', '*', 'ALL', 'ALL', 'DBA / Cost owner', NULL, NULL, 'DBA On-Call', 'default-route', TRUE),
-    ('TASK', '*', 'ALL', 'ALL', 'DBA / Pipeline owner', NULL, NULL, 'DBA On-Call', 'default-route', TRUE),
-    ('PROCEDURE', '*', 'ALL', 'ALL', 'DBA / Workload owner', NULL, NULL, 'DBA On-Call', 'default-route', TRUE),
+    ('WAREHOUSE', '*', 'ALL', 'ALL', 'DBA / Cost attribution', NULL, NULL, 'DBA Review', 'default-route', TRUE),
+    ('TASK', '*', 'ALL', 'ALL', 'DBA / Pipeline route', NULL, NULL, 'DBA Review', 'default-route', TRUE),
+    ('PROCEDURE', '*', 'ALL', 'ALL', 'DBA / Workload reviewer', NULL, NULL, 'DBA Review', 'default-route', TRUE),
     ('USER', '*', 'ALL', 'ALL', 'IAM / Security route', NULL, NULL, 'Security On-Call', 'default-route', TRUE),
     ('ROLE', '*', 'ALL', 'ALL', 'IAM / Security route', NULL, NULL, 'Security On-Call', 'default-route', TRUE),
-    ('DATABASE', '*', 'ALL', 'ALL', 'Data owner route', NULL, NULL, 'DBA On-Call', 'default-route', TRUE),
-    ('SCHEMA', '*', 'ALL', 'ALL', 'Data owner route', NULL, NULL, 'DBA On-Call', 'default-route', TRUE),
-    ('ALERT', '*', 'ALL', 'ALL', 'DBA / Alert owner', NULL, NULL, 'DBA On-Call', 'default-route', TRUE),
-    ('ACTION', '*', 'ALL', 'ALL', 'DBA On-Call', NULL, NULL, 'DBA On-Call', 'default-route', TRUE),
-    ('CORTEX', '*', 'ALL', 'ALL', 'DBA / AI cost route', NULL, NULL, 'DBA On-Call', 'default-route', TRUE)
-  AS t(ENTITY_TYPE, ENTITY_PATTERN, COMPANY, ENVIRONMENT, OWNER_ROUTE, OWNER_EMAIL, ONCALL_PRIMARY, ESCALATION_TARGET, SOURCE, ACTIVE)
+    ('DATABASE', '*', 'ALL', 'ALL', 'Data workflow route', NULL, NULL, 'DBA Review', 'default-route', TRUE),
+    ('SCHEMA', '*', 'ALL', 'ALL', 'Data workflow route', NULL, NULL, 'DBA Review', 'default-route', TRUE),
+    ('ALERT', '*', 'ALL', 'ALL', 'DBA / Alert reviewer', NULL, NULL, 'DBA Review', 'default-route', TRUE),
+    ('ACTION', '*', 'ALL', 'ALL', 'DBA Review', NULL, NULL, 'DBA Review', 'default-route', TRUE),
+    ('CORTEX', '*', 'ALL', 'ALL', 'DBA / AI cost route', NULL, NULL, 'DBA Review', 'default-route', TRUE)
+  AS t(ENTITY_TYPE, ENTITY_PATTERN, COMPANY, ENVIRONMENT, WORKFLOW_ROUTE, ROUTE_EMAIL, REVIEW_PRIMARY, REVIEW_TARGET, SOURCE, ACTIVE)
 ) src
 ON UPPER(tgt.ENTITY_TYPE) = UPPER(src.ENTITY_TYPE)
 AND COALESCE(tgt.ENTITY_PATTERN, '*') = COALESCE(src.ENTITY_PATTERN, '*')
 AND COALESCE(tgt.COMPANY, 'ALL') = COALESCE(src.COMPANY, 'ALL')
 AND COALESCE(tgt.ENVIRONMENT, 'ALL') = COALESCE(src.ENVIRONMENT, 'ALL')
 WHEN MATCHED THEN UPDATE SET
-  OWNER_ROUTE = src.OWNER_ROUTE,
-  OWNER_EMAIL = src.OWNER_EMAIL,
-  ONCALL_PRIMARY = src.ONCALL_PRIMARY,
-  ESCALATION_TARGET = src.ESCALATION_TARGET,
+  WORKFLOW_ROUTE = src.WORKFLOW_ROUTE,
+  ROUTE_EMAIL = src.ROUTE_EMAIL,
+  REVIEW_PRIMARY = src.REVIEW_PRIMARY,
+  REVIEW_TARGET = src.REVIEW_TARGET,
   SOURCE = src.SOURCE,
   ACTIVE = src.ACTIVE,
   UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (
-  ENTITY_TYPE, ENTITY_PATTERN, COMPANY, ENVIRONMENT, OWNER_ROUTE, OWNER_EMAIL,
-  ONCALL_PRIMARY, ESCALATION_TARGET, SOURCE, ACTIVE
+  ENTITY_TYPE, ENTITY_PATTERN, COMPANY, ENVIRONMENT, WORKFLOW_ROUTE, ROUTE_EMAIL,
+  REVIEW_PRIMARY, REVIEW_TARGET, SOURCE, ACTIVE
 )
 VALUES (
-  src.ENTITY_TYPE, src.ENTITY_PATTERN, src.COMPANY, src.ENVIRONMENT, src.OWNER_ROUTE,
-  src.OWNER_EMAIL, src.ONCALL_PRIMARY, src.ESCALATION_TARGET, src.SOURCE, src.ACTIVE
+  src.ENTITY_TYPE, src.ENTITY_PATTERN, src.COMPANY, src.ENVIRONMENT, src.WORKFLOW_ROUTE,
+  src.ROUTE_EMAIL, src.REVIEW_PRIMARY, src.REVIEW_TARGET, src.SOURCE, src.ACTIVE
 );
 
-CREATE TRANSIENT TABLE IF NOT EXISTS MART_OPERATIONAL_OWNER_COVERAGE (
+CREATE TRANSIENT TABLE IF NOT EXISTS MART_OPERATIONAL_ROUTE_COVERAGE (
   SNAPSHOT_TS                  TIMESTAMP_NTZ,
   COMPANY                      VARCHAR(100),
   ENVIRONMENT                  VARCHAR(100),
@@ -1978,7 +1978,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_OPERATIONAL_OWNER_COVERAGE (
   TRUST_LEVEL                  VARCHAR(100),
   CONFIDENCE                   VARCHAR(40),
   TOP_GAP_ENTITY               VARCHAR(500),
-  OWNER_ROUTE                  VARCHAR(200),
+  WORKFLOW_ROUTE                  VARCHAR(200),
   NEXT_ACTION                  VARCHAR(1000),
   LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
@@ -1990,7 +1990,7 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_VALUE_LEDGER (
   FINDING                      VARCHAR(4000),
   ENTITY_TYPE                  VARCHAR(100),
   ENTITY_NAME                  VARCHAR(500),
-  OWNER_ROUTE                  VARCHAR(200),
+  WORKFLOW_ROUTE                  VARCHAR(200),
   STATUS                       VARCHAR(100) DEFAULT 'Proposed',
   EXPECTED_SAVINGS_USD         NUMBER(18,2) DEFAULT 0,
   ACTUAL_VERIFIED_SAVINGS_USD  NUMBER(18,2) DEFAULT 0,
@@ -2015,7 +2015,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_EXECUTIVE_VALUE_LEDGER (
   WINDOW_DAYS                  NUMBER,
   METRIC                       VARCHAR(200),
   STATUS                       VARCHAR(100),
-  OWNER_ROUTE                  VARCHAR(200),
+  WORKFLOW_ROUTE                  VARCHAR(200),
   EXPECTED_SAVINGS_USD         NUMBER(18,2),
   VERIFIED_SAVINGS_USD         NUMBER(18,2),
   UNVERIFIED_ESTIMATE_USD      NUMBER(18,2),
@@ -2079,7 +2079,7 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_PRODUCTION_CHECKLIST (
   FIRST_PAINT_SAFE             BOOLEAN DEFAULT TRUE,
   EXPLICIT_LOAD_REQUIRED       BOOLEAN DEFAULT FALSE,
   EXPECTED_STATE               VARCHAR(100),
-  OWNER_ROUTE                  VARCHAR(200),
+  WORKFLOW_ROUTE                  VARCHAR(200),
   RUNBOOK_STEP                 VARCHAR(2000),
   ENABLED                      BOOLEAN DEFAULT TRUE,
   CREATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
@@ -2093,12 +2093,12 @@ USING (
     ('VALIDATION_RUN', 'Validation', 'Production validation run recorded', 'Executive Landing', 'High', 'MART_PRODUCTION_READINESS_SUMMARY', TRUE, FALSE, 'Ready', 'DBA / Platform', 'Run OVERWATCH_MART_VALIDATION.sql after setup and after material refresh changes.', TRUE),
     ('ROLE_READINESS', 'Role Readiness', 'OVERWATCH role model reviewed', 'DBA Control Room', 'Medium', 'OVERWATCH_ROLE_READINESS_REQUIREMENT', FALSE, TRUE, 'Ready', 'Security / DBA', 'Confirm OVERWATCH_VIEWER, OVERWATCH_OPERATOR, OVERWATCH_ADMIN, and OVERWATCH_BREAKGLASS are either deployed or explicitly mapped to legacy admin roles.', TRUE),
     ('PRIVILEGE_READINESS', 'Privilege Readiness', 'Required Snowflake privileges reviewed', 'DBA Control Room', 'High', 'OVERWATCH_PRIVILEGE_READINESS_REQUIREMENT', FALSE, TRUE, 'Ready', 'Security / DBA', 'Confirm imported SNOWFLAKE privileges, warehouse usage, schema usage, table DML, view select, procedure usage, and task ownership are granted to the runtime roles.', TRUE),
-    ('REFRESH_HEALTH', 'Refresh Health', 'Mart refresh jobs healthy', 'DBA Control Room', 'High', 'OVERWATCH_LOAD_AUDIT', TRUE, TRUE, 'Ready', 'DBA On-Call', 'Review failed OVERWATCH_LOAD_AUDIT rows before trusting first-paint summaries.', TRUE),
+    ('REFRESH_HEALTH', 'Refresh Health', 'Mart refresh jobs healthy', 'DBA Control Room', 'High', 'OVERWATCH_LOAD_AUDIT', TRUE, TRUE, 'Ready', 'DBA Review', 'Review failed OVERWATCH_LOAD_AUDIT rows before trusting first-paint summaries.', TRUE),
     ('SUMMARY_MART_DATA', 'Refresh Health', 'Summary mart rows available', 'Executive Landing', 'High', 'MART_*', TRUE, FALSE, 'Ready', 'DBA / Platform', 'Run the mart refresh procedures and confirm each first-paint mart has recent rows.', TRUE),
     ('DATA_FRESHNESS', 'Data Freshness', 'Data trust sources fresh', 'Executive Landing', 'High', 'MART_DATA_TRUST_SUMMARY', TRUE, FALSE, 'Ready', 'DBA / Platform', 'Refresh stale sources or disclose telemetry lag before operational action.', TRUE),
     ('CONFIG_DRIFT', 'Configuration Drift', 'Required settings customized and present', 'DBA Control Room', 'Medium', 'OVERWATCH_SETTINGS', TRUE, TRUE, 'Ready', 'DBA / Platform', 'Review placeholder alert settings and required pricing/retention settings after deployment.', TRUE),
     ('ENVIRONMENT_READINESS', 'Environment Readiness', 'Runtime context has database/schema/warehouse/role', 'Executive Landing', 'High', 'CURRENT_CONTEXT', TRUE, FALSE, 'Ready', 'DBA / Platform', 'Confirm the app runs in the intended database, schema, warehouse, and role context.', TRUE)
-  AS t(CHECK_KEY, CHECK_DOMAIN, CHECK_NAME, SURFACE, SEVERITY, REQUIRED_OBJECT, FIRST_PAINT_SAFE, EXPLICIT_LOAD_REQUIRED, EXPECTED_STATE, OWNER_ROUTE, RUNBOOK_STEP, ENABLED)
+  AS t(CHECK_KEY, CHECK_DOMAIN, CHECK_NAME, SURFACE, SEVERITY, REQUIRED_OBJECT, FIRST_PAINT_SAFE, EXPLICIT_LOAD_REQUIRED, EXPECTED_STATE, WORKFLOW_ROUTE, RUNBOOK_STEP, ENABLED)
 ) src
 ON tgt.CHECK_KEY = src.CHECK_KEY
 WHEN MATCHED THEN UPDATE SET
@@ -2110,18 +2110,18 @@ WHEN MATCHED THEN UPDATE SET
   FIRST_PAINT_SAFE = src.FIRST_PAINT_SAFE,
   EXPLICIT_LOAD_REQUIRED = src.EXPLICIT_LOAD_REQUIRED,
   EXPECTED_STATE = src.EXPECTED_STATE,
-  OWNER_ROUTE = src.OWNER_ROUTE,
+  WORKFLOW_ROUTE = src.WORKFLOW_ROUTE,
   RUNBOOK_STEP = src.RUNBOOK_STEP,
   ENABLED = src.ENABLED,
   UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (
   CHECK_KEY, CHECK_DOMAIN, CHECK_NAME, SURFACE, SEVERITY, REQUIRED_OBJECT,
-  FIRST_PAINT_SAFE, EXPLICIT_LOAD_REQUIRED, EXPECTED_STATE, OWNER_ROUTE, RUNBOOK_STEP, ENABLED
+  FIRST_PAINT_SAFE, EXPLICIT_LOAD_REQUIRED, EXPECTED_STATE, WORKFLOW_ROUTE, RUNBOOK_STEP, ENABLED
 )
 VALUES (
   src.CHECK_KEY, src.CHECK_DOMAIN, src.CHECK_NAME, src.SURFACE, src.SEVERITY,
   src.REQUIRED_OBJECT, src.FIRST_PAINT_SAFE, src.EXPLICIT_LOAD_REQUIRED,
-  src.EXPECTED_STATE, src.OWNER_ROUTE, src.RUNBOOK_STEP, src.ENABLED
+  src.EXPECTED_STATE, src.WORKFLOW_ROUTE, src.RUNBOOK_STEP, src.ENABLED
 );
 
 CREATE TABLE IF NOT EXISTS OVERWATCH_ROLE_READINESS_REQUIREMENT (
@@ -2131,7 +2131,7 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_ROLE_READINESS_REQUIREMENT (
   REQUIRED                     BOOLEAN DEFAULT TRUE,
   LEGACY_COMPAT                BOOLEAN DEFAULT FALSE,
   CHECK_METHOD                 VARCHAR(1000),
-  OWNER_ROUTE                  VARCHAR(200),
+  WORKFLOW_ROUTE                  VARCHAR(200),
   ENABLED                      BOOLEAN DEFAULT TRUE,
   CREATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
   UPDATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
@@ -2146,7 +2146,7 @@ USING (
     ('OVERWATCH_BREAKGLASS', 'Target', 'Emergency DBA intervention with explicit audit trail', FALSE, FALSE, 'SHOW ROLES LIKE ''OVERWATCH_BREAKGLASS''; verify it is disabled or tightly controlled until approved.', 'Security / DBA', TRUE),
     ('SNOW_SYSADMINS', 'Legacy Compatibility', 'Legacy admin compatibility during transition', FALSE, TRUE, 'Confirm SNOW_SYSADMINS remains intentionally mapped while OVERWATCH roles are adopted.', 'Security / DBA', TRUE),
     ('SNOW_ACCOUNTADMINS', 'Legacy Compatibility', 'Legacy account-admin compatibility during transition', FALSE, TRUE, 'Confirm SNOW_ACCOUNTADMINS remains intentionally mapped while OVERWATCH roles are adopted.', 'Security / DBA', TRUE)
-  AS t(ROLE_NAME, ROLE_CLASS, REQUIRED_FOR, REQUIRED, LEGACY_COMPAT, CHECK_METHOD, OWNER_ROUTE, ENABLED)
+  AS t(ROLE_NAME, ROLE_CLASS, REQUIRED_FOR, REQUIRED, LEGACY_COMPAT, CHECK_METHOD, WORKFLOW_ROUTE, ENABLED)
 ) src
 ON UPPER(tgt.ROLE_NAME) = UPPER(src.ROLE_NAME)
 WHEN MATCHED THEN UPDATE SET
@@ -2155,15 +2155,15 @@ WHEN MATCHED THEN UPDATE SET
   REQUIRED = src.REQUIRED,
   LEGACY_COMPAT = src.LEGACY_COMPAT,
   CHECK_METHOD = src.CHECK_METHOD,
-  OWNER_ROUTE = src.OWNER_ROUTE,
+  WORKFLOW_ROUTE = src.WORKFLOW_ROUTE,
   ENABLED = src.ENABLED,
   UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (
-  ROLE_NAME, ROLE_CLASS, REQUIRED_FOR, REQUIRED, LEGACY_COMPAT, CHECK_METHOD, OWNER_ROUTE, ENABLED
+  ROLE_NAME, ROLE_CLASS, REQUIRED_FOR, REQUIRED, LEGACY_COMPAT, CHECK_METHOD, WORKFLOW_ROUTE, ENABLED
 )
 VALUES (
   src.ROLE_NAME, src.ROLE_CLASS, src.REQUIRED_FOR, src.REQUIRED, src.LEGACY_COMPAT,
-  src.CHECK_METHOD, src.OWNER_ROUTE, src.ENABLED
+  src.CHECK_METHOD, src.WORKFLOW_ROUTE, src.ENABLED
 );
 
 CREATE TABLE IF NOT EXISTS OVERWATCH_PRIVILEGE_READINESS_REQUIREMENT (
@@ -2174,7 +2174,7 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_PRIVILEGE_READINESS_REQUIREMENT (
   REQUIRED_FOR                 VARCHAR(1000),
   REQUIRED                     BOOLEAN DEFAULT TRUE,
   CHECK_METHOD                 VARCHAR(1000),
-  OWNER_ROUTE                  VARCHAR(200),
+  WORKFLOW_ROUTE                  VARCHAR(200),
   REMEDIATION_HINT             VARCHAR(2000),
   ENABLED                      BOOLEAN DEFAULT TRUE,
   CREATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
@@ -2192,7 +2192,7 @@ USING (
     ('APP_ACTION_DML', 'OVERWATCH_ACTION_QUEUE', 'TABLE', 'INSERT, UPDATE', 'Review-gated action, value, and alert workflow updates', TRUE, 'SHOW GRANTS ON TABLE OVERWATCH_ACTION_QUEUE;', 'Security / DBA', 'Grant DML only to operator/admin roles that own review workflows.', TRUE),
     ('APP_PROCEDURE_USAGE', 'SP_OVERWATCH_*', 'PROCEDURE', 'USAGE', 'Manual and scheduled mart refresh procedures', TRUE, 'SHOW PROCEDURES LIKE ''SP_OVERWATCH_%''; SHOW GRANTS TO ROLE <role_name>;', 'Security / DBA', 'Grant procedure usage to approved refresh/admin roles only.', TRUE),
     ('APP_TASK_OPERATE', 'OVERWATCH_*', 'TASK', 'OPERATE/OWNERSHIP', 'Scheduled mart health and recovery', TRUE, 'SHOW TASKS IN SCHEMA; SHOW GRANTS TO ROLE <role_name>;', 'Security / DBA', 'Keep task ownership with the DBA/admin role; do not grant broad task control to viewers.', TRUE)
-  AS t(PRIVILEGE_KEY, OBJECT_NAME, OBJECT_TYPE, REQUIRED_PRIVILEGE, REQUIRED_FOR, REQUIRED, CHECK_METHOD, OWNER_ROUTE, REMEDIATION_HINT, ENABLED)
+  AS t(PRIVILEGE_KEY, OBJECT_NAME, OBJECT_TYPE, REQUIRED_PRIVILEGE, REQUIRED_FOR, REQUIRED, CHECK_METHOD, WORKFLOW_ROUTE, REMEDIATION_HINT, ENABLED)
 ) src
 ON tgt.PRIVILEGE_KEY = src.PRIVILEGE_KEY
 WHEN MATCHED THEN UPDATE SET
@@ -2202,17 +2202,17 @@ WHEN MATCHED THEN UPDATE SET
   REQUIRED_FOR = src.REQUIRED_FOR,
   REQUIRED = src.REQUIRED,
   CHECK_METHOD = src.CHECK_METHOD,
-  OWNER_ROUTE = src.OWNER_ROUTE,
+  WORKFLOW_ROUTE = src.WORKFLOW_ROUTE,
   REMEDIATION_HINT = src.REMEDIATION_HINT,
   ENABLED = src.ENABLED,
   UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (
   PRIVILEGE_KEY, OBJECT_NAME, OBJECT_TYPE, REQUIRED_PRIVILEGE, REQUIRED_FOR,
-  REQUIRED, CHECK_METHOD, OWNER_ROUTE, REMEDIATION_HINT, ENABLED
+  REQUIRED, CHECK_METHOD, WORKFLOW_ROUTE, REMEDIATION_HINT, ENABLED
 )
 VALUES (
   src.PRIVILEGE_KEY, src.OBJECT_NAME, src.OBJECT_TYPE, src.REQUIRED_PRIVILEGE,
-  src.REQUIRED_FOR, src.REQUIRED, src.CHECK_METHOD, src.OWNER_ROUTE,
+  src.REQUIRED_FOR, src.REQUIRED, src.CHECK_METHOD, src.WORKFLOW_ROUTE,
   src.REMEDIATION_HINT, src.ENABLED
 );
 
@@ -2229,7 +2229,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS OVERWATCH_PRODUCTION_VALIDATION_STATUS (
   VALUE_DETAIL                 VARCHAR(4000),
   SOURCE_OBJECT                VARCHAR(500),
   FRESHNESS_MINUTES            NUMBER,
-  OWNER_ROUTE                  VARCHAR(200),
+  WORKFLOW_ROUTE                  VARCHAR(200),
   RUNBOOK_STEP                 VARCHAR(2000),
   CONFIDENCE                   VARCHAR(40),
   LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
@@ -2267,7 +2267,7 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_EXECUTIVE_SCORECARD_CONFIG (
   SCORE_DOMAIN                 VARCHAR(100),
   RED_BELOW                    NUMBER DEFAULT 70,
   YELLOW_BELOW                 NUMBER DEFAULT 85,
-  OWNER_ROUTE                  VARCHAR(200),
+  WORKFLOW_ROUTE                  VARCHAR(200),
   DRIVER_SOURCE                VARCHAR(1000),
   RECOMMENDED_ACTION           VARCHAR(1000),
   ENABLED                      BOOLEAN DEFAULT TRUE,
@@ -2279,12 +2279,12 @@ MERGE INTO OVERWATCH_EXECUTIVE_SCORECARD_CONFIG tgt
 USING (
   SELECT * FROM VALUES
     ('SNOWFLAKE_HEALTH', 'Snowflake Health Score', 10, 'Platform Health', 70, 85, 'DBA / Platform', 'MART_DBA_CONTROL_ROOM; MART_APP_OBSERVABILITY_SUMMARY; MART_PRODUCTION_READINESS_SUMMARY', 'Open DBA Control Room and resolve failed refresh, app health, or control-room blocker rows.', TRUE),
-    ('COST_EFFICIENCY', 'Cost Efficiency Score', 20, 'Cost', 70, 85, 'DBA / Cost owner', 'FACT_COST_MONITORING_SIGNAL; ALERT_EVENTS; MART_EXECUTIVE_VALUE_LEDGER', 'Open Cost & Contract, explain top cost drivers, and route verified savings work.', TRUE),
-    ('SECURITY', 'Security Score', 30, 'Security', 75, 88, 'Security / DBA', 'ALERT_EVENTS; MART_OPERATIONAL_OWNER_COVERAGE', 'Open Security Monitoring and review privileged, access, ownership, and route-gap drivers.', TRUE),
-    ('OPERATIONAL_RISK', 'Operational Risk Score', 40, 'Operations', 70, 85, 'DBA On-Call', 'ALERT_EVENTS; MART_OPERATIONAL_OWNER_COVERAGE; OVERWATCH_ACTION_QUEUE', 'Open Alert Center and DBA Control Room to assign owner, SLA, and next action.', TRUE),
+    ('COST_EFFICIENCY', 'Cost Efficiency Score', 20, 'Cost', 70, 85, 'DBA / Cost attribution', 'FACT_COST_MONITORING_SIGNAL; ALERT_EVENTS; MART_EXECUTIVE_VALUE_LEDGER', 'Open Cost & Contract, explain top cost drivers, and route verified savings work.', TRUE),
+    ('SECURITY', 'Security Score', 30, 'Security', 75, 88, 'Security / DBA', 'ALERT_EVENTS; MART_OPERATIONAL_ROUTE_COVERAGE', 'Open Security Monitoring and review privileged, access, ownership, and route-gap drivers.', TRUE),
+    ('OPERATIONAL_RISK', 'Operational Risk Score', 40, 'Operations', 70, 85, 'DBA Review', 'ALERT_EVENTS; MART_OPERATIONAL_ROUTE_COVERAGE; OVERWATCH_ACTION_QUEUE', 'Open Alert Center and DBA Control Room to assign route, SLA, and next action.', TRUE),
     ('DATA_TRUST', 'Data Trust Score', 50, 'Data Trust', 75, 90, 'DBA / Platform', 'MART_DATA_TRUST_SUMMARY', 'Open DBA Control Room data trust diagnostics and refresh stale source marts.', TRUE),
     ('PRODUCTION_READINESS', 'Production Readiness Score', 60, 'Production Readiness', 75, 90, 'DBA / Platform', 'MART_PRODUCTION_READINESS_SUMMARY; OVERWATCH_PRODUCTION_VALIDATION_STATUS', 'Open DBA Control Room production readiness validation before expanding usage.', TRUE)
-  AS t(SCORE_KEY, SCORE_NAME, DISPLAY_ORDER, SCORE_DOMAIN, RED_BELOW, YELLOW_BELOW, OWNER_ROUTE, DRIVER_SOURCE, RECOMMENDED_ACTION, ENABLED)
+  AS t(SCORE_KEY, SCORE_NAME, DISPLAY_ORDER, SCORE_DOMAIN, RED_BELOW, YELLOW_BELOW, WORKFLOW_ROUTE, DRIVER_SOURCE, RECOMMENDED_ACTION, ENABLED)
 ) src
 ON tgt.SCORE_KEY = src.SCORE_KEY
 WHEN MATCHED THEN UPDATE SET
@@ -2293,18 +2293,18 @@ WHEN MATCHED THEN UPDATE SET
   SCORE_DOMAIN = src.SCORE_DOMAIN,
   RED_BELOW = src.RED_BELOW,
   YELLOW_BELOW = src.YELLOW_BELOW,
-  OWNER_ROUTE = src.OWNER_ROUTE,
+  WORKFLOW_ROUTE = src.WORKFLOW_ROUTE,
   DRIVER_SOURCE = src.DRIVER_SOURCE,
   RECOMMENDED_ACTION = src.RECOMMENDED_ACTION,
   ENABLED = src.ENABLED,
   UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (
   SCORE_KEY, SCORE_NAME, DISPLAY_ORDER, SCORE_DOMAIN, RED_BELOW, YELLOW_BELOW,
-  OWNER_ROUTE, DRIVER_SOURCE, RECOMMENDED_ACTION, ENABLED
+  WORKFLOW_ROUTE, DRIVER_SOURCE, RECOMMENDED_ACTION, ENABLED
 )
 VALUES (
   src.SCORE_KEY, src.SCORE_NAME, src.DISPLAY_ORDER, src.SCORE_DOMAIN,
-  src.RED_BELOW, src.YELLOW_BELOW, src.OWNER_ROUTE, src.DRIVER_SOURCE,
+  src.RED_BELOW, src.YELLOW_BELOW, src.WORKFLOW_ROUTE, src.DRIVER_SOURCE,
   src.RECOMMENDED_ACTION, src.ENABLED
 );
 
@@ -2321,8 +2321,8 @@ CREATE TRANSIENT TABLE IF NOT EXISTS OVERWATCH_EXECUTIVE_SCORECARD_HISTORY (
   RISK_LEVEL                   VARCHAR(40),
   TOP_DRIVER                   VARCHAR(2000),
   RECOMMENDED_ACTION           VARCHAR(2000),
-  OWNER_ROUTE                  VARCHAR(200),
-  OWNER_GAP                    BOOLEAN DEFAULT FALSE,
+  WORKFLOW_ROUTE                  VARCHAR(200),
+  WORKFLOW_GAP                    BOOLEAN DEFAULT FALSE,
   VALUE_AT_RISK_USD            NUMBER(18,2) DEFAULT 0,
   CONFIDENCE                   VARCHAR(40),
   SOURCE_OBJECTS               VARCHAR(1000),
@@ -2344,8 +2344,8 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_EXECUTIVE_SCORECARD_SUMMARY (
   RISK_LEVEL                   VARCHAR(40),
   TOP_DRIVER                   VARCHAR(2000),
   RECOMMENDED_ACTION           VARCHAR(2000),
-  OWNER_ROUTE                  VARCHAR(200),
-  OWNER_GAP                    BOOLEAN DEFAULT FALSE,
+  WORKFLOW_ROUTE                  VARCHAR(200),
+  WORKFLOW_GAP                    BOOLEAN DEFAULT FALSE,
   VALUE_AT_RISK_USD            NUMBER(18,2) DEFAULT 0,
   CONFIDENCE                   VARCHAR(40),
   SOURCE_OBJECTS               VARCHAR(1000),
@@ -2363,7 +2363,7 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_FORECAST_CONFIG (
   DISPLAY_ORDER                NUMBER,
   FORECAST_DOMAIN              VARCHAR(100),
   VALUE_UNIT                   VARCHAR(40),
-  OWNER_ROUTE                  VARCHAR(200),
+  WORKFLOW_ROUTE                  VARCHAR(200),
   SOURCE_OBJECTS               VARCHAR(1000),
   METHODOLOGY                  VARCHAR(4000),
   RECOMMENDED_ACTION           VARCHAR(2000),
@@ -2376,16 +2376,16 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_FORECAST_CONFIG (
 MERGE INTO OVERWATCH_FORECAST_CONFIG tgt
 USING (
   SELECT * FROM VALUES
-    ('EOM_SPEND', 'End-of-month Snowflake spend forecast', 10, 'Cost', 'USD', 'DBA / Cost owner', 'FACT_COST_DAILY; FACT_CORTEX_DAILY', 'Month-to-date observed spend plus average observed daily spend projected through month end.', 'Open Cost & Contract, explain the top spend drivers, and route owner-backed cost actions.', 'High >= 14 observed days, Medium >= 7 observed days, otherwise Low.', TRUE),
-    ('EOQ_SPEND', 'End-of-quarter spend forecast', 20, 'Cost', 'USD', 'DBA / Cost owner', 'FACT_COST_DAILY; FACT_CORTEX_DAILY', 'Quarter-to-date observed spend plus average observed daily spend projected through quarter end.', 'Review quarter run-rate, contract exposure, and cost action queue before the next operating review.', 'High >= 30 observed quarter days, Medium >= 14 observed quarter days, otherwise Low.', TRUE),
-    ('CONTRACT_BURN', 'Contract burn projection', 30, 'Cost', 'percent', 'DBA / Contract owner', 'FACT_COST_DAILY; FACT_CORTEX_DAILY; OVERWATCH_SETTINGS', 'Projected quarter spend divided by configured contract or budget target.', 'Set or validate contract targets, then route spend above target to Cost & Contract ownership.', 'Low when no contract target is configured; otherwise follows quarter spend confidence.', TRUE),
-    ('CREDIT_ANOMALY', 'Credit anomaly projection', 40, 'Cost', 'percent', 'DBA / Cost owner', 'FACT_COST_DAILY; FACT_CORTEX_DAILY', 'Recent seven-day credit burn compared with the 30-day daily credit baseline.', 'Investigate warehouses, users, or Cortex demand causing recent credit burn to diverge from baseline.', 'High >= 21 observed baseline days, Medium >= 10 baseline days, otherwise Low.', TRUE),
-    ('STORAGE_GROWTH', 'Storage growth forecast', 50, 'Storage', 'TB', 'DBA / Data owner', 'FACT_STORAGE_DAILY', 'Latest storage footprint plus recent daily storage growth projected 30 days forward.', 'Review database/storage owners, retention, stage cleanup, and archive policy for rising storage.', 'High >= 21 days of storage trend, Medium >= 7 days, otherwise Low.', TRUE),
-    ('WAREHOUSE_PRESSURE', 'Warehouse saturation / queue pressure forecast', 60, 'Workload', 'seconds', 'DBA / Workload owner', 'FACT_QUERY_HOURLY', 'Last seven days of queue pressure adjusted by movement versus the prior seven days.', 'Open Workload Operations and review warehouse sizing, queue, spill, and concurrency drivers.', 'High >= 500 recent queries, Medium >= 100 recent queries, otherwise Low.', TRUE),
-    ('SLA_RISK', 'SLA risk forecast', 70, 'Operations', 'count', 'DBA On-Call', 'FACT_TASK_RUN; FACT_PROCEDURE_RUN', 'Recent task and procedure failures projected into the next seven-day operating window.', 'Open Workload Operations and assign owners for late, failed, or retrying task/procedure chains.', 'High >= 10 recent incidents, Medium >= 3 recent incidents, otherwise Low.', TRUE)
+    ('EOM_SPEND', 'End-of-month Snowflake spend forecast', 10, 'Cost', 'USD', 'DBA / Cost attribution', 'FACT_COST_DAILY; FACT_CORTEX_DAILY', 'Month-to-date observed spend plus average observed daily spend projected through month end.', 'Open Cost & Contract, explain the top spend drivers, and route route-backed cost actions.', 'High >= 14 observed days, Medium >= 7 observed days, otherwise Low.', TRUE),
+    ('EOQ_SPEND', 'End-of-quarter spend forecast', 20, 'Cost', 'USD', 'DBA / Cost attribution', 'FACT_COST_DAILY; FACT_CORTEX_DAILY', 'Quarter-to-date observed spend plus average observed daily spend projected through quarter end.', 'Review quarter run-rate, contract exposure, and cost action queue before the next operating review.', 'High >= 30 observed quarter days, Medium >= 14 observed quarter days, otherwise Low.', TRUE),
+    ('CONTRACT_BURN', 'Contract burn projection', 30, 'Cost', 'percent', 'DBA / Contract route', 'FACT_COST_DAILY; FACT_CORTEX_DAILY; OVERWATCH_SETTINGS', 'Projected quarter spend divided by configured contract or budget target.', 'Set or validate contract targets, then route spend above target to Cost & Contract ownership.', 'Low when no contract target is configured; otherwise follows quarter spend confidence.', TRUE),
+    ('CREDIT_ANOMALY', 'Credit anomaly projection', 40, 'Cost', 'percent', 'DBA / Cost attribution', 'FACT_COST_DAILY; FACT_CORTEX_DAILY', 'Recent seven-day credit burn compared with the 30-day daily credit baseline.', 'Investigate warehouses, users, or Cortex demand causing recent credit burn to diverge from baseline.', 'High >= 21 observed baseline days, Medium >= 10 baseline days, otherwise Low.', TRUE),
+    ('STORAGE_GROWTH', 'Storage growth forecast', 50, 'Storage', 'TB', 'DBA / Data reviewer', 'FACT_STORAGE_DAILY', 'Latest storage footprint plus recent daily storage growth projected 30 days forward.', 'Review database/storage owners, retention, stage cleanup, and archive policy for rising storage.', 'High >= 21 days of storage trend, Medium >= 7 days, otherwise Low.', TRUE),
+    ('WAREHOUSE_PRESSURE', 'Warehouse saturation / queue pressure forecast', 60, 'Workload', 'seconds', 'DBA / Workload reviewer', 'FACT_QUERY_HOURLY', 'Last seven days of queue pressure adjusted by movement versus the prior seven days.', 'Open Workload Operations and review warehouse sizing, queue, spill, and concurrency drivers.', 'High >= 500 recent queries, Medium >= 100 recent queries, otherwise Low.', TRUE),
+    ('SLA_RISK', 'SLA risk forecast', 70, 'Operations', 'count', 'DBA Review', 'FACT_TASK_RUN; FACT_PROCEDURE_RUN', 'Recent task and procedure failures projected into the next seven-day operating window.', 'Open Workload Operations and assign owners for late, failed, or retrying task/procedure chains.', 'High >= 10 recent incidents, Medium >= 3 recent incidents, otherwise Low.', TRUE)
   AS t(
     FORECAST_KEY, FORECAST_NAME, DISPLAY_ORDER, FORECAST_DOMAIN, VALUE_UNIT,
-    OWNER_ROUTE, SOURCE_OBJECTS, METHODOLOGY, RECOMMENDED_ACTION,
+    WORKFLOW_ROUTE, SOURCE_OBJECTS, METHODOLOGY, RECOMMENDED_ACTION,
     CONFIDENCE_RULE, ENABLED
   )
 ) src
@@ -2395,7 +2395,7 @@ WHEN MATCHED THEN UPDATE SET
   DISPLAY_ORDER = src.DISPLAY_ORDER,
   FORECAST_DOMAIN = src.FORECAST_DOMAIN,
   VALUE_UNIT = src.VALUE_UNIT,
-  OWNER_ROUTE = src.OWNER_ROUTE,
+  WORKFLOW_ROUTE = src.WORKFLOW_ROUTE,
   SOURCE_OBJECTS = src.SOURCE_OBJECTS,
   METHODOLOGY = src.METHODOLOGY,
   RECOMMENDED_ACTION = src.RECOMMENDED_ACTION,
@@ -2404,12 +2404,12 @@ WHEN MATCHED THEN UPDATE SET
   UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (
   FORECAST_KEY, FORECAST_NAME, DISPLAY_ORDER, FORECAST_DOMAIN, VALUE_UNIT,
-  OWNER_ROUTE, SOURCE_OBJECTS, METHODOLOGY, RECOMMENDED_ACTION,
+  WORKFLOW_ROUTE, SOURCE_OBJECTS, METHODOLOGY, RECOMMENDED_ACTION,
   CONFIDENCE_RULE, ENABLED
 )
 VALUES (
   src.FORECAST_KEY, src.FORECAST_NAME, src.DISPLAY_ORDER, src.FORECAST_DOMAIN,
-  src.VALUE_UNIT, src.OWNER_ROUTE, src.SOURCE_OBJECTS, src.METHODOLOGY,
+  src.VALUE_UNIT, src.WORKFLOW_ROUTE, src.SOURCE_OBJECTS, src.METHODOLOGY,
   src.RECOMMENDED_ACTION, src.CONFIDENCE_RULE, src.ENABLED
 );
 
@@ -2428,8 +2428,8 @@ CREATE TRANSIENT TABLE IF NOT EXISTS OVERWATCH_FORECAST_HISTORY (
   METHODOLOGY                  VARCHAR(4000),
   MAIN_DRIVER                  VARCHAR(2000),
   RECOMMENDED_ACTION           VARCHAR(2000),
-  OWNER_ROUTE                  VARCHAR(200),
-  OWNER_GAP                    BOOLEAN DEFAULT FALSE,
+  WORKFLOW_ROUTE                  VARCHAR(200),
+  WORKFLOW_GAP                    BOOLEAN DEFAULT FALSE,
   VALUE_UNIT                   VARCHAR(40),
   VALUE_AT_RISK_USD            NUMBER(18,2) DEFAULT 0,
   SOURCE_OBJECTS               VARCHAR(1000),
@@ -2453,8 +2453,8 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_EXECUTIVE_FORECAST_SUMMARY (
   METHODOLOGY                  VARCHAR(4000),
   MAIN_DRIVER                  VARCHAR(2000),
   RECOMMENDED_ACTION           VARCHAR(2000),
-  OWNER_ROUTE                  VARCHAR(200),
-  OWNER_GAP                    BOOLEAN DEFAULT FALSE,
+  WORKFLOW_ROUTE                  VARCHAR(200),
+  WORKFLOW_GAP                    BOOLEAN DEFAULT FALSE,
   VALUE_UNIT                   VARCHAR(40),
   VALUE_AT_RISK_USD            NUMBER(18,2) DEFAULT 0,
   SOURCE_OBJECTS               VARCHAR(1000),
@@ -2472,7 +2472,7 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_CHANGE_RULE (
   OBJECT_TYPE                  VARCHAR(100),
   RISK_LEVEL                   VARCHAR(40),
   BUSINESS_IMPACT              VARCHAR(2000),
-  OWNER_ROUTE                  VARCHAR(200),
+  WORKFLOW_ROUTE                  VARCHAR(200),
   CONFIDENCE                   VARCHAR(40),
   SOURCE_OBJECTS               VARCHAR(1000),
   MATCH_HINT                   VARCHAR(1000),
@@ -2484,16 +2484,16 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_CHANGE_RULE (
 MERGE INTO OVERWATCH_CHANGE_RULE tgt
 USING (
   SELECT * FROM VALUES
-    ('WAREHOUSE_CHANGE', 'Warehouse changes', 'WAREHOUSE', 'Medium', 'Warehouse setting changes can alter cost, queueing, auto-suspend, timeout, and workload behavior.', 'DBA / Cost owner', 'allocated', 'FACT_OBJECT_CHANGE; FACT_COST_MONITORING_SIGNAL; ALERT_EVENTS', 'WAREHOUSE keywords in object-change telemetry', TRUE),
+    ('WAREHOUSE_CHANGE', 'Warehouse changes', 'WAREHOUSE', 'Medium', 'Warehouse setting changes can alter cost, queueing, auto-suspend, timeout, and workload behavior.', 'DBA / Cost attribution', 'allocated', 'FACT_OBJECT_CHANGE; FACT_COST_MONITORING_SIGNAL; ALERT_EVENTS', 'WAREHOUSE keywords in object-change telemetry', TRUE),
     ('ROLE_CHANGE', 'Role changes', 'ROLE', 'High', 'Role changes can alter access boundaries and incident blast radius.', 'IAM / Security route', 'allocated', 'FACT_OBJECT_CHANGE; FACT_GRANT_DAILY; ALERT_EVENTS', 'ROLE keywords or role grants', TRUE),
     ('GRANT_CHANGE', 'Grant changes', 'GRANT', 'High', 'Grant changes can introduce privilege drift, access exceptions, or audit findings.', 'IAM / Security route', 'allocated', 'FACT_GRANT_DAILY; FACT_OBJECT_CHANGE; ALERT_EVENTS', 'GRANT or REVOKE telemetry', TRUE),
-    ('TASK_CHANGE', 'Task changes', 'TASK', 'Medium', 'Task changes can affect pipeline freshness, downstream SLA, and orchestration reliability.', 'DBA / Pipeline owner', 'estimated', 'FACT_OBJECT_CHANGE; DIM_TASK_SNAPSHOT; FACT_TASK_RUN; ALERT_EVENTS', 'TASK keywords or task snapshots', TRUE),
-    ('PROCEDURE_CHANGE', 'Procedure changes', 'PROCEDURE', 'Medium', 'Procedure changes can alter workload behavior, stored procedure cost, and downstream task outcomes.', 'DBA / Workload owner', 'estimated', 'FACT_OBJECT_CHANGE; DIM_PROCEDURE_SNAPSHOT; FACT_PROCEDURE_RUN; ALERT_EVENTS', 'PROCEDURE keywords or procedure snapshots', TRUE),
+    ('TASK_CHANGE', 'Task changes', 'TASK', 'Medium', 'Task changes can affect pipeline freshness, downstream SLA, and orchestration reliability.', 'DBA / Pipeline route', 'estimated', 'FACT_OBJECT_CHANGE; DIM_TASK_SNAPSHOT; FACT_TASK_RUN; ALERT_EVENTS', 'TASK keywords or task snapshots', TRUE),
+    ('PROCEDURE_CHANGE', 'Procedure changes', 'PROCEDURE', 'Medium', 'Procedure changes can alter workload behavior, stored procedure cost, and downstream task outcomes.', 'DBA / Workload reviewer', 'estimated', 'FACT_OBJECT_CHANGE; DIM_PROCEDURE_SNAPSHOT; FACT_PROCEDURE_RUN; ALERT_EVENTS', 'PROCEDURE keywords or procedure snapshots', TRUE),
     ('NETWORK_POLICY_CHANGE', 'Network policy changes', 'NETWORK POLICY', 'High', 'Network policy changes can affect access controls and connectivity posture.', 'Security / DBA', 'allocated', 'FACT_OBJECT_CHANGE; ALERT_EVENTS', 'NETWORK POLICY keywords', TRUE),
     ('INTEGRATION_CHANGE', 'Integration changes', 'INTEGRATION', 'High', 'Integration changes can affect external access, storage integration, notification, or data movement paths.', 'Security / Platform', 'allocated', 'FACT_OBJECT_CHANGE; ALERT_EVENTS', 'INTEGRATION keywords', TRUE),
-    ('OBJECT_CHANGE', 'Database/schema/object changes', 'OBJECT', 'Medium', 'Object changes can break dependent workloads, alter data contracts, or explain incident timing.', 'Data owner route', 'allocated', 'FACT_OBJECT_CHANGE; ALERT_EVENTS', 'DATABASE, SCHEMA, TABLE, VIEW, or object DDL keywords', TRUE),
+    ('OBJECT_CHANGE', 'Database/schema/object changes', 'OBJECT', 'Medium', 'Object changes can break dependent workloads, alter data contracts, or explain incident timing.', 'Data workflow route', 'allocated', 'FACT_OBJECT_CHANGE; ALERT_EVENTS', 'DATABASE, SCHEMA, TABLE, VIEW, or object DDL keywords', TRUE),
     ('SECURITY_SENSITIVE_CHANGE', 'Security-sensitive changes', 'SECURITY', 'Critical', 'Security-sensitive changes require audit review because they may alter privileged access or exposure.', 'Security / DBA', 'allocated', 'FACT_OBJECT_CHANGE; FACT_GRANT_DAILY; ALERT_EVENTS', 'SECURITY, POLICY, INTEGRATION, OWNERSHIP, ADMIN, or privileged grant keywords', TRUE)
-  AS t(CHANGE_TYPE, CHANGE_CATEGORY, OBJECT_TYPE, RISK_LEVEL, BUSINESS_IMPACT, OWNER_ROUTE, CONFIDENCE, SOURCE_OBJECTS, MATCH_HINT, ENABLED)
+  AS t(CHANGE_TYPE, CHANGE_CATEGORY, OBJECT_TYPE, RISK_LEVEL, BUSINESS_IMPACT, WORKFLOW_ROUTE, CONFIDENCE, SOURCE_OBJECTS, MATCH_HINT, ENABLED)
 ) src
 ON tgt.CHANGE_TYPE = src.CHANGE_TYPE
 WHEN MATCHED THEN UPDATE SET
@@ -2501,7 +2501,7 @@ WHEN MATCHED THEN UPDATE SET
   OBJECT_TYPE = src.OBJECT_TYPE,
   RISK_LEVEL = src.RISK_LEVEL,
   BUSINESS_IMPACT = src.BUSINESS_IMPACT,
-  OWNER_ROUTE = src.OWNER_ROUTE,
+  WORKFLOW_ROUTE = src.WORKFLOW_ROUTE,
   CONFIDENCE = src.CONFIDENCE,
   SOURCE_OBJECTS = src.SOURCE_OBJECTS,
   MATCH_HINT = src.MATCH_HINT,
@@ -2509,11 +2509,11 @@ WHEN MATCHED THEN UPDATE SET
   UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (
   CHANGE_TYPE, CHANGE_CATEGORY, OBJECT_TYPE, RISK_LEVEL, BUSINESS_IMPACT,
-  OWNER_ROUTE, CONFIDENCE, SOURCE_OBJECTS, MATCH_HINT, ENABLED
+  WORKFLOW_ROUTE, CONFIDENCE, SOURCE_OBJECTS, MATCH_HINT, ENABLED
 )
 VALUES (
   src.CHANGE_TYPE, src.CHANGE_CATEGORY, src.OBJECT_TYPE, src.RISK_LEVEL,
-  src.BUSINESS_IMPACT, src.OWNER_ROUTE, src.CONFIDENCE, src.SOURCE_OBJECTS,
+  src.BUSINESS_IMPACT, src.WORKFLOW_ROUTE, src.CONFIDENCE, src.SOURCE_OBJECTS,
   src.MATCH_HINT, src.ENABLED
 );
 
@@ -2532,8 +2532,8 @@ CREATE TRANSIENT TABLE IF NOT EXISTS OVERWATCH_CHANGE_EVENT (
   AFTER_VALUE                  VARCHAR(4000),
   RISK_LEVEL                   VARCHAR(40),
   BUSINESS_IMPACT              VARCHAR(2000),
-  OWNER_ROUTE                  VARCHAR(200),
-  OWNER_GAP                    BOOLEAN DEFAULT FALSE,
+  WORKFLOW_ROUTE                  VARCHAR(200),
+  WORKFLOW_GAP                    BOOLEAN DEFAULT FALSE,
   RELATED_ALERT_COUNT          NUMBER DEFAULT 0,
   RELATED_INCIDENTS            VARCHAR(4000),
   CONFIDENCE                   VARCHAR(40),
@@ -2562,7 +2562,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS OVERWATCH_CHANGE_CORRELATION (
   CORRELATION_LABEL            VARCHAR(100),
   RISK_LEVEL                   VARCHAR(40),
   BUSINESS_IMPACT              VARCHAR(2000),
-  OWNER_ROUTE                  VARCHAR(200),
+  WORKFLOW_ROUTE                  VARCHAR(200),
   CONFIDENCE                   VARCHAR(40),
   EVIDENCE                     VARCHAR(4000),
   LAST_REFRESHED_TS            TIMESTAMP_NTZ,
@@ -2578,7 +2578,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_CHANGE_INTELLIGENCE_SUMMARY (
   OBJECT_TYPE                  VARCHAR(100),
   CHANGE_COUNT                 NUMBER DEFAULT 0,
   HIGH_RISK_COUNT              NUMBER DEFAULT 0,
-  OWNER_GAP_COUNT              NUMBER DEFAULT 0,
+  WORKFLOW_GAP_COUNT              NUMBER DEFAULT 0,
   RELATED_ALERT_COUNT          NUMBER DEFAULT 0,
   CORRELATION_CANDIDATE_COUNT  NUMBER DEFAULT 0,
   LATEST_CHANGE_TS             TIMESTAMP_NTZ,
@@ -2586,7 +2586,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_CHANGE_INTELLIGENCE_SUMMARY (
   TOP_CHANGED_BY               VARCHAR(300),
   RISK_LEVEL                   VARCHAR(40),
   BUSINESS_IMPACT              VARCHAR(2000),
-  OWNER_ROUTE                  VARCHAR(200),
+  WORKFLOW_ROUTE                  VARCHAR(200),
   CONFIDENCE                   VARCHAR(40),
   LAST_REFRESHED_TS            TIMESTAMP_NTZ,
   LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
@@ -2608,8 +2608,8 @@ CREATE TRANSIENT TABLE IF NOT EXISTS OVERWATCH_ACTION_WORKFLOW (
   SOURCE_TELEMETRY             VARCHAR(8000),
   ENTITY_TYPE                  VARCHAR(100),
   ENTITY_NAME                  VARCHAR(500),
-  OWNER_ROUTE                  VARCHAR(200),
-  OWNER_GAP                    BOOLEAN DEFAULT FALSE,
+  WORKFLOW_ROUTE                  VARCHAR(200),
+  WORKFLOW_GAP                    BOOLEAN DEFAULT FALSE,
   BUSINESS_IMPACT              VARCHAR(4000),
   RISK_LEVEL                   VARCHAR(40),
   RECOMMENDED_ACTION           VARCHAR(4000),
@@ -2644,7 +2644,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS OVERWATCH_ACTION_APPROVAL (
   APPROVAL_REQUIRED            BOOLEAN DEFAULT TRUE,
   APPROVAL_EVIDENCE            VARCHAR(4000),
   RISK_LEVEL                   VARCHAR(40),
-  OWNER_ROUTE                  VARCHAR(200),
+  WORKFLOW_ROUTE                  VARCHAR(200),
   LAST_REFRESHED_TS            TIMESTAMP_NTZ,
   LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
@@ -2714,7 +2714,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_CLOSED_LOOP_OPERATIONS_SUMMARY (
   VERIFIED_COUNT               NUMBER DEFAULT 0,
   CLOSED_COUNT                 NUMBER DEFAULT 0,
   HIGH_RISK_COUNT              NUMBER DEFAULT 0,
-  OWNER_GAP_COUNT              NUMBER DEFAULT 0,
+  WORKFLOW_GAP_COUNT              NUMBER DEFAULT 0,
   EVIDENCE_COUNT               NUMBER DEFAULT 0,
   EXPECTED_SAVINGS_USD         NUMBER(18,2) DEFAULT 0,
   ACTUAL_VERIFIED_SAVINGS_USD  NUMBER(18,2) DEFAULT 0,
@@ -2736,7 +2736,7 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_COMMAND_CENTER_QUESTION (
   QUESTION_TEXT                VARCHAR(500),
   DISPLAY_ORDER                NUMBER,
   SOURCE_OBJECTS               VARCHAR(1000),
-  DEFAULT_OWNER_ROUTE          VARCHAR(200),
+  DEFAULT_WORKFLOW_ROUTE          VARCHAR(200),
   DEFAULT_RISK_LEVEL           VARCHAR(40),
   DEFAULT_CONFIDENCE           VARCHAR(40),
   DEFAULT_ACTION               VARCHAR(2000),
@@ -2748,13 +2748,13 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_COMMAND_CENTER_QUESTION (
 MERGE INTO OVERWATCH_COMMAND_CENTER_QUESTION tgt
 USING (
   SELECT * FROM VALUES
-    ('COST_SPIKE', 'Cost Spike', 'Why did costs spike?', 10, 'MART_EXECUTIVE_OBSERVABILITY; MART_EXECUTIVE_FORECAST_SUMMARY; MART_EXECUTIVE_VALUE_LEDGER; OVERWATCH_ACTION_WORKFLOW', 'DBA / Cost owner', 'High', 'allocated', 'Open Cost & Contract, confirm the spend driver, route an owner-backed savings action, and verify value after the change.', TRUE),
-    ('WAREHOUSE_SLOW', 'Warehouse Slow', 'Why is this warehouse slow?', 20, 'MART_EXECUTIVE_OBSERVABILITY; MART_EXECUTIVE_FORECAST_SUMMARY; OVERWATCH_ACTION_WORKFLOW', 'DBA / Workload owner', 'High', 'allocated', 'Open Workload Operations, review queue/spill/pressure evidence, and create a review-gated action plan.', TRUE),
+    ('COST_SPIKE', 'Cost Spike', 'Why did costs spike?', 10, 'MART_EXECUTIVE_OBSERVABILITY; MART_EXECUTIVE_FORECAST_SUMMARY; MART_EXECUTIVE_VALUE_LEDGER; OVERWATCH_ACTION_WORKFLOW', 'DBA / Cost attribution', 'High', 'allocated', 'Open Cost & Contract, confirm the spend driver, route an route-backed savings action, and verify value after the change.', TRUE),
+    ('WAREHOUSE_SLOW', 'Warehouse Slow', 'Why is this warehouse slow?', 20, 'MART_EXECUTIVE_OBSERVABILITY; MART_EXECUTIVE_FORECAST_SUMMARY; OVERWATCH_ACTION_WORKFLOW', 'DBA / Workload reviewer', 'High', 'allocated', 'Open Workload Operations, review queue/spill/pressure evidence, and create a review-gated action plan.', TRUE),
     ('RECENT_CHANGE', 'Recent Change', 'What changed recently?', 30, 'MART_CHANGE_INTELLIGENCE_SUMMARY; OVERWATCH_CHANGE_CORRELATION', 'DBA / Platform', 'Medium', 'estimated', 'Review recent high-risk changes and treat timing/entity matches as possible correlation until proven.', TRUE),
-    ('FAILURE_SLA', 'Failure / SLA', 'Why did this fail?', 40, 'ALERT_EVENTS; MART_EXECUTIVE_OBSERVABILITY; OVERWATCH_ACTION_WORKFLOW', 'DBA On-Call', 'High', 'allocated', 'Open Alert Center and Workload Operations, assign the owner, capture evidence, and verify recovery.', TRUE),
-    ('SECURITY_RISK', 'Security Risk', 'What security risk needs action?', 50, 'ALERT_EVENTS; MART_OPERATIONAL_OWNER_COVERAGE; MART_EXECUTIVE_SCORECARD_SUMMARY; MART_CHANGE_INTELLIGENCE_SUMMARY', 'Security / DBA', 'High', 'allocated', 'Open Security Monitoring, validate ownership gaps, and route approval-gated access actions.', TRUE),
+    ('FAILURE_SLA', 'Failure / SLA', 'Why did this fail?', 40, 'ALERT_EVENTS; MART_EXECUTIVE_OBSERVABILITY; OVERWATCH_ACTION_WORKFLOW', 'DBA Review', 'High', 'allocated', 'Open Alert Center and Workload Operations, assign the route, capture evidence, and verify recovery.', TRUE),
+    ('SECURITY_RISK', 'Security Risk', 'What security risk needs action?', 50, 'ALERT_EVENTS; MART_OPERATIONAL_ROUTE_COVERAGE; MART_EXECUTIVE_SCORECARD_SUMMARY; MART_CHANGE_INTELLIGENCE_SUMMARY', 'Security / DBA', 'High', 'allocated', 'Open Security Monitoring, validate ownership gaps, and route approval-gated access actions.', TRUE),
     ('EXECUTIVE_RISK', 'Executive Risk', 'What should leadership worry about?', 60, 'MART_EXECUTIVE_SCORECARD_SUMMARY; MART_PRODUCTION_READINESS_SUMMARY; MART_DATA_TRUST_SUMMARY; MART_CLOSED_LOOP_OPERATIONS_SUMMARY', 'DBA / Platform', 'Medium', 'estimated', 'Use the scorecard, readiness, trust, and action lifecycle evidence to decide the next operating move.', TRUE)
-  AS t(QUESTION_KEY, INVESTIGATION_TYPE, QUESTION_TEXT, DISPLAY_ORDER, SOURCE_OBJECTS, DEFAULT_OWNER_ROUTE, DEFAULT_RISK_LEVEL, DEFAULT_CONFIDENCE, DEFAULT_ACTION, ENABLED)
+  AS t(QUESTION_KEY, INVESTIGATION_TYPE, QUESTION_TEXT, DISPLAY_ORDER, SOURCE_OBJECTS, DEFAULT_WORKFLOW_ROUTE, DEFAULT_RISK_LEVEL, DEFAULT_CONFIDENCE, DEFAULT_ACTION, ENABLED)
 ) src
 ON tgt.QUESTION_KEY = src.QUESTION_KEY
 WHEN MATCHED THEN UPDATE SET
@@ -2762,7 +2762,7 @@ WHEN MATCHED THEN UPDATE SET
   QUESTION_TEXT = src.QUESTION_TEXT,
   DISPLAY_ORDER = src.DISPLAY_ORDER,
   SOURCE_OBJECTS = src.SOURCE_OBJECTS,
-  DEFAULT_OWNER_ROUTE = src.DEFAULT_OWNER_ROUTE,
+  DEFAULT_WORKFLOW_ROUTE = src.DEFAULT_WORKFLOW_ROUTE,
   DEFAULT_RISK_LEVEL = src.DEFAULT_RISK_LEVEL,
   DEFAULT_CONFIDENCE = src.DEFAULT_CONFIDENCE,
   DEFAULT_ACTION = src.DEFAULT_ACTION,
@@ -2770,11 +2770,11 @@ WHEN MATCHED THEN UPDATE SET
   UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (
   QUESTION_KEY, INVESTIGATION_TYPE, QUESTION_TEXT, DISPLAY_ORDER, SOURCE_OBJECTS,
-  DEFAULT_OWNER_ROUTE, DEFAULT_RISK_LEVEL, DEFAULT_CONFIDENCE, DEFAULT_ACTION, ENABLED
+  DEFAULT_WORKFLOW_ROUTE, DEFAULT_RISK_LEVEL, DEFAULT_CONFIDENCE, DEFAULT_ACTION, ENABLED
 )
 VALUES (
   src.QUESTION_KEY, src.INVESTIGATION_TYPE, src.QUESTION_TEXT, src.DISPLAY_ORDER,
-  src.SOURCE_OBJECTS, src.DEFAULT_OWNER_ROUTE, src.DEFAULT_RISK_LEVEL,
+  src.SOURCE_OBJECTS, src.DEFAULT_WORKFLOW_ROUTE, src.DEFAULT_RISK_LEVEL,
   src.DEFAULT_CONFIDENCE, src.DEFAULT_ACTION, src.ENABLED
 );
 
@@ -2791,8 +2791,8 @@ CREATE TRANSIENT TABLE IF NOT EXISTS OVERWATCH_COMMAND_CENTER_FINDING (
   CONFIDENCE                          VARCHAR(40),
   BUSINESS_IMPACT                     VARCHAR(4000),
   TECHNICAL_IMPACT                    VARCHAR(4000),
-  OWNER_ROUTE                         VARCHAR(200),
-  OWNER_GAP                           BOOLEAN DEFAULT FALSE,
+  WORKFLOW_ROUTE                         VARCHAR(200),
+  WORKFLOW_GAP                           BOOLEAN DEFAULT FALSE,
   RELATED_CHANGES                     VARCHAR(4000),
   RELATED_ALERTS                      VARCHAR(4000),
   RELATED_SCORECARD_DRIVERS           VARCHAR(4000),
@@ -2831,7 +2831,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS OVERWATCH_COMMAND_CENTER_RECOMMENDATION (
   RECOMMENDATION_ID                   VARCHAR(200),
   RECOMMENDED_ACTION                  VARCHAR(4000),
   RISK_LEVEL                          VARCHAR(40),
-  OWNER_ROUTE                         VARCHAR(200),
+  WORKFLOW_ROUTE                         VARCHAR(200),
   EXECUTION_PLAN_REF                  VARCHAR(200),
   REVIEW_REQUIRED                     BOOLEAN DEFAULT TRUE,
   EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD NUMBER(18,2) DEFAULT 0,
@@ -2849,7 +2849,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_COMMAND_CENTER_SUMMARY (
   QUESTION_TEXT                       VARCHAR(500),
   FINDING_COUNT                       NUMBER DEFAULT 0,
   HIGH_RISK_COUNT                     NUMBER DEFAULT 0,
-  OWNER_GAP_COUNT                     NUMBER DEFAULT 0,
+  WORKFLOW_GAP_COUNT                     NUMBER DEFAULT 0,
   RELATED_CHANGE_COUNT                NUMBER DEFAULT 0,
   RELATED_ALERT_COUNT                 NUMBER DEFAULT 0,
   RELATED_SCORECARD_COUNT             NUMBER DEFAULT 0,
@@ -2963,7 +2963,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_EXECUTIVE_COMMAND_CENTER_ALERTS (
     SIGNAL VARCHAR(255),
     DETAILS VARCHAR(2000),
     OBJECT_NAME VARCHAR(500),
-    OWNER VARCHAR(255),
+    WORKFLOW_ROUTE VARCHAR(255),
     SLA VARCHAR(100),
     EVENT_TS TIMESTAMP_NTZ,
     ROUTE_KEY VARCHAR(255),

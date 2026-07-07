@@ -47,7 +47,7 @@ def load_enterprise_operating_rollups(
     window_days = max(1, int(days or 35))
     scope = _scope_clause(company, environment)
     trust_table = mart_object_name("MART_DATA_TRUST_SUMMARY")
-    ownership_table = mart_object_name("MART_OPERATIONAL_OWNER_COVERAGE")
+    ownership_table = mart_object_name("MART_OPERATIONAL_ROUTE_COVERAGE")
     value_table = mart_object_name("MART_EXECUTIVE_VALUE_LEDGER")
     app_table = mart_object_name("MART_APP_OBSERVABILITY_SUMMARY")
     return {
@@ -96,7 +96,7 @@ def load_enterprise_operating_rollups(
               {scope}
               AND WINDOW_DAYS = 35
             QUALIFY ROW_NUMBER() OVER (
-              PARTITION BY COMPANY, ENVIRONMENT, STATUS, OWNER_ROUTE, CONFIDENCE
+              PARTITION BY COMPANY, ENVIRONMENT, STATUS, WORKFLOW_ROUTE, CONFIDENCE
               ORDER BY SNAPSHOT_TS DESC, LOAD_TS DESC
             ) = 1
             ORDER BY VERIFIED_SAVINGS_USD DESC, EXPECTED_SAVINGS_USD DESC, STATUS
@@ -147,7 +147,7 @@ def load_data_trust_detail(company: str, environment: str, *, days: int = 35) ->
           TARGET_FRESHNESS_MIN,
           STATUS,
           CONFIDENCE,
-          OWNER_ROUTE AS ROUTE,
+          WORKFLOW_ROUTE AS ROUTE,
           BUSINESS_IMPACT,
           NEXT_ACTION
         FROM {table}
@@ -209,8 +209,8 @@ def load_ownership_coverage_rollup(
     surface: str = "",
     days: int = 35,
 ) -> pd.DataFrame:
-    """Load compact operational ownership coverage for an app section."""
-    table = mart_object_name("MART_OPERATIONAL_OWNER_COVERAGE")
+    """Load compact operational workflow route coverage for an app section."""
+    table = mart_object_name("MART_OPERATIONAL_ROUTE_COVERAGE")
     scope = _scope_clause(company, environment)
     return run_query(
         f"""
@@ -227,7 +227,7 @@ def load_ownership_coverage_rollup(
           TRUST_LEVEL,
           CONFIDENCE,
           TOP_GAP_ENTITY,
-          OWNER_ROUTE AS ROUTE,
+          WORKFLOW_ROUTE AS ROUTE,
           NEXT_ACTION
         FROM {table}
         WHERE SNAPSHOT_TS >= DATEADD('DAY', -{max(1, int(days or 35))}, CURRENT_TIMESTAMP())
@@ -259,7 +259,7 @@ def load_value_ledger_rollup(company: str, environment: str, *, days: int = 35) 
           {scope}
           AND WINDOW_DAYS = {days_int if days_int in {35, 90, 180} else 35}
         QUALIFY ROW_NUMBER() OVER (
-          PARTITION BY COMPANY, ENVIRONMENT, STATUS, OWNER_ROUTE, CONFIDENCE
+          PARTITION BY COMPANY, ENVIRONMENT, STATUS, WORKFLOW_ROUTE, CONFIDENCE
           ORDER BY SNAPSHOT_TS DESC, LOAD_TS DESC
         ) = 1
         ORDER BY VERIFIED_SAVINGS_USD DESC, EXPECTED_SAVINGS_USD DESC, STATUS
@@ -288,7 +288,7 @@ def load_value_ledger_detail(company: str, environment: str, *, days: int = 180)
             FINDING,
             ENTITY_TYPE,
             ENTITY_NAME,
-            OWNER_ROUTE AS ROUTE,
+            WORKFLOW_ROUTE AS ROUTE,
             STATUS,
             EXPECTED_SAVINGS_USD,
             IFF(VERIFIED_AT IS NOT NULL, COALESCE(ACTUAL_VERIFIED_SAVINGS_USD, 0), 0) AS ACTUAL_VERIFIED_SAVINGS_USD,
@@ -315,7 +315,7 @@ def load_value_ledger_detail(company: str, environment: str, *, days: int = 180)
             FINDING,
             ENTITY_TYPE,
             ENTITY_NAME,
-            COALESCE(NULLIF(OWNER, ''), NULLIF(ONCALL_PRIMARY, ''), NULLIF(ESCALATION_TARGET, ''), 'DBA / Cost owner') AS ROUTE,
+            COALESCE(NULLIF(OWNER, ''), NULLIF(REVIEW_PRIMARY, ''), NULLIF(REVIEW_TARGET, ''), 'DBA / Cost attribution') AS ROUTE,
             STATUS,
             COALESCE(EST_MONTHLY_SAVINGS, 0) AS EXPECTED_SAVINGS_USD,
             IFF(

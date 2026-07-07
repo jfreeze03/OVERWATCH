@@ -97,13 +97,13 @@ def _queue_capacity_findings(session, exceptions: pd.DataFrame) -> int:
             "Entity Type": "Warehouse",
             "Entity": wh,
             "Route": _route_label(row.get("OWNER", "Platform DBA")),
-            "Route Email": row.get("OWNER_EMAIL", ""),
-            "Oncall Primary": row.get("ONCALL_PRIMARY", ""),
-            "Oncall Secondary": row.get("ONCALL_SECONDARY", ""),
-            "Escalation": _route_label(row.get("APPROVAL_GROUP", row.get("APPROVER", "Warehouse Route / DBA Lead"))),
-            "Escalation Target": row.get("ESCALATION_TARGET", "DBA Lead"),
-            "Route Basis": _route_label(row.get("OWNER_SOURCE", "")),
-            "Route Detail": _route_label(row.get("OWNER_EVIDENCE", "")),
+            "Route Email": row.get("ROUTE_EMAIL", ""),
+            "Review Primary": row.get("REVIEW_PRIMARY", ""),
+            "Review Secondary": row.get("REVIEW_SECONDARY", ""),
+            "Escalation": _route_label(row.get("REVIEW_GROUP", row.get("APPROVER", "Warehouse Route / DBA Lead"))),
+            "Review Target": row.get("REVIEW_TARGET", "DBA Lead"),
+            "Route Basis": _route_label(row.get("ROUTE_SOURCE", "")),
+            "Route Detail": _route_label(row.get("ROUTE_EVIDENCE", "")),
             "Finding": finding,
             "Action": (
                 f"{action_text} {row.get('SAFE_CHANGE_PATH', '')} "
@@ -117,7 +117,7 @@ def _queue_capacity_findings(session, exceptions: pd.DataFrame) -> int:
             "Telemetry Status": "Requested",
             "Status Note": (
                 f"{row.get('CHANGE_RISK', '')} "
-                f"Escalation: {row.get('ESCALATION_TARGET', 'DBA Lead')}. "
+                f"Escalation: {row.get('REVIEW_TARGET', 'DBA Lead')}. "
                 f"Rollback required: {row.get('ROLLBACK_REQUIRED', 'Yes')}; "
                 f"impact telemetry required: {row.get('IMPACT_TELEMETRY_REQUIRED', 'No')}."
             ),
@@ -177,13 +177,13 @@ def _queue_efficiency_findings(session, df_eff: pd.DataFrame) -> None:
             "Entity Type": "Warehouse",
             "Entity": wh,
             "Route": _route_label(owner_context.get("owner", "Platform DBA")),
-            "Route Email": owner_context.get("owner_email", ""),
-            "Oncall Primary": owner_context.get("oncall_primary", ""),
-            "Oncall Secondary": owner_context.get("oncall_secondary", ""),
-            "Escalation": _route_label(owner_context.get("approval_group", approver)),
-            "Escalation Target": owner_context.get("escalation", "DBA Lead"),
+            "Route Email": owner_context.get("route_email", ""),
+            "Review Primary": owner_context.get("review_primary", ""),
+            "Review Secondary": owner_context.get("review_secondary", ""),
+            "Escalation": _route_label(owner_context.get("review_group", approver)),
+            "Review Target": owner_context.get("escalation", "DBA Lead"),
             "Route Basis": _route_label(owner_context.get("source", "")),
-            "Route Detail": _route_label(owner_context.get("owner_evidence", "")),
+            "Route Detail": _route_label(owner_context.get("route_evidence", "")),
             "Finding": finding,
             "Action": (
                 "Review queue, spill, cache, and credit/query patterns. Route setting changes through "
@@ -201,7 +201,7 @@ def _queue_efficiency_findings(session, df_eff: pd.DataFrame) -> None:
             "Reviewer": _route_label(approver),
             "Telemetry Status": "Requested",
             "Status Note": (
-                f"Efficiency review basis attached. Route basis: {owner_context.get('owner_evidence', '')}. "
+                f"Efficiency review basis attached. Route basis: {owner_context.get('route_evidence', '')}. "
                 "Setting changes require review status, rollback SQL, and post-change telemetry."
             ),
             "Recovery Status": (

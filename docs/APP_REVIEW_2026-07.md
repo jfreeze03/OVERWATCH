@@ -211,8 +211,8 @@ Weaknesses:
 ### 4.3 UI / theme system — **C+ (72)**
 `theme.py` (4,187 lines), `layout.py`, `filters.py`, `sections/shell_helpers.py`
 
-Strengths: two cohesive Snowflake-branded themes (carbon dark default, terminal
-light), CSS-variable-driven, `focus-visible` rings, `.ow-sr-only` utility, status
+Strengths: one cohesive Snowflake-branded production theme (carbon dark),
+CSS-variable-driven, `focus-visible` rings, `.ow-sr-only` utility, status
 badges carry text labels, responsive breakpoints at 900/760/620px.
 
 Weaknesses:

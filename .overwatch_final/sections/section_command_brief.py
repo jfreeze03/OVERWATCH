@@ -80,8 +80,6 @@ class SectionCommandSignal:
     priority_score: float | None = None
     impact_value: float | None = None
     impact_unit: str = ""
-    owner_route: str = ""
-    owner_gap: bool = False
     age_minutes: float | None = None
     sla_state: str = ""
     route_key: str = ""
@@ -95,8 +93,6 @@ class SectionCommandSignal:
     evidence_query: str = ""
     first_seen_ts: str = ""
     due_ts: str = ""
-    owner_id: str = ""
-    owner_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -410,8 +406,6 @@ def _signal_from_row(row: Mapping[str, object]) -> SectionCommandSignal:
         priority_score=_float_or_none(_column(row, "PRIORITY_SCORE")),
         impact_value=_float_or_none(_column(row, "IMPACT_VALUE")),
         impact_unit=_string(_column(row, "IMPACT_UNIT")),
-        owner_route=_string(_column(row, "OWNER_ROUTE")),
-        owner_gap=_bool_value(_column(row, "OWNER_GAP", default=False)),
         age_minutes=_float_or_none(_column(row, "AGE_MINUTES")),
         sla_state=_string(_column(row, "SLA_STATE")),
         route_key=_string(_column(row, "ROUTE_KEY")),
@@ -425,8 +419,6 @@ def _signal_from_row(row: Mapping[str, object]) -> SectionCommandSignal:
         evidence_query=_string(_column(row, "EVIDENCE_QUERY")),
         first_seen_ts=_string(_column(row, "FIRST_SEEN_TS")),
         due_ts=_string(_column(row, "DUE_TS")),
-        owner_id=_string(_column(row, "OWNER_ID")),
-        owner_name=_string(_column(row, "OWNER_NAME")),
     )
 
 

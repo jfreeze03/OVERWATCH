@@ -166,7 +166,7 @@ def _clean_answer_text(value: object) -> str:
         ("loaded evidence", "loaded telemetry"),
         ("source evidence", "source telemetry"),
         ("data evidence", "data telemetry"),
-        ("owner proof", "route telemetry"),
+        ("route telemetry", "route telemetry"),
         ("MANUAL ONLY", "DBA REVIEW"),
         ("Manual Only", "DBA Review"),
         ("manual only", "DBA review"),
@@ -192,6 +192,11 @@ def _clean_answer_text(value: object) -> str:
 
 def _route_text(value: object, default: str = "DBA Control Room") -> str:
     text = str(value or default).strip()
+    upper_text = text.upper()
+    if "WAREHOUSE" in upper_text:
+        return "Cost & Contract"
+    if "SECURITY POSTURE" in upper_text:
+        return "Security Monitoring"
     return normalize_section_name(text) or default
 
 
@@ -554,7 +559,7 @@ def _cards_from_queue(df: pd.DataFrame, cards: list[dict], *, surface: str) -> N
             "proof": proof or "Record telemetry before closure.",
             "do_not": "Do not mark Fixed until the telemetry status is measured.",
             "route": _text(row, "ROUTE", default="Action Queue"),
-            "owner": _text(row, "OWNER", "OWNER_EMAIL", "APPROVAL_GROUP"),
+            "owner": _text(row, "OWNER", "ROUTE_EMAIL", "REVIEW_GROUP"),
         })
 
 

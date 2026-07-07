@@ -83,16 +83,15 @@ class SummaryMartLoaderTests(unittest.TestCase):
                 limit=50,
             )
 
-        self.assertEqual(len(result), 1)
-        row = result.iloc[0].to_dict()
-        self.assertEqual(row["SOURCE_STATUS"], "Refresh required")
-        self.assertEqual(row["SUMMARY_STATUS"], "Refresh required")
-        self.assertEqual(row["DATA_STATE"], "REFRESH_REQUIRED")
-        self.assertTrue(row["IS_FALLBACK"])
-        self.assertEqual(row["ROW_LIMIT"], 50)
-        self.assertEqual(row["ROW_COUNT"], 0)
-        self.assertFalse(row["RAW_SQL_INCLUDED"])
-        serialized = str(row)
+        self.assertTrue(result.empty)
+        self.assertEqual(result.attrs["SOURCE_STATUS"], "Refresh required")
+        self.assertEqual(result.attrs["SUMMARY_STATUS"], "Refresh required")
+        self.assertEqual(result.attrs["DATA_STATE"], "REFRESH_REQUIRED")
+        self.assertTrue(result.attrs["IS_FALLBACK"])
+        self.assertEqual(result.attrs["ROW_LIMIT"], 50)
+        self.assertEqual(result.attrs["ROW_COUNT"], 0)
+        self.assertFalse(result.attrs["RAW_SQL_INCLUDED"])
+        serialized = str(result.attrs)
         self.assertNotIn("ACCOUNT_USAGE", serialized)
         self.assertNotIn("SELECT", serialized)
 
@@ -106,11 +105,35 @@ class SummaryMartLoaderTests(unittest.TestCase):
                 limit=10,
             )
 
-        row = result.iloc[0].to_dict()
-        self.assertEqual(row["SOURCE_STATUS"], "Query failed")
-        self.assertEqual(row["SUMMARY_STATUS"], "Query failed")
-        self.assertEqual(row["DATA_STATE"], "QUERY_FAILED")
-        self.assertNotIn("raw warehouse failure", str(row))
+        self.assertTrue(result.empty)
+        self.assertEqual(result.attrs["SOURCE_STATUS"], "Query failed")
+        self.assertEqual(result.attrs["SUMMARY_STATUS"], "Query failed")
+        self.assertEqual(result.attrs["DATA_STATE"], "QUERY_FAILED")
+        self.assertNotIn("raw warehouse failure", str(result.attrs))
+
+    def test_summary_result_keeps_empty_and_error_states_distinct(self) -> None:
+        with patch.object(loaders, "run_query", return_value=pd.DataFrame()):
+            empty = loaders._summary_result(
+                section="Alert Center",
+                workflow="Overview",
+                ttl_key="unit_empty_result",
+                sql="SELECT ACTIVE_ALERT_COUNT FROM V_EXECUTIVE_PACKET_CURRENT LIMIT 1",
+                limit=50,
+            )
+        with patch.object(loaders, "run_query", side_effect=RuntimeError("object does not exist")):
+            missing = loaders._summary_result(
+                section="Alert Center",
+                workflow="Overview",
+                ttl_key="unit_missing_result",
+                sql="SELECT ACTIVE_ALERT_COUNT FROM V_EXECUTIVE_PACKET_CURRENT LIMIT 1",
+                limit=50,
+            )
+
+        self.assertIsInstance(empty, loaders.SummaryResult)
+        self.assertEqual(empty.state, loaders.DataState.REFRESH_REQUIRED)
+        self.assertEqual(missing.state, loaders.DataState.SETUP_REQUIRED)
+        self.assertTrue(empty.data.empty)
+        self.assertTrue(missing.data.empty)
 
     def test_loader_sql_uses_safe_window_and_summary_mart(self) -> None:
         captured: list[dict[str, object]] = []

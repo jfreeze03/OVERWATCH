@@ -10,7 +10,6 @@ if str(ROOT) not in sys.path:
 
 def _passing_payload() -> dict:
     control_rows = [
-        {"section": "Settings", "workflow": "Default", "kind": "select", "key": "settings_theme_picker", "label": "Theme"},
         {"section": "Settings", "workflow": "Default", "kind": "number_input", "key": "_credit_price_input", "label": "$/credit (compute)"},
         {"section": "Settings", "workflow": "Default", "kind": "number_input", "key": "_ai_credit_price_input", "label": "$/AI credit (Cortex)"},
         {"section": "Settings", "workflow": "Default", "kind": "number_input", "key": "_storage_cost_input", "label": "$/TB/month (storage)"},

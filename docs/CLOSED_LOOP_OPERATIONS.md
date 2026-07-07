@@ -16,7 +16,7 @@ sections.
 | Object | Purpose |
 | --- | --- |
 | `OVERWATCH_ACTION_WORKFLOW` | Durable action lifecycle rows sourced from alerts, action queue entries, value-ledger items, and remediation dry-runs. |
-| `OVERWATCH_ACTION_APPROVAL` | Approval-state history with approver, approval timestamp, risk, owner route, and business impact. |
+| `OVERWATCH_ACTION_APPROVAL` | Approval-state history with approver, approval timestamp, risk, workflow route, and business impact. |
 | `OVERWATCH_ACTION_EXECUTION_PLAN` | Review-gated SQL/action text, rollback guidance, verification steps, and execution safety flags. |
 | `OVERWATCH_ACTION_VERIFICATION` | Post-action verification status, verification window, evidence, expected savings, and actual verified savings. |
 | `OVERWATCH_ACTION_EVIDENCE` | Evidence trail for workflow, source telemetry, rollback notes, verification proof, and closure context. |

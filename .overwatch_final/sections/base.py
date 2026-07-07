@@ -41,7 +41,7 @@ def lazy_util(name: str):
 
 
 def lazy_util_attr(name: str):
-    """Create a lazy reference to a non-callable value exported from ``utils``."""
+    """Create a lazy reference to a nreviewable value exported from ``utils``."""
     def _get():
         import utils as _utils
 

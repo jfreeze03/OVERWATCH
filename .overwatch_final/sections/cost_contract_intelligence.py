@@ -196,7 +196,7 @@ def _build_service_cost_lens_summary(service_lens: pd.DataFrame) -> dict:
     }
 
 
-def _add_coverage_row(rows: list[dict], control: str, state: str, evidence: str, action: str, owner: str = "DBA / Cost owner") -> None:
+def _add_coverage_row(rows: list[dict], control: str, state: str, evidence: str, action: str, owner: str = "DBA / Cost attribution") -> None:
     rows.append({
         "CONTROL": control,
         "STATE": state,
@@ -271,8 +271,8 @@ def _build_cost_control_coverage_board(
         category = queue.get("CATEGORY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
         status = queue.get("STATUS", pd.Series(["New"] * len(queue), index=queue.index)).fillna("New").astype(str).str.title()
         open_cost_queue = queue[category.str.contains("COST|CHARGEBACK|CORTEX", na=False) & ~status.isin(["Fixed", "Ignored"])]
-    owner_source = open_cost_queue.get("OWNER_SOURCE", pd.Series(dtype=str)).fillna("").astype(str).str.strip() if not open_cost_queue.empty else pd.Series(dtype=str)
-    owner_ready = int(owner_source.ne("").sum()) if not owner_source.empty else 0
+    route_source = open_cost_queue.get("ROUTE_SOURCE", pd.Series(dtype=str)).fillna("").astype(str).str.strip() if not open_cost_queue.empty else pd.Series(dtype=str)
+    owner_ready = int(route_source.ne("").sum()) if not route_source.empty else 0
     _add_coverage_row(
         rows,
         "Owned cost action queue",
@@ -324,7 +324,7 @@ def _build_cost_allocation_trust_board(
     explorer = _state_frame(state, "df_cost_explorer_detail")
     chargeback = _state_frame(state, "df_chargeback")
 
-    def add(control: str, trust: str, evidence: str, action: str, owner: str = "DBA / Cost owner") -> None:
+    def add(control: str, trust: str, evidence: str, action: str, owner: str = "DBA / Cost attribution") -> None:
         rows.append({
             "CONTROL": control,
             "TRUST_STATE": trust,
@@ -407,7 +407,7 @@ def _build_cost_allocation_trust_board(
     owner_ready = 0
     verification_ready = 0
     if not open_cost_queue.empty:
-        owner_ready = int(open_cost_queue.get("OWNER_SOURCE", pd.Series(dtype=str)).fillna("").astype(str).str.strip().ne("").sum())
+        owner_ready = int(open_cost_queue.get("ROUTE_SOURCE", pd.Series(dtype=str)).fillna("").astype(str).str.strip().ne("").sum())
         verification_ready = int(
             open_cost_queue.get("VERIFICATION_STATUS", pd.Series(dtype=str)).fillna("").astype(str).str.upper().str.contains("VERIFIED|PASSED|COMPLETE", regex=True).sum()
         )

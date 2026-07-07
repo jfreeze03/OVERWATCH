@@ -108,7 +108,7 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("JOIN ALERT_NOTIFICATION_LOG n", sql)
         self.assertIn("JOIN FACT_LOGIN_DAILY l", sql)
         self.assertIn("JOIN FACT_GRANT_DAILY g", sql)
-        self.assertIn("MART_OPERATIONAL_OWNER_COVERAGE", sql)
+        self.assertIn("MART_OPERATIONAL_ROUTE_COVERAGE", sql)
         self.assertIn("MART_EXECUTIVE_SCORECARD_SUMMARY", sql)
         self.assertIn("MART_EXECUTIVE_VALUE_LEDGER", sql)
         self.assertIn("OVERWATCH_SETTINGS", sql)
@@ -139,7 +139,7 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("DECISION_ENTITY_TYPE", sql)
         self.assertIn("DECISION_ENTITY_ID", sql)
         self.assertIn("DECISION_EVIDENCE_ID", sql)
-        self.assertIn("DECISION_OWNER_GAP_RESOLVED", sql)
+        self.assertIn("DECISION_WORKFLOW_GAP_RESOLVED", sql)
         self.assertIn("DECISION_PRIORITY_SCORE_RESOLVED", sql)
         self.assertNotIn("    'section',", sql)
 
@@ -267,8 +267,8 @@ class SectionCommandBriefTests(unittest.TestCase):
                 "PRIORITY_SCORE": 95,
                 "IMPACT_VALUE": 42,
                 "IMPACT_UNIT": "USD",
-                "OWNER_ROUTE": "DBA / AI cost route",
-                "OWNER_GAP": False,
+                "WORKFLOW_ROUTE": "DBA / AI cost route",
+                "WORKFLOW_GAP": False,
                 "FINDING_KEY": "cost:cortex:spend",
                 "DEDUPE_KEY": "cost:cortex",
                 "ENTITY_TYPE": "service",
@@ -648,9 +648,9 @@ class SectionCommandBriefTests(unittest.TestCase):
         renderer_source = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
         component_source = (APP_ROOT / "sections" / "decision_workspace_components.py").read_text(encoding="utf-8")
         self.assertNotIn('"Technical details"', renderer_source)
-        self.assertIn("_kit_command_brief_top(", renderer_source)
-        self.assertIn("_kit_command_attention_panel(", renderer_source)
-        self.assertIn("_kit_command_brief_tail(", renderer_source)
+        self.assertIn("render_command_brief as _kit_command_brief", renderer_source)
+        self.assertIn("_COMMAND_BRIEF_HTML(fallback_model)", renderer_source)
+        self.assertIn("render_signal_panel as _kit_signal_panel", renderer_source)
         self.assertIn("ow-decision-trust-footer", component_source)
 
     def test_command_actions_are_deduped_and_unknown_routes_removed(self):
@@ -744,8 +744,8 @@ class SectionCommandBriefTests(unittest.TestCase):
             "EVIDENCE_QUERY",
             "FIRST_SEEN_TS",
             "DUE_TS",
-            "OWNER_ID",
-            "OWNER_NAME",
+            "ROUTE_ID",
+            "ROUTE_NAME",
             "PRIORITY_SCORE",
             "SOURCE_COVERAGE_PCT",
             "ACTION_KEY",

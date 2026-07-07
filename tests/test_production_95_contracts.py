@@ -138,7 +138,6 @@ class Production95ContractsTests(unittest.TestCase):
 
         calls = []
         original_mart_loader = command_board.load_executive_command_board
-        original_first_paint_loader = command_board.load_first_paint_command_board
         payload = command_board.CommandBoard(
             data=pd.DataFrame(
                 [
@@ -159,13 +158,8 @@ class Production95ContractsTests(unittest.TestCase):
             calls.append(("mart", company, environment, days))
             return payload
 
-        def fake_first_paint_loader(company, environment, days):
-            calls.append(("first_paint", company, environment, days))
-            return empty_command_board(company, environment, days)
-
         try:
             command_board.load_executive_command_board = fake_mart_loader
-            command_board.load_first_paint_command_board = fake_first_paint_loader
             result = command_board.load_or_reuse_command_board(
                 data_key="test_exec_board",
                 summary_key="test_exec_summary",
@@ -177,12 +171,12 @@ class Production95ContractsTests(unittest.TestCase):
             )
         finally:
             command_board.load_executive_command_board = original_mart_loader
-            command_board.load_first_paint_command_board = original_first_paint_loader
             for key in state_keys:
                 st.session_state.pop(key, None)
 
         self.assertTrue(result.summary["loaded"])
         self.assertEqual(calls, [("mart", "ALFA", "ALL", 7)])
+        self.assertNotIn("load_first_paint_command_board", command_board.__dict__)
 
     def test_docs_track_recovery_and_release_history(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

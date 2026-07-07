@@ -2,14 +2,18 @@
 -- This admin validation reports source readiness without relying on daily UI labels.
 
 WITH expected_sources AS (
-    SELECT * FROM VALUES
+    SELECT
+        column1::VARCHAR AS section_name,
+        column2::VARCHAR AS source_key,
+        column3::VARCHAR AS source_object,
+        column4::NUMBER AS target_freshness_minutes
+    FROM VALUES
         ('Executive Landing', 'section_command_packet', 'MART_SECTION_DECISION_CURRENT_FLAT', 60),
         ('DBA Control Room', 'section_command_packet', 'MART_SECTION_DECISION_CURRENT_FLAT', 60),
         ('Alert Center', 'section_command_packet', 'MART_SECTION_DECISION_CURRENT_FLAT', 60),
         ('Cost & Contract', 'section_command_packet', 'MART_SECTION_DECISION_CURRENT_FLAT', 60),
         ('Workload Operations', 'section_command_packet', 'MART_SECTION_DECISION_CURRENT_FLAT', 60),
         ('Security Monitoring', 'section_command_packet', 'MART_SECTION_DECISION_CURRENT_FLAT', 60)
-    AS t(section_name, source_key, source_object, target_freshness_minutes)
 ),
 objects AS (
     SELECT

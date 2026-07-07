@@ -406,7 +406,7 @@ def _alert_operator_workflow_rows(
             "STEP": "3 Route",
             "STATE": "Review" if route_needed or ticket_missing else "Ready",
             "COUNT": max(route_needed, ticket_missing),
-            "WHAT_TO_CHECK": "Named owner, action queue state, ticket/reference, and approval group.",
+            "WHAT_TO_CHECK": "Named workflow, action queue state, ticket/reference, and review group.",
             "NEXT_ACTION": "Route rows without action queue or ticket context before escalation." if (route_needed or ticket_missing) else "Routes and references are ready for loaded incidents.",
             "OPERATOR_VIEW": "Alert Settings / Admin",
         },
@@ -474,9 +474,9 @@ def _alert_next_incident_packet(incident_board: pd.DataFrame) -> pd.DataFrame:
             "NEXT_ACTION": str(top.get("IMPACT_ESTIMATE") or "Attach impact estimate before closure."),
         },
         {
-            "CHECKPOINT": "Owner and route",
+            "CHECKPOINT": "Workflow and route",
             "STATE": "Ready" if owner.upper() not in {"", "DBA", "OVERWATCH"} and ticket else "Review",
-            "DETAIL": f"Owner: {owner or 'DBA'} | Route: {route} | Ticket: {ticket or 'missing'}",
+            "DETAIL": f"Workflow: {owner or 'DBA'} | Route: {route} | Ticket: {ticket or 'missing'}",
             "NEXT_ACTION": f"Queue state: {queue_state}. {evidence_gap}",
         },
         {
@@ -488,7 +488,7 @@ def _alert_next_incident_packet(incident_board: pd.DataFrame) -> pd.DataFrame:
         {
             "CHECKPOINT": "Automation boundary",
             "STATE": remediation_mode,
-            "DETAIL": str(top.get("APPROVAL_GROUP") or "DBA Review"),
+            "DETAIL": str(top.get("REVIEW_GROUP") or "DBA Review"),
             "NEXT_ACTION": "Dry-run/status review only unless a separately approved guarded workflow executes the change.",
         },
     ])
@@ -511,7 +511,7 @@ def _alert_domain_next_move_rows(board: pd.DataFrame, active_view: str) -> pd.Da
             "NEXT_ACTION": str(top.get("FIRST_RESPONSE") or "Acknowledge and review loaded telemetry."),
         },
         {
-            "MOVE": "Open owner workflow",
+            "MOVE": "Open workflow",
             "STATE": destination,
             "DETAIL": f"{destination} > {workflow}",
             "NEXT_ACTION": str(top.get("DRILLDOWN_HINT") or top.get("OPEN_PATH") or "Open the owning monitoring section."),
@@ -611,7 +611,7 @@ def _alert_threshold_tuning_rows(alerts: pd.DataFrame | None = None, rules: pd.D
             next_action = "Run the Snowflake alert operations review before changing this threshold."
         elif critical_high or open_alerts:
             state = "Tune With Evidence"
-            next_action = "Compare current value, baseline, company split, and owner route before tuning."
+            next_action = "Compare current value, baseline, company split, and workflow route before tuning."
         else:
             state = "Watch"
             next_action = "Keep the threshold until repeated closed/noise rows prove it needs tuning."
@@ -781,7 +781,7 @@ def _alert_operations_review_rows(
             "STATE": "Blocked" if auto_eligible else ("Ready" if not remediation_policy.empty else "Review"),
             "COUNT": auto_eligible or int(len(remediation_dry_run)),
             "EVIDENCE": f"{len(remediation_policy):,} policy row(s), {auto_eligible:,} auto-eligible, {len(remediation_dry_run):,} dry-run row(s).",
-            "NEXT_ACTION": "Keep auto actions disabled until before-state, rollback, verification, and owner approvals are proven.",
+            "NEXT_ACTION": "Keep auto actions disabled until before-state, rollback, verification, and review statuss are proven.",
         },
         {
             "REVIEW_AREA": "Dynamic table compatibility",
@@ -846,7 +846,7 @@ def _alert_center_exception_rows(
         count: int,
         state: str,
         next_action: str,
-        owner: str = "DBA On-Call",
+        owner: str = "DBA Review",
         route: str = ALERT_CENTER_DEFAULT_VIEW,
     ) -> None:
         if count <= 0:
@@ -949,7 +949,7 @@ def _alert_center_exception_rows(
             int(failed.sum()),
             "Retry delivery",
             "Review failed notification attempts and route to the email integration contact.",
-            owner="DBA On-Call",
+            owner="DBA Review",
             route="Alert Settings / Admin",
         )
 
@@ -962,12 +962,12 @@ def _alert_center_exception_rows(
     return result.drop(columns=["_SORT"]).reset_index(drop=True)
 
 
-def _alert_owner_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
+def _alert_workflow_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
     generic_owners = {
         "",
         "DBA",
         "OVERWATCH",
-        "DBA / COST OWNER",
+        "DBA / COST ATTRIBUTION",
         "DBA / PLATFORM",
         "DBA / SECURITY",
         "DBA / PIPELINE OWNER",
@@ -993,10 +993,10 @@ def _alert_owner_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tuple
                 "ENTITY": row.get("ENTITY_NAME", ""),
                 "OWNER": owner or "DBA",
                 "EMAIL_TARGET": email_target,
-                "ONCALL_PRIMARY": row.get("ONCALL_PRIMARY", ""),
-                "ESCALATION_TARGET": row.get("ESCALATION_TARGET", ""),
-                "OWNER_SOURCE": row.get("OWNER_SOURCE", ""),
-                "OWNER_ROUTE_STATE": "Needs named route" if owner_key in generic_owners else "Named route",
+                "REVIEW_PRIMARY": row.get("REVIEW_PRIMARY", ""),
+                "REVIEW_TARGET": row.get("REVIEW_TARGET", ""),
+                "ROUTE_SOURCE": row.get("ROUTE_SOURCE", ""),
+                "WORKFLOW_ROUTE_STATE": "Needs named route" if owner_key in generic_owners else "Named route",
                 "DELIVERY_ROUTE_STATE": "Missing email target" if not email_target else "Email target ready",
                 "ACTION_ROUTE_STATE": "Route to action queue" if route == "Alert Center" else f"Route: {route}",
                 "NEXT_ACTION": row.get("SUGGESTED_ACTION", "Review alert telemetry and assign route."),
@@ -1008,7 +1008,7 @@ def _alert_owner_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tuple
         for _, row in open_queue.iterrows():
             owner = str(row.get("OWNER") or row.get("OWNER_NAME") or "").strip()
             owner_key = owner.upper()
-            email_target = str(row.get("OWNER_EMAIL") or row.get("EMAIL_TARGET") or "").strip()
+            email_target = str(row.get("ROUTE_EMAIL") or row.get("ROUTE_EMAIL") or row.get("EMAIL_TARGET") or "").strip()
             rows.append({
                 "ISSUE_SOURCE": "Action Queue",
                 "SEVERITY": row.get("SEVERITY", ""),
@@ -1017,10 +1017,10 @@ def _alert_owner_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tuple
                 "ENTITY": row.get("ENTITY_NAME", row.get("ENTITY", "")),
                 "OWNER": owner or "DBA",
                 "EMAIL_TARGET": email_target,
-                "ONCALL_PRIMARY": row.get("ONCALL_PRIMARY", ""),
-                "ESCALATION_TARGET": row.get("ESCALATION_TARGET", ""),
-                "OWNER_SOURCE": row.get("OWNER_SOURCE", ""),
-                "OWNER_ROUTE_STATE": "Needs named route" if owner_key in generic_owners else "Named route",
+                "REVIEW_PRIMARY": row.get("REVIEW_PRIMARY", ""),
+                "REVIEW_TARGET": row.get("REVIEW_TARGET", ""),
+                "ROUTE_SOURCE": row.get("ROUTE_SOURCE", ""),
+                "WORKFLOW_ROUTE_STATE": "Needs named route" if owner_key in generic_owners else "Named route",
                 "DELIVERY_ROUTE_STATE": "Missing route email" if not email_target else "Route email ready",
                 "ACTION_ROUTE_STATE": "Queued",
                 "NEXT_ACTION": row.get("RECOMMENDED_ACTION", row.get("NEXT_ACTION", "Work queued DBA action.")),
@@ -1032,17 +1032,17 @@ def _alert_owner_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tuple
             "open_items": 0,
             "named_owner_pct": 100.0,
             "email_route_pct": 100.0,
-            "oncall_pct": 100.0,
+            "review_pct": 100.0,
             "route_gaps": 0,
         }, board
 
-    owner_ready = board["OWNER_ROUTE_STATE"].astype(str).eq("Named route")
+    owner_ready = board["WORKFLOW_ROUTE_STATE"].astype(str).eq("Named route")
     email_ready = ~board["DELIVERY_ROUTE_STATE"].astype(str).str.startswith("Missing")
-    oncall_ready = board["ONCALL_PRIMARY"].fillna("").astype(str).str.strip().ne("")
+    review_ready = board["REVIEW_PRIMARY"].fillna("").astype(str).str.strip().ne("")
     route_gap = (
-        board["OWNER_ROUTE_STATE"].astype(str).ne("Named route")
+        board["WORKFLOW_ROUTE_STATE"].astype(str).ne("Named route")
         | ~email_ready
-        | ~oncall_ready
+        | ~review_ready
     )
     board["ROUTE_READY"] = route_gap.map({True: "Review", False: "Ready"})
     board["_ROUTE_RANK"] = route_gap.map({True: 0, False: 1})
@@ -1054,7 +1054,7 @@ def _alert_owner_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tuple
         "open_items": int(len(board)),
         "named_owner_pct": round(float(owner_ready.sum()) / total * 100, 1),
         "email_route_pct": round(float(email_ready.sum()) / total * 100, 1),
-        "oncall_pct": round(float(oncall_ready.sum()) / total * 100, 1),
+        "review_pct": round(float(review_ready.sum()) / total * 100, 1),
         "route_gaps": int(route_gap.sum()),
     }, board.reset_index(drop=True)
 
@@ -1110,7 +1110,7 @@ def _alert_lifecycle_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> pd.Data
             "ALERT_TYPE": row.get("ALERT_TYPE", ""),
             "ENTITY_NAME": entity,
             "OWNER": owner,
-            "ESCALATION_TARGET": row.get("ESCALATION_TARGET", ""),
+            "REVIEW_TARGET": row.get("REVIEW_TARGET", ""),
             "DELIVERY_STATUS": row.get("DELIVERY_STATUS", ""),
             "ACTION_QUEUE_STATE": "Queued" if queued else "Not queued",
             "CLOSURE_STATUS_REQUIRED": (
@@ -1161,13 +1161,13 @@ def _alert_integration_health_board(
         "STATE": "Ready" if delivery_rows > 0 else "Review",
         "EVIDENCE": f"{email_ready:,} email-ready alert(s); {delivery_rows:,} delivery audit row(s).",
         "NEXT_ACTION": "Log each digest delivery until a Snowflake notification integration is enabled.",
-        "OWNER": "DBA On-Call",
+        "OWNER": "DBA Review",
     })
     rows.append({
         "CONTROL": "Snowflake notification integration",
         "STATE": "Review",
         "EVIDENCE": "Email-first delivery uses configured recipients until a Snowflake notification integration exists.",
-        "NEXT_ACTION": "Create email/notification integration and replace placeholders with production distribution lists.",
+        "NEXT_ACTION": "Create email/notification integration and configure production distribution lists.",
         "OWNER": "DBA / Platform",
     })
 
@@ -1184,14 +1184,14 @@ def _alert_integration_health_board(
         "STATE": "Review" if tickets == 0 else "Partial",
         "EVIDENCE": f"{open_queue:,} open queue row(s); {tickets:,} reference id(s) attached.",
         "NEXT_ACTION": "Use the in-app action queue for acknowledgement, routing, comments, suppression, and closure status.",
-        "OWNER": "DBA On-Call",
+        "OWNER": "DBA Review",
     })
     rows.append({
         "CONTROL": "Open alert lifecycle",
         "STATE": "Ready" if open_alert_count == 0 else "Review",
         "EVIDENCE": f"{open_alert_count:,} open alert(s) in the loaded scope.",
         "NEXT_ACTION": "Every open alert needs route, notes, delivery status, action queue state, and closure status.",
-        "OWNER": "DBA On-Call",
+        "OWNER": "DBA Review",
     })
 
     board = pd.DataFrame(rows)

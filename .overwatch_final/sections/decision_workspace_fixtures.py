@@ -1,6 +1,6 @@
 """Explicit visual fixtures for the OVERWATCH Decision Workspace.
 
-These values mirror the dashboard mockup and are allowed only when fixture
+These values mirror the dashboard visual reference and are allowed only when fixture
 mode is explicitly enabled. They are not production data and must not be used
 as a fallback when Snowflake or mart summaries are unavailable.
 """
@@ -19,7 +19,7 @@ def _expiry_label(seconds: int = 300) -> str:
 
 
 def build_fixture_brief(contract, *, company: str, environment: str, window_days: int):
-    """Return the deterministic mockup packet for visual/screenshot tests only."""
+    """Return the deterministic visual-reference packet for screenshot tests only."""
     from sections.section_command_brief import (
         SectionCommandAction,
         SectionCommandBrief,
@@ -50,7 +50,7 @@ def build_fixture_brief(contract, *, company: str, environment: str, window_days
             sort_order=sort,
             trend_points=(4, 5, 6, 7, 9, 11, 13),
             source_key="fixture",
-            confidence="demo",
+            confidence="fixture",
         )
 
     section = contract.section
@@ -102,7 +102,7 @@ def build_fixture_brief(contract, *, company: str, environment: str, window_days
         ),
     }
     metrics = fixture_metrics.get(section) or tuple(
-        fixture_metric(metric.key, metric.label, "Demo", sort=index * 10)
+        fixture_metric(metric.key, metric.label, "Reference", sort=index * 10)
         for index, metric in enumerate(contract.metric_contracts[:4], start=1)
     )
     if section == "Executive Landing":
@@ -117,7 +117,6 @@ def build_fixture_brief(contract, *, company: str, environment: str, window_days
                 priority_score=98,
                 impact_value=8200,
                 impact_unit="USD",
-                owner_route="AI Cost Route",
                 sla_state="Due in 2h",
                 route_key="cost_contract_cortex_ai",
                 confidence="fixture",
@@ -132,7 +131,6 @@ def build_fixture_brief(contract, *, company: str, environment: str, window_days
                 priority_score=92,
                 impact_value=6700,
                 impact_unit="USD",
-                owner_route="DBA / Cost",
                 sla_state="On track",
                 route_key="cost_contract_explorer_warehouse",
                 confidence="fixture",
@@ -147,7 +145,6 @@ def build_fixture_brief(contract, *, company: str, environment: str, window_days
                 priority_score=78,
                 impact_value=8100,
                 impact_unit="USD",
-                owner_route="Cost Governance",
                 sla_state="Overdue",
                 route_key="cost_contract_budget",
                 confidence="fixture",
@@ -163,7 +160,6 @@ def build_fixture_brief(contract, *, company: str, environment: str, window_days
                 route_section="Security Monitoring",
                 route_workflow="Security Overview",
                 priority_score=96,
-                owner_route="Jane Doe",
                 sla_state="Due soon",
                 route_key="security_credential_expirations",
                 confidence="fixture",
@@ -172,8 +168,6 @@ def build_fixture_brief(contract, *, company: str, environment: str, window_days
                 entity_type="USER_CREDENTIAL",
                 entity_id="JDOE",
                 evidence_id="credential_expiration::cred-001",
-                owner_id="JDOE",
-                owner_name="Jane Doe",
                 due_ts="2026-07-05",
             ),
         )
@@ -187,7 +181,6 @@ def build_fixture_brief(contract, *, company: str, environment: str, window_days
                 route_section="Security Monitoring",
                 route_workflow="Security Overview",
                 priority_score=96,
-                owner_route="Jane Doe",
                 sla_state="Due soon",
                 route_key="security_credential_expirations",
                 confidence="fixture",
@@ -196,8 +189,6 @@ def build_fixture_brief(contract, *, company: str, environment: str, window_days
                 entity_type="USER_CREDENTIAL",
                 entity_id="JDOE",
                 evidence_id="credential_expiration::cred-001",
-                owner_id="JDOE",
-                owner_name="Jane Doe",
                 due_ts="2026-07-05",
             ),
         )
@@ -213,7 +204,6 @@ def build_fixture_brief(contract, *, company: str, environment: str, window_days
                 priority_score=90,
                 impact_value=8200 if section == "Cost & Contract" else None,
                 impact_unit="USD" if section == "Cost & Contract" else "",
-                owner_route="DBA / Cost",
                 sla_state="Due in 2h",
                 route_key=contract.fallback_route_keys[0] if contract.fallback_route_keys else "",
                 confidence="fixture",

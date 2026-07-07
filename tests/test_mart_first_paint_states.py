@@ -48,11 +48,20 @@ RETIRED_PHRASES = tuple(
 
 class MartFirstPaintStateTests(unittest.TestCase):
     def test_data_state_maps_generic_placeholders_to_actionable_state(self) -> None:
-        self.assertEqual(data_state_label(DataState.REFRESH_REQUIRED), "Loading current summary")
-        self.assertEqual(first_paint_text("Summary" + " pending"), "Loading current summary")
-        self.assertEqual(final_state_text("Packet" + " pending"), "Loading current summary")
+        self.assertEqual(data_state_label(DataState.REFRESH_REQUIRED), "Refresh required")
+        self.assertEqual(data_state_label(DataState.SETUP_REQUIRED), "Setup required")
+        self.assertEqual(data_state_label(DataState.CONNECTION_UNAVAILABLE), "Connection unavailable")
+        self.assertEqual(data_state_label(DataState.QUERY_FAILED), "Query failed")
+        self.assertEqual(first_paint_text("Summary" + " pending"), "Refresh required")
+        self.assertEqual(final_state_text("Packet" + " pending"), "Refresh required")
         self.assertEqual(detail_available_text(), "Details available when needed")
         self.assertEqual(classify_data_state("permission denied"), DataState.QUERY_FAILED)
+
+    def test_data_state_labels_are_final_state_copy_not_loading_copy(self) -> None:
+        forbidden = ("loading", "pending", "on demand", "on request")
+        for state in DataState:
+            label = data_state_label(state).lower()
+            self.assertFalse(any(token in label for token in forbidden), (state, label))
 
     def test_first_paint_runtime_sources_do_not_emit_retired_phrases(self) -> None:
         for path in FIRST_PAINT_FILES:

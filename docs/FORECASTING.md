@@ -17,7 +17,7 @@ action is taken.
 
 | Object | Purpose |
 | --- | --- |
-| `OVERWATCH_FORECAST_CONFIG` | Forecast catalog, owner route, methodology, confidence rule, and recommended action defaults. |
+| `OVERWATCH_FORECAST_CONFIG` | Forecast catalog, workflow route, methodology, confidence rule, and recommended action defaults. |
 | `OVERWATCH_FORECAST_HISTORY` | Forecast history and driver rows used by explicit Load panels. |
 | `MART_EXECUTIVE_FORECAST_SUMMARY` | Compact first-paint summary mart for Executive Landing. |
 | `SP_OVERWATCH_REFRESH_FORECASTING` | Refreshes forecast history and summary rows from existing OVERWATCH facts and marts. |

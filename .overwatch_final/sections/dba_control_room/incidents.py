@@ -82,7 +82,7 @@ def _dba_incident_board(
             open_actions = safe_int(item.get("OPEN_ACTIONS"))
             overdue = safe_int(item.get("OVERDUE"))
             proof_blocks = (
-                safe_int(item.get("OWNER_GAPS"))
+                safe_int(item.get("WORKFLOW_GAPS"))
                 + safe_int(item.get("APPROVAL_BLOCKS"))
                 + safe_int(item.get("METADATA_BLOCKS"))
             )
@@ -236,7 +236,7 @@ def _dba_runbook_route_templates(section: object, lookback_hours: int) -> dict:
     hours = max(1, min(safe_int(lookback_hours, 24), 168))
     if "WAREHOUSE" in route:
         return {
-            "owner_route": "Warehouse route / DBA capacity reviewer",
+            "workflow_route": "Warehouse route / DBA capacity reviewer",
             "containment": "Use Cost & Contract to isolate the exact warehouse, workload, queue, spill, and dollar pattern before any setting change.",
             "candidate": "Use Warehouse Settings Manager only after review status is present; prefer the smallest targeted setting change with rollback SQL.",
             "preflight_sql": f"""SELECT warehouse_name, COUNT(*) AS queries,
@@ -257,7 +257,7 @@ ORDER BY credits_used DESC;""",
         }
     if "COST" in route:
         return {
-            "owner_route": "Cost route / DBA cost reviewer",
+            "workflow_route": "Cost route / DBA cost reviewer",
             "containment": "Freeze savings claims; isolate top company, warehouse, database, role, user, and task driver before action.",
             "candidate": "Queue only the driver with route, baseline/current value, finance measurement basis, and telemetry query attached.",
             "preflight_sql": f"""SELECT warehouse_name, SUM(credits_used) AS credits_used,
@@ -271,7 +271,7 @@ ORDER BY credits_used DESC;""",
         }
     if "WORKLOAD" in route:
         return {
-            "owner_route": "Workload route / DBA reliability reviewer",
+            "workflow_route": "Workload route / DBA reliability reviewer",
             "containment": "Separate failing task, stored procedure, and query path from platform symptoms before retrying anything.",
             "candidate": "Retry or resume only after root cause, downstream blast radius, and last successful run are captured.",
             "preflight_sql": f"""SELECT name, state, scheduled_time, completed_time, error_code, error_message
@@ -288,7 +288,7 @@ LIMIT 100;""",
         }
     if "SECURITY" in route:
         return {
-            "owner_route": "Security reviewer / DBA access reviewer",
+            "workflow_route": "Security reviewer / DBA access reviewer",
             "containment": "Preserve login/grant telemetry and avoid grant changes until requester, reviewer, and least-privilege status are clear.",
             "candidate": "Route grant/revoke work through Security Monitoring with ticket, reviewer, and before/after role telemetry.",
             "preflight_sql": f"""SELECT event_timestamp, user_name, client_ip, reported_client_type, error_code, error_message
@@ -301,7 +301,7 @@ LIMIT 100;""",
         }
     if "CHANGE" in route:
         return {
-            "owner_route": "Workload route / DBA operations reviewer",
+            "workflow_route": "Workload route / DBA operations reviewer",
             "containment": "Keep object remediation inside workload operations with source telemetry, impacted object context, and rollback boundary.",
             "candidate": "Queue the operational fix with dependency impact and rollback statement before marking it controlled.",
             "preflight_sql": f"""SELECT query_id, user_name, role_name, warehouse_name, database_name, schema_name,
@@ -317,7 +317,7 @@ LIMIT 100;""",
         }
     if "ALERT" in route:
         return {
-            "owner_route": "Alert route / DBA on-call",
+            "workflow_route": "Alert route / DBA review",
             "containment": "Confirm the alert source and route the issue to the action queue before suppressing or closing anything.",
             "candidate": "Suppress only with review status, expiry window, and a linked action queue item.",
             "preflight_sql": "SELECT CURRENT_TIMESTAMP() AS alert_review_started_at;",
@@ -326,7 +326,7 @@ LIMIT 100;""",
         }
     if "ACCOUNT" in route:
         return {
-            "owner_route": "Account hygiene route / DBA platform reviewer",
+            "workflow_route": "Account hygiene route / DBA platform reviewer",
             "containment": "Prioritize hygiene gaps that affect authentication, ownership, recovery, or admin operability.",
             "candidate": "Queue account hygiene work with route, telemetry query, and closure status.",
             "preflight_sql": "SHOW USERS;",
@@ -334,8 +334,8 @@ LIMIT 100;""",
             "rollback_sql": "SELECT 'Rollback account hygiene changes through reviewed identity/admin process.' AS rollback_boundary;",
         }
     return {
-        "owner_route": "On-call DBA / platform route",
-        "containment": "Assign DBA on-call, capture current telemetry, and route to the specialist workflow.",
+        "workflow_route": "Review DBA / platform route",
+        "containment": "Assign DBA review, capture current telemetry, and route to the specialist workflow.",
         "candidate": "Work only the routed action with ticket, telemetry query, and closure status.",
         "preflight_sql": f"SELECT CURRENT_TIMESTAMP() AS preflight_started_at, {hours} AS lookback_hours;",
         "verification_sql": "SELECT CURRENT_TIMESTAMP() AS telemetry_required_at;",
@@ -505,7 +505,7 @@ def _dba_operator_runbook(
             "EVIDENCE_REQUIRED": evidence,
             "PROOF_SQL": proof_sql,
             "STOP_CONDITION": stop_condition,
-            "OWNER_ROUTE": templates["owner_route"],
+            "WORKFLOW_ROUTE": templates["workflow_route"],
             "RUNBOOK_MODE": "Advisory Only",
         })
     return pd.DataFrame(rows)
@@ -538,7 +538,7 @@ def _build_dba_operator_runbook_markdown(
                 f"Gate: {row.get('GO_NO_GO_GATE', '')}",
                 f"Move: {row.get('DBA_MOVE', '')}",
                 f"Telemetry: {row.get('EVIDENCE_REQUIRED', '')}",
-                f"Escalation route: {clean_display_text(row.get('OWNER_ROUTE', ''))}",
+                f"Escalation route: {clean_display_text(row.get('WORKFLOW_ROUTE', ''))}",
                 f"Stop: {row.get('STOP_CONDITION', '')}",
             ])
             if proof:
@@ -562,7 +562,7 @@ def _render_dba_operator_runbook(plan: pd.DataFrame, markdown: str) -> None:
         "GO_NO_GO_GATE": "Gate",
         "DBA_MOVE": "Move",
         "EVIDENCE_REQUIRED": "Telemetry",
-        "OWNER_ROUTE": "Route",
+        "WORKFLOW_ROUTE": "Route",
         "STOP_CONDITION": "Stop Rule",
         "PROOF_SQL": "Telemetry Query",
         "SECTION": "Route",
@@ -646,7 +646,7 @@ def _dba_escalation_packet(
                 "WHY_NOW": str(why_now or "Loaded Control Room telemetry requires DBA review."),
                 "FIRST_MOVE": str(first_move or "Open the guarded drilldown workflow and validate telemetry."),
                 "PROOF_REQUIRED": str(proof_required or _dba_section_proof_required(route_text)),
-                "OWNER_ROUTE": templates["owner_route"],
+                "WORKFLOW_ROUTE": templates["workflow_route"],
                 "SCOPE": scope,
                 "SOURCE_SIGNALS_LIST": [source_text] if source_text else [],
                 "SLA_TARGET": str(sla_target or _dba_incident_sla_target(_dba_incident_type(route_text, state), "Medium")),
@@ -662,7 +662,7 @@ def _dba_escalation_packet(
             current["WHY_NOW"] = str(why_now or current.get("WHY_NOW") or "")
             current["FIRST_MOVE"] = str(first_move or current.get("FIRST_MOVE") or "")
             current["PROOF_REQUIRED"] = str(proof_required or current.get("PROOF_REQUIRED") or _dba_section_proof_required(route_text))
-            current["OWNER_ROUTE"] = templates["owner_route"]
+            current["WORKFLOW_ROUTE"] = templates["workflow_route"]
             current["SLA_TARGET"] = str(sla_target or current.get("SLA_TARGET") or "")
             current["WORKFLOW"] = str(workflow or current.get("WORKFLOW") or route_text)
 
@@ -790,7 +790,7 @@ def _dba_escalation_packet(
     result.insert(0, "ESCALATION_ID", [f"ESC-{idx + 1:02d}" for idx in range(len(result))])
     return result[
         [
-            "ESCALATION_ID", "ESCALATION_LEVEL", "ROUTE", "OWNER_ROUTE", "SCOPE",
+            "ESCALATION_ID", "ESCALATION_LEVEL", "ROUTE", "WORKFLOW_ROUTE", "SCOPE",
             "PRIORITY_SCORE", "STATE", "WHY_NOW", "FIRST_MOVE", "PROOF_REQUIRED",
             "SLA_TARGET", "GO_NO_GO", "SOURCE_SIGNALS", "EVIDENCE_PACKET",
             "WORKFLOW", "AUTO_GENERATED",
@@ -820,14 +820,14 @@ def _build_dba_escalation_packet_markdown(
     else:
         for _, row in rows.iterrows():
             route = clean_display_text(row.get("ROUTE", ""))
-            owner_route = clean_display_text(row.get("OWNER_ROUTE", ""))
+            workflow_route = clean_display_text(row.get("WORKFLOW_ROUTE", ""))
             why_now = clean_display_text(row.get("WHY_NOW", ""))
             first_move = clean_display_text(row.get("FIRST_MOVE", ""))
             gate = clean_display_text(row.get("GO_NO_GO", ""))
             telemetry_basis = clean_operator_copy(row.get("PROOF_REQUIRED", ""))
             lines.append(
                 f"- {row.get('ESCALATION_ID', '')} [{row.get('ESCALATION_LEVEL', '')}] "
-                f"{route} -> {owner_route}. "
+                f"{route} -> {workflow_route}. "
                 f"Why: {why_now}. "
                 f"Move: {first_move}. "
                 f"Gate: {gate}. "
@@ -858,7 +858,7 @@ def _render_dba_escalation_packet(packet: pd.DataFrame, markdown: str) -> None:
         packet,
         title="DBA escalation packet",
         priority_columns=[
-            "ESCALATION_LEVEL", "ROUTE", "OWNER_ROUTE", "STATE", "WHY_NOW",
+            "ESCALATION_LEVEL", "ROUTE", "WORKFLOW_ROUTE", "STATE", "WHY_NOW",
             "FIRST_MOVE", "GO_NO_GO",
         ],
         sort_by=["PRIORITY_SCORE", "ROUTE"],

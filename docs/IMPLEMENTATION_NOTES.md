@@ -43,7 +43,7 @@ outside the Streamlit app UI.
 - Native alert promotion is still manual. The app does not execute promotion
   SQL, enable native alerts, or run corrective automation.
 - Threshold changes should be made from Snowflake evidence after comparing
-  current value, baseline, company split, owner route, and Snowflake Admin/Cost
+  current value, baseline, company split, workflow route, and Snowflake Admin/Cost
   Management context where appropriate.
 
 ## 2026-06-17 - COST_MONITOR Formula Audit
@@ -284,7 +284,7 @@ outside the Streamlit app UI.
   explicit Load buttons.
 - `MART_EXECUTIVE_VALUE_LEDGER` separates verified savings from unverified
   estimates. Unverified expected savings must not be counted as realized value.
-- `OVERWATCH_OPERATIONAL_OWNER_MAP` is an operational route fallback by entity
+- `OVERWATCH_OPERATIONAL_ROUTE_MAP` is an operational route fallback by entity
   type. It is not a generic owner directory or governance approval workflow.
 - `SP_OVERWATCH_REFRESH_ENTERPRISE_OPERATING_MODEL` does not execute
   remediation. It only summarizes existing OVERWATCH facts, app logs, action

@@ -199,7 +199,7 @@ def _run(domain: str, sql: str, *, ttl_key: str, limit: int = DEFAULT_LIMIT) -> 
                 sql,
                 ttl_key=ttl_key,
                 use_cache=True,
-                spinner_msg="Loading current summary...",
+                spinner_msg="Reading current summary...",
                 tier="section_summary",
                 section=spec["section"],
                 max_rows=_limit(limit),

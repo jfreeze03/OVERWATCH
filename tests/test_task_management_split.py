@@ -240,8 +240,8 @@ class TaskManagementSplitTests(unittest.TestCase):
             "FAILURE_CATEGORY": "Task Failure",
             "ERROR_MESSAGE": "failed",
             "INCIDENT_PRIORITY": "P1",
-            "RECOVERY_READINESS": "Blocked: owner route required",
-            "OWNER_APPROVAL_STATE": "Review Required",
+            "RECOVERY_READINESS": "Blocked: workflow route required",
+            "REVIEW_STATE": "Review Required",
             "ENVIRONMENT": "PROD",
             "RETRY_SQL": "EXECUTE TASK \"DB\".\"PUBLIC\".\"TASK_A\"",
         })

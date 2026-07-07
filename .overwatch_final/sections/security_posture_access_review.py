@@ -50,10 +50,10 @@ def build_security_access_review_ddl(
     DISTINCT_SOURCES        NUMBER,
     LAST_SEEN               VARCHAR(100),
     OWNER                   VARCHAR(200),
-    ESCALATION_TARGET       VARCHAR(200),
-    OWNER_SOURCE            VARCHAR(200),
+    REVIEW_TARGET       VARCHAR(200),
+    ROUTE_SOURCE            VARCHAR(200),
     APPROVER                VARCHAR(200),
-    OWNER_APPROVAL_STATUS   VARCHAR(40),
+    REVIEW_STATUS   VARCHAR(40),
     ACCESS_REVIEW_STATE     VARCHAR(160),
     ROLE_CAPABILITY_STATE   VARCHAR(200),
     TICKET_REQUIRED         VARCHAR(20),
@@ -123,7 +123,7 @@ def build_security_operability_fact_ddl(table: str = SECURITY_OPERABILITY_FACT_T
     OVERDUE_OPEN                    NUMBER,
     FIXED_WITHOUT_VERIFICATION      NUMBER,
     VERIFIED_CLOSURES               NUMBER,
-    OWNER_APPROVAL_GAP_ROWS         NUMBER,
+    REVIEW_GAP_ROWS         NUMBER,
     NEXT_CONTROL_ACTION             VARCHAR(4000),
     LAST_ACTIVITY_TS                TIMESTAMP_NTZ,
     LOAD_TS                         TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
@@ -143,7 +143,7 @@ def build_security_operability_fact_migration_sql(
         f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS REVIEW_BY_REQUIRED_ROWS NUMBER",
         f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CAPABILITY_PROOF_ROWS NUMBER",
         f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS NO_DATABASE_CONTEXT_ROWS NUMBER",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS OWNER_APPROVAL_GAP_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS REVIEW_GAP_ROWS NUMBER",
         f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS NEXT_CONTROL_ACTION VARCHAR(4000)",
         f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS LAST_ACTIVITY_TS TIMESTAMP_NTZ",
     ]
@@ -252,13 +252,13 @@ def _security_owner_context(row: pd.Series | dict) -> dict:
     )
     return {
         "owner": directory_context.get("OWNER") or base["owner"],
-        "escalation": base["escalation"] or directory_context.get("ESCALATION_TARGET", ""),
-        "source": f"{base['source']}; {directory_context.get('OWNER_SOURCE', '')}".strip("; "),
-        "owner_email": directory_context.get("OWNER_EMAIL", ""),
-        "oncall_primary": directory_context.get("ONCALL_PRIMARY", ""),
-        "oncall_secondary": directory_context.get("ONCALL_SECONDARY", ""),
-        "approval_group": "",
-        "owner_evidence": directory_context.get("OWNER_EVIDENCE", ""),
+        "escalation": base["escalation"] or directory_context.get("REVIEW_TARGET", ""),
+        "source": f"{base['source']}; {directory_context.get('ROUTE_SOURCE', '')}".strip("; "),
+        "route_email": directory_context.get("ROUTE_EMAIL", ""),
+        "review_primary": directory_context.get("REVIEW_PRIMARY", ""),
+        "review_secondary": directory_context.get("REVIEW_SECONDARY", ""),
+        "review_group": "",
+        "route_evidence": directory_context.get("ROUTE_EVIDENCE", ""),
     }
 
 def _security_review_context(row: pd.Series | dict) -> dict:
@@ -400,14 +400,14 @@ def _security_access_review_sla_hours(severity: str) -> int:
 def _security_access_review_readiness_for_row(row: pd.Series | dict) -> dict:
     """Return ticket/reference, telemetry, and blocker state for a security finding."""
     owner = str(row.get("OWNER") or "").strip()
-    owner_source = str(row.get("OWNER_SOURCE") or "").strip()
-    owner_email = str(row.get("OWNER_EMAIL") or "").strip()
-    oncall = str(row.get("ONCALL_PRIMARY") or "").strip()
-    escalation = str(row.get("ESCALATION_TARGET") or "").strip()
+    route_source = str(row.get("ROUTE_SOURCE") or "").strip()
+    route_email = str(row.get("ROUTE_EMAIL") or "").strip()
+    review = str(row.get("REVIEW_PRIMARY") or "").strip()
+    escalation = str(row.get("REVIEW_TARGET") or "").strip()
     owner_upper = owner.upper()
     route_ready = bool(owner) and owner_upper not in {"UNKNOWN", "N/A", "NONE"} and bool(
-        owner_email
-        or oncall
+        route_email
+        or review
         or escalation
         or "SECURITY" in owner_upper
         or "IAM" in owner_upper
@@ -423,7 +423,7 @@ def _security_access_review_readiness_for_row(row: pd.Series | dict) -> dict:
 
     blockers: list[str] = []
     if not route_ready:
-        blockers.append("route/on-call context")
+        blockers.append("route/review context")
     if ticket_required and not ticket_id:
         blockers.append("access ticket")
     if review_required and not review_by:
@@ -439,7 +439,7 @@ def _security_access_review_readiness_for_row(row: pd.Series | dict) -> dict:
         readiness = "Verified"
         rank = 8
         next_action = "Keep IAM/Snowflake telemetry with the access-review snapshot."
-    elif "route/on-call context" in blockers:
+    elif "route/review context" in blockers:
         readiness = "Assignment Blocked"
         rank = 0
         next_action = "Assign this finding before queueing closure."
@@ -478,15 +478,15 @@ def _build_security_access_review(exceptions: pd.DataFrame, environment: str = "
     owner_contexts = view.apply(_security_owner_context, axis=1)
     review_contexts = view.apply(_security_review_context, axis=1)
     view["OWNER"] = owner_contexts.apply(lambda item: item["owner"])
-    view["ESCALATION_TARGET"] = owner_contexts.apply(lambda item: item["escalation"])
-    view["OWNER_SOURCE"] = owner_contexts.apply(lambda item: item["source"])
-    view["OWNER_EMAIL"] = owner_contexts.apply(lambda item: item.get("owner_email", ""))
-    view["ONCALL_PRIMARY"] = owner_contexts.apply(lambda item: item.get("oncall_primary", ""))
-    view["ONCALL_SECONDARY"] = owner_contexts.apply(lambda item: item.get("oncall_secondary", ""))
-    view["APPROVAL_GROUP"] = ""
-    view["OWNER_EVIDENCE"] = owner_contexts.apply(lambda item: item.get("owner_evidence", ""))
+    view["REVIEW_TARGET"] = owner_contexts.apply(lambda item: item["escalation"])
+    view["ROUTE_SOURCE"] = owner_contexts.apply(lambda item: item["source"])
+    view["ROUTE_EMAIL"] = owner_contexts.apply(lambda item: item.get("route_email", ""))
+    view["REVIEW_PRIMARY"] = owner_contexts.apply(lambda item: item.get("review_primary", ""))
+    view["REVIEW_SECONDARY"] = owner_contexts.apply(lambda item: item.get("review_secondary", ""))
+    view["REVIEW_GROUP"] = ""
+    view["ROUTE_EVIDENCE"] = owner_contexts.apply(lambda item: item.get("route_evidence", ""))
     view["APPROVER"] = review_contexts.apply(lambda item: item["reviewer"])
-    view["OWNER_APPROVAL_STATUS"] = ""
+    view["REVIEW_STATUS"] = ""
     view["ACCESS_REVIEW_STATE"] = review_contexts.apply(lambda item: item["review_state"])
     view["ROLE_CAPABILITY_STATE"] = review_contexts.apply(lambda item: item["role_capability_state"])
     view["TICKET_REQUIRED"] = "Yes"
@@ -580,10 +580,10 @@ def _security_access_review_insert_sql(
             f"{safe_int(row.get('DISTINCT_SOURCES'))}::NUMBER AS DISTINCT_SOURCES, "
             f"{sql_literal(row.get('LAST_SEEN', ''), 100)} AS LAST_SEEN, "
             f"{sql_literal(row.get('OWNER', ''), 200)} AS OWNER, "
-            f"{sql_literal(row.get('ESCALATION_TARGET', ''), 200)} AS ESCALATION_TARGET, "
-            f"{sql_literal(row.get('OWNER_SOURCE', ''), 200)} AS OWNER_SOURCE, "
+            f"{sql_literal(row.get('REVIEW_TARGET', ''), 200)} AS REVIEW_TARGET, "
+            f"{sql_literal(row.get('ROUTE_SOURCE', ''), 200)} AS ROUTE_SOURCE, "
             f"{sql_literal(row.get('APPROVER', ''), 200)} AS APPROVER, "
-            f"{sql_literal(row.get('OWNER_APPROVAL_STATUS', ''), 40)} AS OWNER_APPROVAL_STATUS, "
+            f"{sql_literal(row.get('REVIEW_STATUS', ''), 40)} AS REVIEW_STATUS, "
             f"{sql_literal(row.get('ACCESS_REVIEW_STATE', ''), 160)} AS ACCESS_REVIEW_STATE, "
             f"{sql_literal(row.get('ROLE_CAPABILITY_STATE', ''), 200)} AS ROLE_CAPABILITY_STATE, "
             f"{sql_literal(row.get('TICKET_REQUIRED', ''), 20)} AS TICKET_REQUIRED, "
@@ -592,7 +592,7 @@ def _security_access_review_insert_sql(
             f"{sql_literal(row.get('VERIFICATION_QUERY', ''), 8000)} AS VERIFICATION_QUERY, "
             f"{sql_literal(row.get('ACCESS_TICKET_ID', ''), 200)} AS ACCESS_TICKET_ID, "
             f"{sql_literal(row.get('REVIEW_BY_DATE', ''), 100)} AS REVIEW_BY_DATE, "
-            f"{sql_literal(row.get('IAM_APPROVAL_STATE', row.get('OWNER_APPROVAL_STATUS', 'Requested')), 120)} AS IAM_APPROVAL_STATE, "
+            f"{sql_literal(row.get('IAM_APPROVAL_STATE', row.get('REVIEW_STATUS', 'Requested')), 120)} AS IAM_APPROVAL_STATE, "
             f"{sql_literal(row.get('REVIEW_READINESS', ''), 100)} AS REVIEW_READINESS, "
             f"{sql_literal(row.get('REVIEW_BLOCKERS', ''), 2000)} AS REVIEW_BLOCKERS, "
             f"{safe_int(row.get('REVIEW_SLA_HOURS'))}::NUMBER AS REVIEW_SLA_HOURS, "
@@ -609,8 +609,8 @@ def _security_access_review_insert_sql(
 INSERT INTO {fqn} (
     SNAPSHOT_ID, SNAPSHOT_TS, COMPANY, ENVIRONMENT, DATABASE_CONTEXT,
     FINDING_TYPE, SEVERITY, ENTITY_TYPE, ENTITY, EVENT_COUNT, DISTINCT_SOURCES,
-    LAST_SEEN, OWNER, ESCALATION_TARGET, OWNER_SOURCE, APPROVER,
-    OWNER_APPROVAL_STATUS, ACCESS_REVIEW_STATE, ROLE_CAPABILITY_STATE,
+    LAST_SEEN, OWNER, REVIEW_TARGET, ROUTE_SOURCE, APPROVER,
+    REVIEW_STATUS, ACCESS_REVIEW_STATE, ROLE_CAPABILITY_STATE,
     TICKET_REQUIRED, REVIEW_BY_REQUIRED, PROOF_REQUIRED, VERIFICATION_QUERY,
     ACCESS_TICKET_ID, REVIEW_BY_DATE, IAM_APPROVAL_STATE, REVIEW_READINESS,
     REVIEW_BLOCKERS, REVIEW_SLA_HOURS, VERIFICATION_STATUS, VERIFICATION_RESULT,
@@ -634,7 +634,7 @@ SELECT
     FINDING_TYPE,
     SEVERITY,
     OWNER,
-    ESCALATION_TARGET,
+    REVIEW_TARGET,
     COUNT(*) AS REVIEW_ROWS,
     SUM(EVENT_COUNT) AS TOTAL_EVENTS,
     COUNT_IF(TICKET_REQUIRED = 'Yes') AS TICKET_REQUIRED_ROWS,
@@ -652,7 +652,7 @@ SELECT
     MAX_BY(NEXT_CONTROL_ACTION, SNAPSHOT_TS) AS NEXT_CONTROL_ACTION
 FROM {fqn}
 WHERE {where_clause}
-GROUP BY FINDING_TYPE, SEVERITY, OWNER, ESCALATION_TARGET
+GROUP BY FINDING_TYPE, SEVERITY, OWNER, REVIEW_TARGET
 ORDER BY
     REVIEW_BLOCKER_ROWS DESC,
     TICKET_REQUIRED_ROWS DESC,
@@ -688,7 +688,7 @@ WITH scoped_actions AS (
         COALESCE(VERIFICATION_STATUS, '') AS VERIFICATION_STATUS,
         COALESCE(VERIFICATION_QUERY, PROOF_QUERY, '') AS VERIFICATION_QUERY,
         COALESCE(VERIFICATION_RESULT, '') AS VERIFICATION_RESULT,
-        COALESCE(OWNER_APPROVAL_STATUS, '') AS OWNER_APPROVAL_STATUS,
+        COALESCE(REVIEW_STATUS, '') AS REVIEW_STATUS,
         COALESCE(RECOVERY_SLA_STATE, '') AS RECOVERY_SLA_STATE,
         COALESCE(RECOVERY_EVIDENCE, '') AS RECOVERY_EVIDENCE,
         COALESCE(UPDATED_AT, CREATED_AT) AS LAST_ACTIVITY_TS
@@ -718,11 +718,11 @@ rollup AS (
             )
         ) AS FIXED_WITHOUT_VERIFICATION,
         COUNT_IF(UPPER(STATUS) NOT IN ('FIXED', 'IGNORED') AND DUE_DATE < CURRENT_DATE()) AS OVERDUE_OPEN,
-        COUNT_IF(UPPER(OWNER) IN ('', 'SECURITY/DBA', 'DBA', 'UNKNOWN', 'N/A')) AS OWNER_GAP_ROWS,
+        COUNT_IF(UPPER(OWNER) IN ('', 'SECURITY/DBA', 'DBA', 'UNKNOWN', 'N/A')) AS WORKFLOW_GAP_ROWS,
         COUNT_IF(LENGTH(TRIM(TICKET_ID)) = 0) AS TICKET_GAP_ROWS,
         COUNT_IF(LENGTH(TRIM(APPROVER)) = 0) AS APPROVER_GAP_ROWS,
         COUNT_IF(LENGTH(TRIM(VERIFICATION_QUERY)) = 0) AS VERIFICATION_QUERY_GAP_ROWS,
-        COUNT_IF(UPPER(OWNER_APPROVAL_STATUS) IN ('', 'PENDING', 'REQUESTED', 'REQUIRED')) AS OWNER_APPROVAL_GAP_ROWS,
+        COUNT_IF(UPPER(REVIEW_STATUS) IN ('', 'PENDING', 'REQUESTED', 'REQUIRED')) AS REVIEW_GAP_ROWS,
         COUNT_IF(
             UPPER(RECOVERY_SLA_STATE) ILIKE '%BREACH%'
             OR UPPER(RECOVERY_SLA_STATE) ILIKE '%LATE%'
@@ -745,7 +745,7 @@ SELECT
     CASE
         WHEN OVERDUE_OPEN > 0 THEN 'Overdue closure'
         WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Status needs telemetry'
-        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Control metadata gap'
+        WHEN WORKFLOW_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + REVIEW_GAP_ROWS > 0 THEN 'Control metadata gap'
         WHEN OPEN_ACTIONS > 0 THEN 'Open'
         WHEN VERIFIED_CLOSURES > 0 THEN 'Telemetry closure'
         ELSE 'No recent action'
@@ -753,7 +753,7 @@ SELECT
     CASE
         WHEN OVERDUE_OPEN > 0 THEN 0
         WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 1
-        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 2
+        WHEN WORKFLOW_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + REVIEW_GAP_ROWS > 0 THEN 2
         WHEN OPEN_ACTIONS > 0 THEN 3
         WHEN VERIFIED_CLOSURES > 0 THEN 8
         ELSE 9
@@ -766,11 +766,11 @@ SELECT
     VERIFIED_CLOSURES,
     FIXED_WITHOUT_VERIFICATION,
     OVERDUE_OPEN,
-    OWNER_GAP_ROWS,
+    WORKFLOW_GAP_ROWS,
     TICKET_GAP_ROWS,
     APPROVER_GAP_ROWS,
     VERIFICATION_QUERY_GAP_ROWS,
-    OWNER_APPROVAL_GAP_ROWS,
+    REVIEW_GAP_ROWS,
     RECOVERY_RISK_ROWS,
     NEXT_DUE_DATE,
     LAST_STATUS,
@@ -779,7 +779,7 @@ SELECT
     CASE
         WHEN OVERDUE_OPEN > 0 THEN 'Escalate the security route and ticket before lower-risk access cleanup.'
         WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Reopen the security action or wait for telemetry to confirm closure.'
-        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Complete route, ticket, reviewer, and telemetry metadata.'
+        WHEN WORKFLOW_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + REVIEW_GAP_ROWS > 0 THEN 'Complete route, ticket, reviewer, and telemetry metadata.'
         WHEN OPEN_ACTIONS > 0 THEN 'Work the open security action and retain IAM/Snowflake telemetry.'
         ELSE 'Keep closure status visible for audit review.'
     END AS NEXT_ACTION
@@ -820,7 +820,7 @@ SELECT
     OVERDUE_OPEN,
     FIXED_WITHOUT_VERIFICATION,
     VERIFIED_CLOSURES,
-    OWNER_APPROVAL_GAP_ROWS,
+    REVIEW_GAP_ROWS,
     NEXT_CONTROL_ACTION,
     LAST_ACTIVITY_TS,
     LOAD_TS
@@ -930,7 +930,7 @@ def _security_control_board(
             "DATABASE_CONTEXT": bool(row.get("DATABASE_CONTEXT")),
             "SCOPE_CONFIDENCE": row.get("SCOPE_CONFIDENCE", ""),
             "OWNER": row.get("OWNER", close.get("OWNER", "")),
-            "ESCALATION_TARGET": row.get("ESCALATION_TARGET", ""),
+            "REVIEW_TARGET": row.get("REVIEW_TARGET", ""),
             "APPROVER": row.get("APPROVER", close.get("APPROVER", "")),
             "REVIEW_READINESS": review_readiness,
             "REVIEW_BLOCKERS": row.get("REVIEW_BLOCKERS", ""),

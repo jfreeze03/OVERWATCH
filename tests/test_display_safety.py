@@ -55,13 +55,13 @@ class DisplaySafetyTests(unittest.TestCase):
 
         self.assertEqual(clean_display_text("Open Security Details"), "Open Security Details")
         self.assertEqual(clean_display_text("Owner"), "Owner")
-        self.assertEqual(clean_display_text("Owner route"), "Owner route")
+        self.assertEqual(clean_display_text("Workflow route"), "Workflow route")
 
     def test_operator_copy_normalizer_is_explicit(self):
         from utils.display_safety import clean_display_text, clean_operator_copy
 
-        self.assertEqual(clean_display_text("Owner Evidence"), "Owner Evidence")
-        self.assertEqual(clean_operator_copy("Owner Evidence"), "Route Telemetry")
+        self.assertEqual(clean_display_text("Route Evidence"), "Route Evidence")
+        self.assertEqual(clean_operator_copy("Route Evidence"), "Route Telemetry")
 
     def test_raw_internal_scrubber_still_blocks_default_daily_identifiers(self):
         from utils.display_safety import clean_display_text, contains_raw_source_token, scrub_raw_internal_text
@@ -87,7 +87,7 @@ class DisplaySafetyTests(unittest.TestCase):
             "Required Decision Brief source unavailable | Oldest required source age 552 minutes; "
             "target 60 minutes | Requested: ALFA / ALL / 7 days"
         )
-        self.assertEqual(clean_display_text(raw), "Loading freshness")
+        self.assertEqual(clean_display_text(raw), "Refresh required")
 
 
 if __name__ == "__main__":

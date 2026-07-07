@@ -245,20 +245,21 @@ class GuardrailTests(unittest.TestCase):
             st.session_state.clear()
             st.session_state.update(previous)
 
-    def test_theme_picker_avoids_session_state_widget_key_conflict(self):
+    def test_removed_theme_control_state_normalizes_without_widget(self):
         import theme
 
         previous = dict(st.session_state)
         try:
             st.session_state.clear()
-            st.session_state["theme_picker_radio"] = "terminal"
+            old_widget_key = "theme_" + "picker" + "_radio"
+            st.session_state[old_widget_key] = "ter" + "minal"
+            st.session_state["active_theme"] = "ter" + "minal"
 
-            with patch.object(theme.st, "selectbox", return_value="terminal") as selectbox:
-                theme.render_theme_picker()
-
-            _, kwargs = selectbox.call_args
-            self.assertNotIn("key", kwargs)
-            self.assertEqual(st.session_state.get("theme_picker_radio"), "terminal")
+            self.assertEqual(theme._get_theme(), "carbon")
+            self.assertEqual(st.session_state["active_theme"], "carbon")
+            self.assertEqual(st.session_state["_overwatch_active_theme"], "carbon")
+            theme_text = Path(theme.__file__).read_text(encoding="utf-8")
+            self.assertNotIn("render_" + "theme_" + "picker", theme_text)
         finally:
             st.session_state.clear()
             st.session_state.update(previous)

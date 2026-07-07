@@ -18,8 +18,8 @@ The change layer helps route work by combining object-change telemetry, grant te
 
 | Object | Purpose |
 | --- | --- |
-| `OVERWATCH_CHANGE_RULE` | Change category catalog, risk labels, owner routes, confidence labels, source objects, and business impact defaults. |
-| `OVERWATCH_CHANGE_EVENT` | Normalized change events with object, actor, timestamp, before/after values where available, owner route, and related alert count. |
+| `OVERWATCH_CHANGE_RULE` | Change category catalog, risk labels, workflow routes, confidence labels, source objects, and business impact defaults. |
+| `OVERWATCH_CHANGE_EVENT` | Normalized change events with object, actor, timestamp, before/after values where available, workflow route, and related alert count. |
 | `OVERWATCH_CHANGE_CORRELATION` | Explicit-load possible correlation rows between changes and later alert, cost, security, or workload signals. |
 | `MART_CHANGE_INTELLIGENCE_SUMMARY` | Compact first-paint recent-change and risk summary for Executive Landing. |
 | `SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE` | Refreshes events, possible correlations, and summary rows from existing OVERWATCH marts. |

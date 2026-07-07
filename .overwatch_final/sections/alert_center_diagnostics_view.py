@@ -19,7 +19,7 @@ def _render_operational_ownership_coverage(company: str, environment: str) -> No
         days=35,
     )
     if coverage is None or getattr(coverage, "empty", True):
-        st.caption("Operational ownership coverage is pending. Refresh the enterprise operating model mart to show alert route gaps.")
+        st.caption("Operational workflow route coverage is pending. Refresh the enterprise operating model mart to show alert route gaps.")
         return
     total = int(pd.to_numeric(coverage.get("TOTAL_ITEMS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
     gaps = int(pd.to_numeric(coverage.get("GAP_ITEMS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
@@ -70,14 +70,14 @@ def _render_operational_risk_score_explanation(company: str, environment: str) -
             ("Score", f"{score:.0f}/100"),
             ("Status", str(latest.get("STATUS") or "Unknown")),
             ("Trend", str(latest.get("TREND") or "Stable")),
-            ("Owner", str(latest.get("OWNER_ROUTE") or "Owner gap")),
+            ("Owner", str(latest.get("WORKFLOW_ROUTE") or "Owner gap")),
         ))
         render_priority_dataframe(
             detail,
             title="Operational Risk Score drivers",
             priority_columns=[
                 "SNAPSHOT_TS", "CURRENT_SCORE", "STATUS", "TREND", "TOP_DRIVER",
-                "RECOMMENDED_ACTION", "OWNER_ROUTE", "OWNER_GAP",
+                "RECOMMENDED_ACTION", "WORKFLOW_ROUTE", "WORKFLOW_GAP",
                 "CONFIDENCE", "SOURCE_OBJECTS", "LAST_REFRESHED_TS",
             ],
             sort_by=["SNAPSHOT_TS"],
@@ -123,7 +123,7 @@ def _render_alert_change_context(company: str, environment: str) -> None:
                 "RELATED_TS", "CORRELATION_TYPE", "CHANGE_TYPE", "OBJECT_TYPE",
                 "OBJECT_NAME", "CHANGED_BY", "RELATED_SIGNAL", "RELATED_ENTITY",
                 "CORRELATION_LABEL", "RISK_LEVEL", "BUSINESS_IMPACT",
-                "OWNER_ROUTE", "CONFIDENCE", "EVIDENCE",
+                "WORKFLOW_ROUTE", "CONFIDENCE", "EVIDENCE",
             ],
             sort_by=["RELATED_TS", "CHANGE_TS"],
             ascending=False,
@@ -175,7 +175,7 @@ def _render_alert_action_workflows(company: str, environment: str) -> None:
             title="Alert and incident action workflows",
             priority_columns=[
                 "ACTION_DOMAIN", "FINDING", "SOURCE_TELEMETRY", "ENTITY_TYPE",
-                "ENTITY_NAME", "RISK_LEVEL", "OWNER_ROUTE", "APPROVAL_STATUS",
+                "ENTITY_NAME", "RISK_LEVEL", "WORKFLOW_ROUTE", "APPROVAL_STATUS",
                 "EXECUTION_MODE", "VERIFICATION_STATUS", "EXPECTED_SAVINGS_USD",
                 "ACTUAL_VERIFIED_SAVINGS_USD", "RECOMMENDED_ACTION",
                 "LAST_REFRESHED_TS",
@@ -227,7 +227,7 @@ def _render_alert_command_findings(company: str, environment: str) -> None:
                 priority_columns=[
                     "INVESTIGATION_TYPE", "QUESTION_TEXT", "ROOT_CAUSE_CANDIDATE",
                     "CAUSALITY_LABEL", "EVIDENCE_SUMMARY", "CONFIDENCE",
-                    "OWNER_ROUTE", "RELATED_CHANGES", "RELATED_ALERTS",
+                    "WORKFLOW_ROUTE", "RELATED_CHANGES", "RELATED_ALERTS",
                     "RELATED_SCORECARD_DRIVERS", "RELATED_FORECASTS",
                     "RECOMMENDED_ACTION", "RISK_LEVEL", "EXECUTION_PLAN_REF",
                     "VERIFICATION_PATH", "LAST_REFRESHED_TS",
@@ -244,7 +244,7 @@ def _render_alert_command_findings(company: str, environment: str) -> None:
             title="Alert investigation recommendations",
             priority_columns=[
                 "INVESTIGATION_TYPE", "RECOMMENDED_ACTION", "RISK_LEVEL",
-                "OWNER_ROUTE", "EXECUTION_PLAN_REF", "REVIEW_REQUIRED",
+                "WORKFLOW_ROUTE", "EXECUTION_PLAN_REF", "REVIEW_REQUIRED",
                 "VERIFICATION_PATH", "SAFETY_NOTE", "LAST_REFRESHED_TS",
             ],
             sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],

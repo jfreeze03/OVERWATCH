@@ -91,10 +91,6 @@ def _packet(section: str, metrics: list[dict[str, object]], *, headline: str = "
                     "DETAIL": "Finding detail came from the packet.",
                     "ROUTE_SECTION": section,
                     "ROUTE_WORKFLOW": "Overview",
-                    "OWNER_ROUTE": "Owner route",
-                    "OWNER_ID": "owner-123",
-                    "OWNER_NAME": "Packet Owner",
-                    "OWNER_GAP": False,
                     "SLA_STATE": "Due soon",
                     "FINDING_KEY": "finding-123",
                     "DEDUPE_KEY": "dedupe-123",
@@ -1939,7 +1935,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             environment="ALL",
             window_label="8 days",
             state="Offline",
-            headline="Loading current summary",
+            headline="Refresh required",
             summary="Offline fallback",
             source="MART_SECTION_DECISION_CURRENT",
             freshness_label="Freshness unavailable",
@@ -2020,7 +2016,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         )
         self.assertIsNone(action)
 
-    def test_owner_and_sla_fallbacks_are_honest(self):
+    def test_workflow_and_sla_fallbacks_are_honest(self):
         from sections.decision_workspace_view_model import build_decision_workspace_view_model
         from sections.section_command_brief import SectionCommandBrief, SectionCommandSignal
 
@@ -2036,17 +2032,15 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             freshness_label="Updated 8m ago",
             loaded_at="2026-06-25T10:08:00",
             exceptions=(
-                SectionCommandSignal(severity="High", signal="Missing owner and SLA"),
-                SectionCommandSignal(severity="High", signal="Owner gap", owner_gap=True),
-                SectionCommandSignal(severity="Info", signal="Explicit route", owner_route="Assigned", sla_state="On track"),
+                SectionCommandSignal(severity="High", signal="Missing workflow and SLA"),
+                SectionCommandSignal(severity="Info", signal="Explicit workflow", route_workflow="Cost Explorer", sla_state="On track"),
             ),
         )
         model = build_decision_workspace_view_model(brief, current_workflow="Overview")
-        self.assertEqual(model.findings[0].owner, "Owner unavailable")
+        self.assertEqual(model.findings[0].workflow, "Workflow unavailable")
         self.assertEqual(model.findings[0].sla, "SLA unavailable")
-        self.assertEqual(model.findings[1].owner, "Owner gap")
-        self.assertEqual(model.findings[2].owner, "Assigned")
-        self.assertEqual(model.findings[2].sla, "On track")
+        self.assertEqual(model.findings[1].workflow, "Cost Explorer")
+        self.assertEqual(model.findings[1].sla, "On track")
         aged = SectionCommandBrief(
             section="Cost & Contract",
             company="ALFA",
@@ -2062,7 +2056,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         )
         self.assertEqual(build_decision_workspace_view_model(aged, current_workflow="Overview").findings[0].sla, "No SLA")
 
-    def test_decision_workspace_renders_entity_owner_age_sla_without_evidence_query(self):
+    def test_decision_workspace_renders_entity_workflow_age_sla_without_evidence_query(self):
         from sections.section_command_brief import SectionCommandBrief, SectionCommandSignal
         from sections.decision_workspace_view_model import build_decision_workspace_view_model
 
@@ -2085,8 +2079,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                     entity_type="warehouse",
                     entity_id="PROD_WH",
                     detail="$6.7K movement",
-                    owner_name="Warehouse Owner",
-                    owner_id="owner-123",
+                    route_workflow="Cost Explorer",
                     first_seen_ts="2026-06-25 09:00:00",
                     due_ts="2026-06-25 12:00:00",
                     age_minutes=68,
@@ -2101,14 +2094,14 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         finding = model.findings[0]
         self.assertEqual(finding.entity_type, "warehouse")
         self.assertEqual(finding.entity_id, "PROD_WH")
-        self.assertEqual(finding.owner, "Warehouse Owner")
+        self.assertEqual(finding.workflow, "Cost Explorer")
         self.assertIn("Seen 1h ago", finding.first_seen_label)
         self.assertIn("Due in 2h", finding.due_label)
         self.assertEqual(finding.evidence_id, "COST-EVIDENCE-1")
 
         markup = _render_markup(brief)
         self.assertIn("PROD_WH", markup)
-        self.assertIn("Warehouse Owner", markup)
+        self.assertIn("Cost Explorer", markup)
         self.assertIn("Seen 1h ago", markup)
         self.assertIn("Due in 2h", markup)
         self.assertIn("Evidence COST-EVIDENCE-1", markup)

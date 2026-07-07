@@ -48,7 +48,7 @@ def render_alert_history_pane(
             priority_columns=[
                 "LIFECYCLE_STATE", "SLA_STATE", "SEVERITY", "STATUS",
                 "CATEGORY", "ALERT_TYPE", "ENTITY_NAME", "OWNER",
-                "ESCALATION_TARGET", "DELIVERY_STATUS", "ACTION_QUEUE_STATE",
+                "REVIEW_TARGET", "DELIVERY_STATUS", "ACTION_QUEUE_STATE",
                 "NEXT_ACTION",
             ],
             sort_by=["LIFECYCLE_STATE", "SEVERITY", "ALERT_TS"],
@@ -101,7 +101,7 @@ def render_alert_history_pane(
             "ALERT_TS", "ALERT_AGE_HOURS", "SLA_TARGET_HOURS", "SLA_STATE",
             "SEVERITY", "STATUS", "CATEGORY", "ALERT_TYPE",
             "ENTITY_NAME", "ENVIRONMENT", "MESSAGE", "SUGGESTED_ACTION",
-            "OWNER", "ESCALATION_TARGET", "ESCALATED_AT", "ESCALATION_ACK_AT",
+            "OWNER", "REVIEW_TARGET", "ESCALATED_AT", "ESCALATION_ACK_AT",
             "DELIVERY_STATUS", "LAST_DELIVERY_AT",
         ],
         sort_by=["TRIAGE_PRIORITY", "ALERT_TS"],
@@ -194,7 +194,7 @@ def render_alert_history_pane(
         audit_owner = st.text_input(
             "Route",
             key="alert_center_audit_owner",
-            placeholder="DBA / Cost owner / Security route",
+            placeholder="DBA / Cost attribution / Security route",
         )
         audit_note = st.text_area(
             "Audit note",

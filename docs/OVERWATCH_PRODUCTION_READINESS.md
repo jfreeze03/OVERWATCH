@@ -33,11 +33,11 @@ do not run live Snowflake regression unless credentials/auth are available.
      - Security Monitoring
    - Primary route labels match `route_registry.PRIMARY_SECTION_TITLES`.
    - Compatibility/deep-link routes normalize to current workflow locations:
-     - Cost Center -> Cost & Contract workflow
-     - Account Health -> DBA Control Room workflow
-     - Security Posture -> Security Monitoring workflow
+     - Executive Briefing -> Executive Landing workflow
+     - Cost Intelligence -> Cost & Contract workflow
      - Task Management -> Workload Operations workflow
-     - Change Drift / Change & Drift -> Workload Operations delegated workflow path, if still used by saved links.
+     - Security & Access -> Security Monitoring workflow
+     - Alert History -> Alert Center workflow
 6. Performance smoke thresholds:
    - Follow `perf_tests/README.md`.
    - Use the section smoke runner only against an available local or staged URL.

@@ -48,7 +48,7 @@ class AlertActionQueueTests(unittest.TestCase):
             "MESSAGE": "Credits increased by 50 percent.",
             "SUGGESTED_ACTION": "Open Cost & Contract.",
             "PROOF_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY LIMIT 10",
-            "OWNER": "DBA / Cost owner",
+            "OWNER": "DBA / Cost attribution",
         }])
 
         old_path = alerts.alert_history_to_actions(rows, company="ALFA")
@@ -62,7 +62,7 @@ class AlertActionQueueTests(unittest.TestCase):
         self.assertEqual(action["Category"], "Cost Control")
         self.assertEqual(action["Entity Type"], "Alert Entity")
         self.assertEqual(action["Entity"], "WH_ALFA_OVERWATCH")
-        self.assertEqual(action["Owner"], "DBA / Cost owner")
+        self.assertEqual(action["Owner"], "DBA / Cost attribution")
         self.assertEqual(action["Verification Status"], "Pending")
         self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
 
@@ -82,7 +82,7 @@ class AlertActionQueueTests(unittest.TestCase):
                 "MESSAGE": "2 failed task runs.",
                 "SUGGESTED_ACTION": "Review task failure.",
                 "PROOF_QUERY": "ALTER TASK BAD_TASK RESUME",
-                "OWNER": "Pipeline Owner",
+                "OWNER": "Pipeline Reviewer",
                 "SLA_TARGET_HOURS": 4,
                 "ALERT_AGE_HOURS": 6.5,
                 "SLA_STATE": "Overdue",

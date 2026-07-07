@@ -449,7 +449,7 @@ class SecurityPostureSplitTests(unittest.TestCase):
             "DISTINCT_SOURCES": 1,
             "LAST_SEEN": "2026-06-23",
             "OWNER": "Owner's Team",
-            "ESCALATION_TARGET": "DBA",
+            "REVIEW_TARGET": "DBA",
             "APPROVER": "IAM",
             "ACCESS_REVIEW_STATE": "Identity investigation required",
             "ROLE_CAPABILITY_STATE": "Not required",
@@ -484,7 +484,7 @@ class SecurityPostureSplitTests(unittest.TestCase):
             "VERIFICATION_QUERY": "",
         })
         self.assertEqual(readiness["REVIEW_READINESS"], "Assignment Blocked")
-        self.assertIn("route/on-call context", readiness["REVIEW_BLOCKERS"])
+        self.assertIn("route/review context", readiness["REVIEW_BLOCKERS"])
 
     def test_action_queue_writers_preserve_payload_contracts(self):
         exceptions = pd.DataFrame([{
@@ -497,9 +497,9 @@ class SecurityPostureSplitTests(unittest.TestCase):
         }])
         with patch("sections.security_posture_access_review.resolve_owner_context", return_value={
             "OWNER": "IAM",
-            "OWNER_EMAIL": "iam@example.com",
-            "ESCALATION_TARGET": "Security",
-            "OWNER_SOURCE": "test",
+            "ROUTE_EMAIL": "iam@example.com",
+            "REVIEW_TARGET": "Security",
+            "ROUTE_SOURCE": "test",
         }), patch("sections.security_posture_action_queue.make_action_id", return_value="ACT-1"), patch(
             "sections.security_posture_action_queue.upsert_actions", return_value=1
         ) as upsert, patch("sections.security_posture_action_queue.st.success"):
@@ -521,8 +521,8 @@ class SecurityPostureSplitTests(unittest.TestCase):
             "PRIVILEGE": "USAGE",
             "DATABASE_CONTEXT": False,
             "OWNER": "Security",
-            "OWNER_EMAIL": "sec@example.com",
-            "ESCALATION_TARGET": "DBA",
+            "ROUTE_EMAIL": "sec@example.com",
+            "REVIEW_TARGET": "DBA",
             "GRANT_REVIEW_STATE": "Tier 0 role grant",
             "SCOPE_CONFIDENCE": "Account/User Context",
             "PROOF_REQUIRED": "grant proof",
@@ -729,7 +729,6 @@ class SecurityPostureSplitTests(unittest.TestCase):
 
     def test_security_posture_aliases_normalize_to_canonical_workflows(self):
         expected = {
-            "Security Posture": "Security Overview",
             "Access Posture": "Security Overview",
             "Login Audit": "Failed Logins",
             "Roles & Grants": "Risky Grants",

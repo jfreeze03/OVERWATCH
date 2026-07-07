@@ -199,7 +199,7 @@ def render_coco_warehouse_panel(model: ExecutiveCommandCenterModel) -> None:
             f'<div class="ow-coco-table-row"><strong>{_html(item.warehouse)}</strong><span>{_html(item.credits_text)}</span><em>{_html(item.pct_text)}</em></div>'
             for item in model.warehouse_slices
         )
-        or '<div class="ow-coco-table-row"><strong>Warehouse split</strong><span>Loading current summary</span><em>Packet</em></div>'
+        or '<div class="ow-coco-table-row"><strong>Warehouse split</strong><span>Refresh required</span><em>Packet</em></div>'
     )
     st.html(
         '<section class="ow-coco-chart-card" aria-label="Top Warehouses by Credits">'

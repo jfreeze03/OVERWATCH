@@ -85,7 +85,7 @@ def _build_cost_closure_analytics(queue: pd.DataFrame, credit_price: float) -> t
 
     status = _queue_series(view, "STATUS").fillna("").astype(str).str.upper()
     category = _queue_series(view, "CATEGORY").fillna("").astype(str).str.upper()
-    approval = _queue_series(view, "OWNER_APPROVAL_STATUS").fillna("").astype(str).str.upper()
+    approval = _queue_series(view, "REVIEW_STATUS").fillna("").astype(str).str.upper()
     verification = _queue_series(view, "VERIFICATION_STATUS").fillna("").astype(str).str.upper()
     recovery = _queue_series(view, "RECOVERY_SLA_STATE").fillna("").astype(str).str.upper()
     verification_result = _queue_series(view, "VERIFICATION_RESULT").apply(_text_present)
@@ -553,7 +553,7 @@ def _build_cost_advisor_board(
                         safe_next_action="Open the service lens and map the service to its owning workload or Snowflake feature.",
                         proof_required="The next completed service-cost window should confirm whether the increase persists.",
                         do_not_do="Do not attribute account-level service spend to a warehouse or database without direct evidence.",
-                        confidence="High - service cost comes from official account metering; owner route may need more telemetry.",
+                        confidence="High - service cost comes from official account metering; workflow route may need more telemetry.",
                         source="Account service cost lens",
                     )
 

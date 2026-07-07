@@ -140,7 +140,7 @@ perf **A**.
 - Split `theme.py` into focused modules:
   `theme/tokens.py` (one canonical token set), `theme/streamlit_overrides.py`,
   `theme/components.py` (kit: KPI grids, decision workspace, empty states,
-  transitions), `theme/carbon.py`, `theme/terminal.py`, and a thin
+  transitions), `theme/carbon.py`, and a thin
   `inject_theme()` assembler. Byte-output equivalence test for the assembled
   CSS during migration (mirror the `mart_setup` split pattern already used for
   SQL).
@@ -151,15 +151,14 @@ perf **A**.
 
 ### Phase 2.2 — Accessibility pass
 - Raise minimum operational label size to 0.75rem; run and document a WCAG AA
-  contrast audit for both themes (muted text `#7b9cab` on `#0B1117` is the
+  contrast audit for the carbon theme (muted text `#7b9cab` on `#0B1117` is the
   known suspect); fix failures via token changes only.
 - Add a skip-to-main link and a focus target at the section body marker.
 - Verify with an axe-core scan in the Playwright smoke run (playwright is
   already a dev dependency).
 
 ### Phase 2.3 — Config/theme alignment and skeletons
-- Align `.streamlit/config.toml` `base` with the default `carbon` theme (or
-  switch the default to `terminal` — one decision, documented).
+- Align `.streamlit/config.toml` `base` with the single production carbon theme.
 - Add a Command Brief skeleton state (static HTML using existing
   `ow-kpi-hero-grid` / metric-ribbon classes) shown between the transition
   overlay and the packet response; remove the skeleton on brief render.

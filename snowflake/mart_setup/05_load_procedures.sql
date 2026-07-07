@@ -2835,7 +2835,7 @@ BEGIN
     SNAPSHOT_TS,
     COMPANY,
     ENVIRONMENT,
-    'Data Trust',
+    'Source Freshness',
     'Source freshness',
     SOURCE_NAME,
     STATUS,
@@ -3226,7 +3226,7 @@ BEGIN
     :snapshot_ts,
     CURRENT_TIMESTAMP(),
     'SUCCESS',
-    'Refreshed data trust, workflow route coverage, value ledger, and app self-observability summaries.'
+    'Refreshed source freshness, workflow route coverage, value ledger, and app self-observability summaries.'
   );
 
   RETURN 'OVERWATCH enterprise operating model refreshed.';
@@ -4119,7 +4119,7 @@ BEGIN
     SELECT
       c.COMPANY,
       'ALL',
-      'DATA_TRUST',
+      'SOURCE_FRESHNESS',
       GREATEST(0, LEAST(100,
         100
         - COALESCE(trust.ISSUE_COUNT, 0) * 10
@@ -4128,7 +4128,7 @@ BEGIN
       IFF(COALESCE(trust.ISSUE_COUNT, 0) > 0 OR COALESCE(trust.SOURCE_COUNT, 0) = 0, 'Worsening', 'Stable'),
       -1 * (COALESCE(trust.ISSUE_COUNT, 0) * 10 + IFF(COALESCE(trust.SOURCE_COUNT, 0) = 0, 25, 0)),
       COALESCE(trust.TOP_DRIVER, 'Data trust sources are current.'),
-      'Open DBA Control Room data trust diagnostics and refresh stale source marts.',
+      'Open DBA Control Room source freshness diagnostics and refresh stale source marts.',
       COALESCE(trust.WORKFLOW_ROUTE, 'DBA / Platform'),
       FALSE,
       0::NUMBER(18,2),
@@ -4248,7 +4248,7 @@ BEGIN
     :snapshot_ts,
     CURRENT_TIMESTAMP(),
     'SUCCESS',
-    'Refreshed Executive Scorecard summary and driver history for health, cost, security, operational risk, data trust, and production readiness.'
+    'Refreshed Executive Scorecard summary and driver history for health, cost, security, operational risk, source freshness, and production readiness.'
   );
 
   RETURN 'OVERWATCH executive scorecard refreshed.';
@@ -7817,7 +7817,7 @@ BEGIN
         WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Workload failures are the top operating risk.'
         ELSE 'No executive exception is above the action threshold.'
       END AS DECISION_HEADLINE,
-      'Leadership view of cost, Cortex AI, alerts, workload risk, security exposure, and open action ownership.' AS DECISION_SUMMARY,
+      'Executive view of cost, Cortex AI, alerts, workload risk, security exposure, and open action ownership.' AS DECISION_SUMMARY,
       CASE
         WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Critical/high platform issue'
         WHEN CORTEX_ALERTS > 0 THEN 'Cortex predictive cost risk'

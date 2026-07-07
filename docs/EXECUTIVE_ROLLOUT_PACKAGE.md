@@ -26,7 +26,7 @@ Risk Review Teams.
    - Reduces Snowflake cost exposure.
    - Improves incident detection and response.
    - Strengthens governance and operational accountability.
-   - Gives leadership a trusted operating view of Snowflake health and risk.
+   - Gives executives a trusted operating view of Snowflake health and risk.
 
 4. Current Readiness
    - Admin pilot status: Go.
@@ -39,7 +39,7 @@ Risk Review Teams.
      telemetry signal feeding those gates, not a self-assigned grade.
    - Remaining issue: true telemetry freshness gaps, including Trexis coverage.
 
-5. Leadership Decision Requested
+5. Executive Decision Requested
    - Approve admin pilot expansion.
    - Approve controlled migration to target OVERWATCH roles.
    - Prioritize telemetry freshness closure.
@@ -49,7 +49,7 @@ Risk Review Teams.
 
 ### 1. Executive Summary
 
-OVERWATCH is an enterprise Snowflake Command Center built to help leadership,
+OVERWATCH is an enterprise Snowflake Command Center built to help executives,
 governance teams, DBAs, infrastructure leaders, and data engineering leaders
 understand Snowflake health, cost, risk, reliability, ownership, and operational
 readiness from one trusted platform.
@@ -62,14 +62,14 @@ business value after action is taken.
 
 The business value is straightforward: better cost control, faster issue
 detection, faster root-cause analysis, stronger governance, clearer ownership,
-and better leadership visibility.
+and better executive visibility.
 
 OVERWATCH matters now because Snowflake usage, AI/Cortex consumption, warehouse
 activity, user-driven workload patterns, and production dependency are all
-increasing. Leadership needs a consistent operating picture before cost,
+increasing. Executive sponsors need a consistent operating picture before cost,
 performance, security, or reliability issues become harder to control.
 
-Expected leadership outcomes:
+Expected executive outcomes:
 
 - Clearer Snowflake operating health.
 - Earlier warning of cost, performance, and security risk.
@@ -114,10 +114,10 @@ Boundaries:
 Intended users:
 
 - DBAs and Snowflake administrators.
-- Infrastructure leadership.
-- Data engineering leadership.
+- Infrastructure leaders.
+- Data engineering leaders.
 - Security and governance teams.
-- Executive technology leadership.
+- Executive technology leaders.
 - Operators responsible for cost, workload, and reliability follow-up.
 
 Supported workflows:
@@ -135,17 +135,17 @@ Supported workflows:
 
 | Capability | Purpose | Primary Users | Business Value | Operational Value |
 |---|---|---|---|---|
-| Data Trust Layer | Shows freshness, source health, and confidence. | DBA, Data Engineering, Leadership | Prevents decisions based on stale or incomplete data. | Identifies missing or stale telemetry before action is taken. |
+| Source Freshness Layer | Shows freshness, source health, and confidence. | DBA, Data Engineering, Executives | Prevents decisions based on stale or incomplete data. | Identifies missing or stale telemetry before action is taken. |
 | Workflow Route Mapping | Identifies who owns warehouses, users, schemas, tasks, alerts, and actions. | DBA, Directors, Operators | Reduces accountability gaps. | Speeds routing and escalation. |
-| Production Readiness | Measures deployment, privilege, freshness, validation, drift, and environment readiness. | Leadership, Governance, DBA | Enables clear go/no-go decisions. | Keeps operational blockers visible. |
-| Executive Scorecards | Summarizes health, cost, security, operational risk, trust, and readiness. | CIO, CTO, VP, Directors | Gives leadership a trendable operating picture. | Highlights top drivers and actions. |
-| Forecasting | Projects spend, storage, warehouse pressure, and SLA risk. | Leadership, Finance, DBA | Enables earlier budget and capacity decisions. | Identifies pressure before incidents occur. |
+| Production Readiness | Measures deployment, privilege, freshness, validation, drift, and environment readiness. | Executives, Governance, DBA | Enables clear go/no-go decisions. | Keeps operational blockers visible. |
+| Executive Scorecards | Summarizes health, cost, security, operational risk, source freshness, and readiness. | CIO, CTO, VP, Directors | Gives executives a trendable operating picture. | Highlights top drivers and actions. |
+| Forecasting | Projects spend, storage, warehouse pressure, and SLA risk. | Executives, Finance, DBA | Enables earlier budget and capacity decisions. | Identifies pressure before incidents occur. |
 | Change Intelligence | Shows what changed, who changed it, and possible correlations. | DBA, Security, Data Engineering | Reduces time spent reconstructing incident context. | Accelerates investigation after failures or spikes. |
 | Closed Loop Operations | Tracks detect, analyze, recommend, approve, execute, verify, and measure. | DBA, Governance, Operators | Ensures actions are controlled and auditable. | Prevents recommendations from disappearing without follow-up. |
-| Command Center | Correlates cost, performance, alerts, ownership, trust, security, change, forecasting, and value. | DBA, Leadership, Operators | Converts raw signals into prioritized decisions. | Provides root-cause candidates, evidence, owner, impact, and next action. |
-| Value Ledger | Tracks expected savings, actual verified savings, evidence, owner, and status. | Leadership, Finance, DBA | Separates estimates from realized value. | Creates proof of operational value. |
+| Command Center | Correlates cost, performance, alerts, ownership, source freshness, security, change, forecasting, and value. | DBA, Executives, Operators | Converts raw signals into prioritized decisions. | Provides root-cause candidates, evidence, owner, impact, and next action. |
+| Value Ledger | Tracks expected savings, actual verified savings, evidence, owner, and status. | Executives, Finance, DBA | Separates estimates from realized value. | Creates proof of operational value. |
 | Security Monitoring | Monitors privileges, sensitive changes, role activity, and drift. | Security, DBA, Governance | Reduces access and compliance risk. | Identifies review targets and ownership gaps. |
-| Cost Monitoring | Tracks spend, anomalies, drivers, forecasts, and savings opportunities. | DBA, Finance, Leadership | Improves cost control and contract awareness. | Identifies cost drivers and action paths. |
+| Cost Monitoring | Tracks spend, anomalies, drivers, forecasts, and savings opportunities. | DBA, Finance, Executives | Improves cost control and contract awareness. | Identifies cost drivers and action paths. |
 | Workload Monitoring | Tracks query, task, procedure, and warehouse health. | DBA, Data Engineering | Reduces performance and reliability risk. | Speeds diagnosis of slow or failing workloads. |
 | Alert Center | Organizes proactive and reactive alert workflows. | DBA, Operators | Improves response visibility. | Centralizes alert triage, routing, and action tracking. |
 | DBA Control Room | Primary DBA operating workspace. | DBA | Improves operational consistency. | Centralizes health, readiness, workload, and investigation flows. |
@@ -256,7 +256,7 @@ Value channels:
 - Improved governance through readiness, validation, role checks, and review
   gates.
 - Better operational visibility through ownership mapping and action queues.
-- Better leadership visibility through scorecards, readiness summaries, and
+- Better executive visibility through scorecards, readiness summaries, and
   value reporting.
 - Reduced manual effort by consolidating DBA checks into a single operating
   model.
@@ -283,7 +283,7 @@ Measurable value framework:
 | Freshness compliance | Measures trust in telemetry. | Increase |
 | Workflow route coverage | Measures accountable routing. | Increase |
 | Production readiness score | Measures deployment and operating maturity. | Increase to Ready |
-| Executive scorecard trends | Measures leadership health signals. | Improve |
+| Executive scorecard trends | Measures executive health signals. | Improve |
 | Repeat incidents | Measures whether root causes are being addressed. | Decrease |
 | Forecast accuracy | Measures reliability of planning signals. | Improve |
 | Command Center findings closed | Measures operating follow-through. | Increase |
@@ -345,10 +345,10 @@ Current schema drift posture:
 
 - Move from pilot to standard operating model.
 - Mature closed-loop operations and verification workflow.
-- Integrate readiness and value reporting into leadership cadence.
+- Integrate readiness and value reporting into executive cadence.
 - Improve forecast accuracy and alert response reporting.
 - Use OVERWATCH as the primary Snowflake command center for operations,
-  governance, and leadership review.
+  governance, and executive review.
 
 ### 11. Rollout Recommendation
 
@@ -375,12 +375,12 @@ Conditions before broad production:
 Expected outcome:
 
 OVERWATCH becomes the enterprise operating layer for Snowflake administration,
-giving leadership better cost control, risk visibility, operational
+giving executives better cost control, risk visibility, operational
 accountability, and proof of value.
 
-## One-Page Leadership Summary
+## One-Page Executive Summary
 
-OVERWATCH is an enterprise Snowflake Command Center that gives leadership and
+OVERWATCH is an enterprise Snowflake Command Center that gives executives and
 operations teams one trusted view of Snowflake cost, performance, security,
 ownership, readiness, alerts, and operational risk.
 
@@ -398,7 +398,7 @@ routing, interim access, or target-role approval. The remaining production
 review item is telemetry freshness, especially Trexis coverage, which is now
 correctly treated as equivalent to ALFA.
 
-Leadership recommendation:
+Executive recommendation:
 
 - Proceed with admin pilot expansion.
 - Complete telemetry remediation.

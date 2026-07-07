@@ -159,6 +159,11 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertTrue(summary["metric_semantic_registry_passed"])
         self.assertEqual(summary["metric_semantic_registry_failure_count"], 0)
         self.assertGreater(summary["metric_semantic_registry_row_count"], 0)
+        self.assertTrue(summary["metric_render_mapping_passed"])
+        self.assertEqual(summary["metric_render_mapping_failure_count"], 0)
+        self.assertGreater(summary["metric_render_mapping_row_count"], 0)
+        self.assertGreater(summary["metric_render_mapping_semantic_catalog_count"], 0)
+        self.assertGreater(summary["metric_render_mapping_section_contract_count"], 0)
         self.assertTrue(summary["workload_formula_semantics_passed"])
         self.assertEqual(summary["workload_formula_semantics_failure_count"], 0)
         self.assertTrue(summary["query_budget_gate_passed"])
@@ -222,6 +227,7 @@ class LaunchReadinessTests(unittest.TestCase):
             "snowflake_cli_live_validation",
             "setup_migration_live_validation",
             "metric_semantic_registry",
+            "metric_render_mapping",
             "workload_formula_semantics",
             "query_budget_recording",
             "connection_policy_gate",
@@ -308,6 +314,7 @@ class LaunchReadinessTests(unittest.TestCase):
         formula_live_gate = self._read_json("artifacts/launch_readiness/formula_live_gate_results.json")
         snowflake_cli_gate = self._read_json("artifacts/launch_readiness/snowflake_cli_live_gate_results.json")
         metric_gate = self._read_json("artifacts/launch_readiness/metric_semantic_gate_results.json")
+        metric_mapping_gate = self._read_json("artifacts/launch_readiness/metric_render_mapping_gate_results.json")
         workload_gate = self._read_json("artifacts/launch_readiness/workload_formula_gate_results.json")
         self.assertTrue(formula_gate["passed"], formula_gate)
         self.assertEqual(formula_gate["failure_count"], 0, formula_gate)
@@ -321,6 +328,10 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertFalse(snowflake_cli_gate["snowflake_cli_live_executed"], snowflake_cli_gate)
         self.assertTrue(metric_gate["passed"], metric_gate)
         self.assertEqual(metric_gate["failure_count"], 0, metric_gate)
+        self.assertTrue(metric_mapping_gate["passed"], metric_mapping_gate)
+        self.assertEqual(metric_mapping_gate["failure_count"], 0, metric_mapping_gate)
+        self.assertGreater(metric_mapping_gate["metric_mapping_row_count"], 0, metric_mapping_gate)
+        self.assertGreater(metric_mapping_gate["semantic_catalog_count"], 0, metric_mapping_gate)
         self.assertTrue(workload_gate["passed"], workload_gate)
 
         self.assertTrue(REQUIRED_LAUNCH_READINESS_ARTIFACTS.issubset(set(manifest["files"])))

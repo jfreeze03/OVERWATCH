@@ -48,7 +48,7 @@ from sections.shell_helpers import (
 )
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import render_section_command_brief
-from sections.decision_workspace_controls import make_decision_refresh_action, make_evidence_action
+from sections.decision_workspace_controls import make_decision_refresh_action, make_evidence_action, should_render_daily_diagnostics
 from sections.decision_workspace_performance import with_section_first_paint_entry
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.decision_workspace_state import section_state_from_brief
@@ -60,8 +60,6 @@ day_window_selectbox = _lazy_util("day_window_selectbox")
 for _exports in (_common_exports, _data_exports):
     for _name in getattr(_exports, "__all__", ()):
         globals().setdefault(_name, getattr(_exports, _name))
-
-
 
 def _apply_queued_security_workflow() -> None:
     requested_view = st.session_state.pop("security_posture_requested_view", None)
@@ -189,14 +187,9 @@ def render() -> None:
 
         days = int(st.session_state.setdefault("security_posture_evidence_days", 30) or 30)
         security_labels = {
-            SECURITY_OVERVIEW_WORKFLOW: "Overview",
-            FAILED_LOGINS_WORKFLOW: "Failed Logins",
-            RISKY_GRANTS_WORKFLOW: "Risky Grants",
-            PRIVILEGE_SPRAWL_WORKFLOW: "Privilege Sprawl",
-            ACCESS_CHANGES_WORKFLOW: "Access Changes",
-            DATA_SHARING_EXPOSURE_WORKFLOW: "Data Sharing",
-            SECURITY_ALERTS_WORKFLOW: "Security Alerts",
-            SECURITY_ADMIN_ADVANCED_WORKFLOW: "Admin",
+            SECURITY_OVERVIEW_WORKFLOW: "Overview", FAILED_LOGINS_WORKFLOW: "Failed Logins", RISKY_GRANTS_WORKFLOW: "Risky Grants",
+            PRIVILEGE_SPRAWL_WORKFLOW: "Privilege Sprawl", ACCESS_CHANGES_WORKFLOW: "Access Changes", DATA_SHARING_EXPOSURE_WORKFLOW: "Data Sharing",
+            SECURITY_ALERTS_WORKFLOW: "Security Alerts", SECURITY_ADMIN_ADVANCED_WORKFLOW: "Admin",
         }
         active_view = render_primary_section_tabs(
             label="Security Monitoring primary navigation",
@@ -228,6 +221,18 @@ def render() -> None:
             )
         _render_security_first_paint_shell(active_view, company, environment, int(days or 30))
     days = int(st.session_state.get("security_posture_evidence_days", days) or days)
+    security_decision_mode = str(st.session_state.get("_security_monitoring_decision_mode") or "")
+    evidence_requested = bool(st.session_state.get("security_posture_load_evidence"))
+    security_summary = st.session_state.get("security_posture_summary")
+    security_summary_current = (
+        security_summary is not None
+        and not getattr(security_summary, "empty", True)
+        and _security_meta_matches(st.session_state.get("security_posture_meta", {}), _security_scope_meta(company, environment, days))
+    )
+    if active_view == SECURITY_OVERVIEW_WORKFLOW and not evidence_requested and not security_summary_current:
+        if should_render_daily_diagnostics("Security Monitoring", active_view, security_decision_mode):
+            _render_advanced_security_evidence(company, environment)
+        return
     renderer = SECURITY_POSTURE_RENDERERS.get(active_view)
     if renderer is not None:
         renderer(company, environment, days)

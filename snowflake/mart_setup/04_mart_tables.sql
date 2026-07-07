@@ -1850,7 +1850,7 @@ USING (
     ('ALERT_EVENTS', 'Alert events', 'ALERT_EVENTS', 'APP_TABLE', 'Alert Center', 60, 'exact', 'Alert Center may miss active incidents or routed ownership gaps.', 'DBA / Alert reviewer', TRUE),
     ('OVERWATCH_ACTION_QUEUE', 'Action queue', 'OVERWATCH_ACTION_QUEUE', 'APP_TABLE', 'DBA Control Room', 60, 'estimated', 'Owned action, closure, and savings proof may be incomplete.', 'DBA Review', TRUE),
     ('MART_DBA_CONTROL_ROOM', 'Control-room summary', 'MART_DBA_CONTROL_ROOM', 'MART', 'DBA Control Room', 120, 'allocated', 'Executive and DBA triage may not reflect the latest operational state.', 'DBA Review', TRUE),
-    ('MART_EXECUTIVE_OBSERVABILITY', 'Executive observability', 'MART_EXECUTIVE_OBSERVABILITY', 'MART', 'Executive Landing', 120, 'allocated', 'Leadership first paint may be stale or incomplete.', 'DBA / Platform', TRUE),
+    ('MART_EXECUTIVE_OBSERVABILITY', 'Executive observability', 'MART_EXECUTIVE_OBSERVABILITY', 'MART', 'Executive Landing', 120, 'allocated', 'Executive first paint may be stale or incomplete.', 'DBA / Platform', TRUE),
     ('OVERWATCH_USAGE_LOG', 'App usage and query log', 'OVERWATCH_USAGE_LOG', 'APP_TABLE', 'DBA Control Room', 1440, 'fallback', 'App self-observability may have no query-tag/runtime evidence.', 'DBA / Platform', TRUE)
   AS t(SOURCE_KEY, SOURCE_NAME, SOURCE_OBJECT, SOURCE_CLASS, SURFACE, TARGET_FRESHNESS_MIN, DEFAULT_CONFIDENCE, BUSINESS_IMPACT, WORKFLOW_ROUTE, ENABLED)
 ) src
@@ -2282,7 +2282,7 @@ USING (
     ('COST_EFFICIENCY', 'Cost Efficiency Score', 20, 'Cost', 70, 85, 'DBA / Cost attribution', 'FACT_COST_MONITORING_SIGNAL; ALERT_EVENTS; MART_EXECUTIVE_VALUE_LEDGER', 'Open Cost & Contract, explain top cost drivers, and route verified savings work.', TRUE),
     ('SECURITY', 'Security Score', 30, 'Security', 75, 88, 'Security / DBA', 'ALERT_EVENTS; MART_OPERATIONAL_ROUTE_COVERAGE', 'Open Security Monitoring and review privileged, access, ownership, and route-gap drivers.', TRUE),
     ('OPERATIONAL_RISK', 'Operational Risk Score', 40, 'Operations', 70, 85, 'DBA Review', 'ALERT_EVENTS; MART_OPERATIONAL_ROUTE_COVERAGE; OVERWATCH_ACTION_QUEUE', 'Open Alert Center and DBA Control Room to assign route, SLA, and next action.', TRUE),
-    ('DATA_TRUST', 'Data Trust Score', 50, 'Data Trust', 75, 90, 'DBA / Platform', 'MART_DATA_TRUST_SUMMARY', 'Open DBA Control Room data trust diagnostics and refresh stale source marts.', TRUE),
+    ('SOURCE_FRESHNESS', 'Source Freshness Score', 50, 'Source Freshness', 75, 90, 'DBA / Platform', 'MART_DATA_TRUST_SUMMARY', 'Open DBA Control Room source freshness diagnostics and refresh stale source marts.', TRUE),
     ('PRODUCTION_READINESS', 'Production Readiness Score', 60, 'Production Readiness', 75, 90, 'DBA / Platform', 'MART_PRODUCTION_READINESS_SUMMARY; OVERWATCH_PRODUCTION_VALIDATION_STATUS', 'Open DBA Control Room production readiness validation before expanding usage.', TRUE)
   AS t(SCORE_KEY, SCORE_NAME, DISPLAY_ORDER, SCORE_DOMAIN, RED_BELOW, YELLOW_BELOW, WORKFLOW_ROUTE, DRIVER_SOURCE, RECOMMENDED_ACTION, ENABLED)
 ) src
@@ -3395,7 +3395,7 @@ FROM OVERWATCH_CORTEX_DAILY_USAGE
 WHERE USAGE_DATE >= DATEADD('day', -35, CURRENT_DATE());
 
 CREATE OR REPLACE SECURE VIEW V_LEADERSHIP_ROLE_GRANT_AUDIT
-  COMMENT = 'Daily-safe leadership view for TF_O_DEV role/grant auditing. Source: compact grant daily facts. Raw source object names are not exposed.'
+  COMMENT = 'Daily-safe role/grant audit view. Source: compact grant daily facts. Raw source object names are not exposed.'
 AS
 SELECT
   COMPANY,
@@ -3405,7 +3405,7 @@ SELECT
   GRANTED_TO AS GRANTEE_TYPE,
   NULL::STRING AS PRIVILEGE,
   GRANTED_TO AS GRANTED_ON,
-  'ALFA_EDW_SAN'::STRING AS OBJECT_DATABASE,
+  NULL::STRING AS OBJECT_DATABASE,
   NULL::STRING AS OBJECT_SCHEMA,
   ROLE_NAME AS OBJECT_NAME,
   NULL::STRING AS GRANTED_BY,
@@ -3413,8 +3413,7 @@ SELECT
   DELETED_ON,
   IFF(DELETED_ON IS NULL, TRUE, FALSE) AS IS_ACTIVE,
   LOAD_TS AS UPDATED_AT
-FROM FACT_GRANT_DAILY
-WHERE ROLE_NAME ILIKE 'TF_O_DEV_%';
+FROM FACT_GRANT_DAILY;
 
 GRANT SELECT ON VIEW V_QUERY_DAILY_SUMMARY TO ROLE SNOW_ACCOUNTADMINS;
 GRANT SELECT ON VIEW V_QUERY_DAILY_SUMMARY TO ROLE SNOW_SYSADMINS;

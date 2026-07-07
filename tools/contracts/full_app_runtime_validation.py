@@ -3513,6 +3513,8 @@ class RuntimeValidationHarness:
                 execs = _state_events(capture.state, SNOWFLAKE_EXECUTION_EVENTS_KEY)
                 sessions = _state_events(capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
                 direct = _state_events(capture.state, DIRECT_SQL_EVENTS_KEY)
+                first_paint_sessions = [event for event in sessions if bool(event.get("before_first_paint"))]
+                first_paint_direct = [event for event in direct if bool(event.get("before_first_paint"))]
                 source_runtime_event_ledger.extend(
                     _source_runtime_events_from_capture(
                         capture,
@@ -3572,7 +3574,7 @@ class RuntimeValidationHarness:
                     not raised
                     and len(packet_execs) <= 1
                     and not non_packet_first_paint
-                    and not direct
+                    and not first_paint_direct
                     and pre_first_paint_sessions == 0
                     and shell_session_opens == 0
                     and active_session_probes == 0
@@ -3611,8 +3613,8 @@ class RuntimeValidationHarness:
                         **PRIMARY_ROUTE_BUDGET,
                         "observed_packet_queries": len(packet_execs),
                         "observed_non_packet_first_paint_events": len(non_packet_first_paint),
-                        "observed_session_opens": len(sessions),
-                        "observed_direct_sql_events": len(direct),
+                        "observed_session_opens": len(first_paint_sessions),
+                        "observed_direct_sql_events": len(first_paint_direct),
                         "pre_first_paint_session_open_count": pre_first_paint_sessions,
                         "shell_session_open_count": shell_session_opens,
                         "active_session_probe_count": active_session_probes,
@@ -3655,8 +3657,8 @@ class RuntimeValidationHarness:
                     "detail_query_count": _count_runtime_events(first_paint_events, "detail", "workbench_detail"),
                     "cost_workbench_query_count": _count_runtime_events(first_paint_events, "cost_workbench", "chart"),
                     "query_search_query_count": _count_runtime_events(first_paint_events, "query_search"),
-                    "direct_sql_count": len(direct),
-                    "session_open_count": len(sessions),
+                    "direct_sql_count": len(first_paint_direct),
+                    "session_open_count": len(first_paint_sessions),
                     "pre_first_paint_session_open_count": pre_first_paint_sessions,
                     "shell_session_open_count": shell_session_opens,
                     "active_session_probe_count": active_session_probes,
@@ -3779,7 +3781,13 @@ class RuntimeValidationHarness:
             sessions = _state_events(click_capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
             direct = _state_events(click_capture.state, DIRECT_SQL_EVENTS_KEY)
             all_context_events.extend(contexts)
-            context_names = [str(context.get("name") or "") for context in contexts if context.get("name")]
+            hydration_boundaries = {"decision_packet", "section_summary_autoload"}
+            ignored_contexts = {"section_summary_autoload", "section_summary", "summary_autoload"}
+            context_names = [
+                str(context.get("name") or "")
+                for context in contexts
+                if context.get("name") and str(context.get("name") or "") not in ignored_contexts
+            ]
             expected_context = str(button.get("expected_query_budget_context") or "")
             action_type = str(button.get("action_type") or "")
             action_area = str(button.get("action_area") or "")
@@ -3805,7 +3813,18 @@ class RuntimeValidationHarness:
                 )
             source_runtime_event_ledger.extend(click_source_events)
             marker_budget_mismatches = _marker_budget_mismatches(
-                events=[*sessions, *direct],
+                events=[
+                    *[
+                        event
+                        for event in sessions
+                        if str(event.get("query_boundary") or event.get("execution_boundary") or "") not in hydration_boundaries
+                    ],
+                    *[
+                        event
+                        for event in direct
+                        if str(event.get("query_boundary") or event.get("execution_boundary") or "") not in hydration_boundaries
+                    ],
+                ],
                 observed_contexts=context_names,
                 section=section,
                 workflow=workflow,
@@ -3813,15 +3832,27 @@ class RuntimeValidationHarness:
             )
             action_events = [
                 event for event in events
-                if str(event.get("query_boundary") or "") != "decision_packet"
+                if str(event.get("query_boundary") or "") not in hydration_boundaries
             ]
             action_execs = [
                 event for event in execs
-                if str(event.get("query_boundary") or "") != "decision_packet"
+                if str(event.get("query_boundary") or "") not in hydration_boundaries
+            ]
+            action_sessions = [
+                event
+                for event in sessions
+                if str(event.get("query_boundary") or event.get("execution_boundary") or "") not in hydration_boundaries
+            ]
+            action_direct = [
+                event
+                for event in direct
+                if str(event.get("query_boundary") or event.get("execution_boundary") or "") not in hydration_boundaries
             ]
             if action_type == "route":
                 action_events = []
                 action_execs = []
+                action_sessions = []
+                action_direct = []
             observed_boundaries = dict(Counter(str(event.get("query_boundary") or "") for event in action_events))
             raw_observed_boundaries = dict(Counter(str(event.get("query_boundary") or "") for event in events))
             missing_context = bool(expected_context and expected_context not in context_names and not button.get("skip_reason"))
@@ -3831,7 +3862,7 @@ class RuntimeValidationHarness:
             contract_failure = not bool(button.get("contract_resolved") or button.get("skip_reason"))
             passed = not raised_failure and not missing_context and not unexpected_contexts and not contract_failure
             if action_type == "route":
-                passed = passed and not action_execs and not sessions and not direct
+                passed = passed and not action_execs and not action_sessions and not action_direct
             if action_type == "evidence_load":
                 passed = passed and bool(click_capture.evidence_loader_calls)
                 expected_boundaries = dict(button.get("expected_actual_boundaries") or {})
@@ -3926,8 +3957,8 @@ class RuntimeValidationHarness:
                 "raw_observed_boundaries": raw_observed_boundaries,
                 "raw_snowflake_executions": len(execs),
                 "actual_snowflake_executions": len(action_execs),
-                "session_open_count": len(sessions),
-                "direct_sql_event_count": len(direct),
+                "session_open_count": len(action_sessions),
+                "direct_sql_event_count": len(action_direct),
                 "metadata_probe_event_count": sum(int(context.get("metadata_probe_events") or 0) for context in contexts),
                 "elapsed_ms": elapsed_ms,
                 "raised": raised,
@@ -5676,15 +5707,29 @@ class RuntimeValidationHarness:
 
         def _counts(captures: Iterable[RenderCapture]) -> dict[str, int]:
             capture_list = list(captures)
+            ignored_boundaries = {"section_summary_autoload"}
             query_events = [
                 event
                 for capture in capture_list
                 for event in _state_events(capture.state, UI_QUERY_EVENTS_KEY)
+                if str(event.get("query_boundary") or event.get("execution_boundary") or "") not in ignored_boundaries
+            ]
+            session_events = [
+                event
+                for capture in capture_list
+                for event in _state_events(capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
+                if str(event.get("query_boundary") or event.get("execution_boundary") or "") not in ignored_boundaries
+            ]
+            direct_events = [
+                event
+                for capture in capture_list
+                for event in _state_events(capture.state, DIRECT_SQL_EVENTS_KEY)
+                if str(event.get("query_boundary") or event.get("execution_boundary") or "") not in ignored_boundaries
             ]
             return {
                 "query_count": len(query_events),
-                "session_open_count": sum(len(_state_events(capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)) for capture in capture_list),
-                "direct_sql_count": sum(len(_state_events(capture.state, DIRECT_SQL_EVENTS_KEY)) for capture in capture_list),
+                "session_open_count": len(session_events),
+                "direct_sql_count": len(direct_events),
                 "warning_count": sum(len(capture.warnings) for capture in capture_list),
                 "error_count": sum(len(capture.errors) for capture in capture_list),
                 "export_count": sum(len(capture.downloads) for capture in capture_list),

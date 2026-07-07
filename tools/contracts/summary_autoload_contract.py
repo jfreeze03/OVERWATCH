@@ -70,7 +70,7 @@ def _boundary(row: Mapping[str, Any]) -> str:
 
 
 def _is_summary_autoload(row: Mapping[str, Any]) -> bool:
-    return str(row.get("event_type") or "") == "section_summary_autoload" or _boundary(row) == "section_summary_autoload"
+    return str(row.get("event_type") or "") == "section_summary_autoload"
 
 
 def _summary_source_ok(row: Mapping[str, Any]) -> bool:

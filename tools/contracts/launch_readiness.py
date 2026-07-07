@@ -285,6 +285,12 @@ from tools.contracts.metric_source_governance import (
     METRIC_SOURCE_GOVERNANCE_GATE_REL,
     write_metric_source_governance_artifacts,
 )
+from tools.contracts.metric_render_mapping_audit import (
+    GATE_REL as METRIC_RENDER_MAPPING_GATE_REL,
+    RESULTS_REL as METRIC_RENDER_MAPPING_RESULTS_REL,
+    evaluate_metric_render_mapping_gate,
+    write_metric_render_mapping_artifacts,
+)
 from tools.contracts.security_credential_validation import (
     CORTEX_USER_LABEL_GATE_REL,
     SECURITY_CREDENTIAL_EVIDENCE_GATE_REL,
@@ -417,6 +423,7 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     ROUTE_ACTION_REPLAY_GATE_REL,
     EXPORT_CASE_PARITY_GATE_REL,
     METRIC_SOURCE_GOVERNANCE_GATE_REL,
+    METRIC_RENDER_MAPPING_GATE_REL,
     UI_KIT_ALIGNMENT_GATE_REL,
     SECTION_LAYOUT_CONTRACT_GATE_REL,
     SOURCE_SAFE_FOOTER_GATE_REL,
@@ -467,6 +474,7 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     RUNTIME_EVENT_LEDGER_RESULTS_REL,
     ROUTE_ACTION_REPLAY_RESULTS_REL,
     EXPORT_CASE_PARITY_RESULTS_REL,
+    METRIC_RENDER_MAPPING_RESULTS_REL,
     FULL_APP_RELEASE_SWEEP_RESULTS_REL,
     FULL_APP_RELEASE_FAILURES_REL,
     SETTINGS_LIVE_FEATURE_RESULTS_REL,
@@ -2938,6 +2946,11 @@ def _release_candidate_summary_bundle(
             "artifact": f"{LAUNCH_READINESS_DIR}/metric_semantic_gate_results.json",
         },
         {
+            "gate": "metric_render_mapping",
+            "passed": bool(launch_summary.get("metric_render_mapping_passed")),
+            "artifact": METRIC_RENDER_MAPPING_GATE_REL,
+        },
+        {
             "gate": "cost_advisor_value_at_risk",
             "passed": bool(launch_summary.get("cost_advisor_value_at_risk_passed")),
             "artifact": f"{LAUNCH_READINESS_DIR}/cost_advisor_gate_results.json",
@@ -3181,6 +3194,7 @@ def _release_candidate_summary_bundle(
         "snowflake_cli_packet_value_passed": bool(launch_summary.get("snowflake_cli_packet_value_passed")),
         "snowflake_cli_query_budget_passed": bool(launch_summary.get("snowflake_cli_query_budget_passed")),
         "metric_semantic_registry_passed": bool(launch_summary.get("metric_semantic_registry_passed")),
+        "metric_render_mapping_passed": bool(launch_summary.get("metric_render_mapping_passed")),
         "workload_formula_semantics_passed": bool(launch_summary.get("workload_formula_semantics_passed")),
         "query_budget_gate_passed": bool(launch_summary.get("query_budget_gate_passed")),
         "encoding_hygiene_passed": bool(launch_summary.get("encoding_hygiene_passed")),
@@ -4758,6 +4772,59 @@ def _metric_semantic_gate_results(payloads: Mapping[str, Any]) -> dict[str, Any]
     }
 
 
+def _metric_render_mapping_gate_results(payloads: Mapping[str, Any]) -> dict[str, Any]:
+    artifact = _as_mapping(payloads.get(METRIC_RENDER_MAPPING_RESULTS_REL))
+    gate = _as_mapping(payloads.get(METRIC_RENDER_MAPPING_GATE_REL))
+    failures: list[dict[str, Any]] = []
+    if not artifact:
+        failures.append(
+            {
+                "code": "METRIC_RENDER_MAPPING_ARTIFACT_MISSING",
+                "artifact": METRIC_RENDER_MAPPING_RESULTS_REL,
+            }
+        )
+    elif not bool(artifact.get("passed")):
+        failures.extend(
+            _as_list(artifact.get("failures"))
+            or [
+                {
+                    "code": "METRIC_RENDER_MAPPING_ARTIFACT_FAILED",
+                    "artifact": METRIC_RENDER_MAPPING_RESULTS_REL,
+                }
+            ]
+        )
+    if gate and not bool(gate.get("passed")):
+        failures.extend(
+            _as_list(gate.get("failures"))
+            or [
+                {
+                    "code": "METRIC_RENDER_MAPPING_GATE_FAILED",
+                    "artifact": METRIC_RENDER_MAPPING_GATE_REL,
+                }
+            ]
+        )
+
+    computed_gate = evaluate_metric_render_mapping_gate(dict(artifact)) if artifact else {}
+    return {
+        "source": "launch_readiness_metric_render_mapping_gate",
+        "proof_source": "metric_render_mapping_audit",
+        "artifact": METRIC_RENDER_MAPPING_RESULTS_REL,
+        "gate_artifact": METRIC_RENDER_MAPPING_GATE_REL,
+        "passed": not failures and bool(computed_gate.get("passed", False)),
+        "failure_count": len(failures) or _as_int(computed_gate.get("metric_mapping_failure_count")),
+        "metric_mapping_failure_count": len(failures)
+        or _as_int(computed_gate.get("metric_mapping_failure_count")),
+        "failures": failures or _as_list(computed_gate.get("failures")),
+        "metric_mapping_row_count": _as_int(computed_gate.get("metric_mapping_row_count")),
+        "semantic_catalog_count": _as_int(computed_gate.get("semantic_catalog_count")),
+        "semantic_registered_count": _as_int(computed_gate.get("semantic_registered_count")),
+        "section_contract_count": _as_int(computed_gate.get("section_contract_count")),
+        "runtime_model_mapping_count": _as_int(computed_gate.get("runtime_model_mapping_count")),
+        "summary_mart_mapping_count": _as_int(computed_gate.get("summary_mart_mapping_count")),
+        "raw_sql_included": False,
+    }
+
+
 def _full_app_formula_gate_results(
     payloads: Mapping[str, Any],
     *,
@@ -5266,6 +5333,7 @@ def _release_gate_matrix(
     snowflake_cli_temp_hygiene_gate = _as_mapping(launch_artifacts.get("snowflake_cli_temp_file_hygiene_gate_results"))
     setup_migration_live_gate = _as_mapping(launch_artifacts.get("setup_migration_live_gate_results"))
     metric_semantic_gate = _as_mapping(launch_artifacts.get("metric_semantic_gate_results"))
+    metric_render_mapping_gate = _as_mapping(launch_artifacts.get("metric_render_mapping_gate_results"))
     query_budget_gate = _as_mapping(launch_artifacts.get("query_budget_gate_results"))
     workload_formula_gate = _as_mapping(launch_artifacts.get("workload_formula_gate_results"))
     date_widget_gate = _as_mapping(launch_artifacts.get("date_widget_regression_results"))
@@ -5903,6 +5971,14 @@ def _release_gate_matrix(
             "failure_reason": "" if metric_semantic_gate.get("passed") else "Metric semantic registry is missing unit/source/formula metadata.",
         },
         {
+            "gate": "metric_render_mapping",
+            "artifact": METRIC_RENDER_MAPPING_GATE_REL,
+            "passed": bool(metric_render_mapping_gate.get("passed")),
+            "failure_reason": ""
+            if metric_render_mapping_gate.get("passed")
+            else "Visible metrics are missing source, semantic, summary mart, or runtime render mappings.",
+        },
+        {
             "gate": "query_budget_recording",
             "artifact": f"{LAUNCH_READINESS_DIR}/query_budget_gate_results.json",
             "passed": bool(query_budget_gate.get("passed")),
@@ -6473,6 +6549,7 @@ def evaluate_launch_readiness(
     snowflake_cli_temp_hygiene_gate = _as_mapping(launch_artifacts.get("snowflake_cli_temp_file_hygiene_gate_results"))
     setup_migration_live_gate = _as_mapping(launch_artifacts.get("setup_migration_live_gate_results"))
     metric_semantic_gate = _as_mapping(launch_artifacts.get("metric_semantic_gate_results"))
+    metric_render_mapping_gate = _as_mapping(launch_artifacts.get("metric_render_mapping_gate_results"))
     query_budget_gate = _as_mapping(launch_artifacts.get("query_budget_gate_results"))
     workload_formula_gate = _as_mapping(launch_artifacts.get("workload_formula_gate_results"))
     date_widget_gate = _as_mapping(launch_artifacts.get("date_widget_regression_results"))
@@ -6968,6 +7045,21 @@ def evaluate_launch_readiness(
         "metric_semantic_registry_passed": bool(metric_semantic_gate.get("passed")),
         "metric_semantic_registry_failure_count": _as_int(metric_semantic_gate.get("failure_count")),
         "metric_semantic_registry_row_count": _as_int(metric_semantic_gate.get("registry_row_count")),
+        "metric_render_mapping_passed": bool(metric_render_mapping_gate.get("passed")),
+        "metric_render_mapping_failure_count": _as_int(metric_render_mapping_gate.get("failure_count")),
+        "metric_render_mapping_row_count": _as_int(metric_render_mapping_gate.get("metric_mapping_row_count")),
+        "metric_render_mapping_semantic_catalog_count": _as_int(
+            metric_render_mapping_gate.get("semantic_catalog_count")
+        ),
+        "metric_render_mapping_section_contract_count": _as_int(
+            metric_render_mapping_gate.get("section_contract_count")
+        ),
+        "metric_render_mapping_runtime_model_count": _as_int(
+            metric_render_mapping_gate.get("runtime_model_mapping_count")
+        ),
+        "metric_render_mapping_summary_mart_count": _as_int(
+            metric_render_mapping_gate.get("summary_mart_mapping_count")
+        ),
         "workload_formula_semantics_passed": bool(workload_formula_gate.get("passed")),
         "workload_formula_semantics_failure_count": _as_int(workload_formula_gate.get("failure_count")),
         "query_budget_gate_passed": bool(query_budget_gate.get("passed")),
@@ -7124,6 +7216,8 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     payloads.update(cortex_token_efficiency_artifacts)
     metric_source_governance_artifacts = write_metric_source_governance_artifacts(root_path)
     payloads.update(metric_source_governance_artifacts)
+    metric_render_mapping_artifacts = write_metric_render_mapping_artifacts(root_path)
+    payloads.update(metric_render_mapping_artifacts)
     ui_kit_alignment_artifacts = write_ui_kit_alignment_artifacts(root_path)
     payloads.update(ui_kit_alignment_artifacts)
     settings_live_feature_artifacts = write_settings_live_feature_gauntlet_artifacts(root_path, payloads)
@@ -7510,6 +7604,7 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     )
     launch_artifacts["date_widget_regression_results"] = _date_widget_regression_results(root_path)
     launch_artifacts["metric_semantic_gate_results"] = _metric_semantic_gate_results(payloads)
+    launch_artifacts["metric_render_mapping_gate_results"] = _metric_render_mapping_gate_results(payloads)
     launch_artifacts["query_budget_gate_results"] = _query_budget_gate_results(payloads)
     launch_artifacts["daily_wording_gate_results"] = _daily_wording_gate_results(payloads)
     launch_artifacts["connection_policy_gate_results"] = _connection_policy_gate_results(payloads)

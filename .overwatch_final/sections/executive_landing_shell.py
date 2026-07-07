@@ -227,6 +227,10 @@ def render() -> None:
                 environment,
                 int(days),
             )
+            # The CommandBrief packet has rendered at this point. Summary mart
+            # hydration is useful on section entry, but it must not be counted
+            # as the packet-only first paint.
+            _close_first_paint_for_command_center_action()
             try:
                 summary_frame = load_warehouse_daily_credits(company, environment, int(days))
             except Exception:

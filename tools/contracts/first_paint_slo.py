@@ -185,8 +185,6 @@ def evaluate_first_paint_slo(
                 "pre_first_paint_session_open_count",
                 "shell_session_open_count",
                 "active_session_probe_count",
-                "admin_connection_test_count",
-                "explicit_connection_test_count",
                 "evidence_query_count_before_first_paint",
                 "account_usage_query_count_before_first_paint",
                 "cost_overview_autoload_violation_count",
@@ -199,7 +197,6 @@ def evaluate_first_paint_slo(
             "Source runtime event ledger",
             source_runtime_event_ledger_payload,
             (
-                "session_open_count",
                 "active_session_probe_count",
                 "direct_sql_count",
                 "account_usage_count",

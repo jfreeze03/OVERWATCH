@@ -9,6 +9,7 @@ import re
 
 import pandas as pd
 
+from utils.display_safety import clean_display_text
 from utils.primitives import safe_float, safe_int, safe_str
 
 
@@ -104,7 +105,7 @@ _TONE_ORDER = {
 
 
 def _clean_text(value: object, default: str = "Refresh required") -> str:
-    text = safe_str(value)
+    text = clean_display_text(safe_str(value))
     return text if text else default
 
 

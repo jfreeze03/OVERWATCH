@@ -541,7 +541,7 @@ def _source_runtime_events(root: Path, commit_sha: str) -> list[dict[str, Any]]:
         )
         route_action_marker_present = bool(row.get("route_action_marker_present")) or event_type == "route_action"
         source_object_marker_present = bool(row.get("source_object_marker_present"))
-        summary_autoload_marker_present = event_type == "section_summary_autoload" or boundary == "section_summary_autoload"
+        summary_autoload_marker_present = event_type == "section_summary_autoload"
         if summary_autoload_marker_present:
             summary_autoload_count += 1
         if before_first_paint and evidence_loader_marker_present:
@@ -742,8 +742,7 @@ def build_source_runtime_event_ledger_payload(
     section_summary_autoload_source_count = sum(
         1
         for row in normalized_rows
-        if row.get("execution_boundary") == "section_summary_autoload"
-        or row.get("event_type") == "section_summary_autoload"
+        if row.get("event_type") == "section_summary_autoload"
     )
     if not normalized_rows:
         failures.append({"failure_reason": "missing app-source runtime event ledger rows"})

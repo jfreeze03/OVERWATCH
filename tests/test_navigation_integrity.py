@@ -950,7 +950,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('workflow="Change Analysis"', executive_change)
         self.assertIn('workflow_key="security_posture_workflow"', executive_overview + executive_security)
         self.assertIn('state_updates={"dba_control_room_active_view": "Change Watch"}', executive_change)
-        self.assertIn("Scorecard formulas, value ledger, telemetry trust detail, production readiness", executive_admin)
+        self.assertIn("Scorecard formulas, value ledger, source-status detail, production readiness", executive_admin)
+        self.assertNotIn("telemetry trust detail", executive_admin)
         self.assertIn('with st.expander("Advanced observability charts and source grids", expanded=False):', executive_admin)
 
     def test_section_alias_literal_has_no_duplicate_keys(self):

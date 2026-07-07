@@ -142,7 +142,7 @@ def _run_summary(
                 sql,
                 ttl_key=ttl_key,
                 use_cache=True,
-                spinner_msg="Reading current summary...",
+                spinner_msg="",
                 tier="section_summary",
                 section=spec["section"],
                 max_rows=_limit(limit),

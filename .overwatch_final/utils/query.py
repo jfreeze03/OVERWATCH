@@ -7,6 +7,7 @@
 #   3. Tiered cache TTLs: live=30s, standard=300s, historical=3600s, metadata=14400s
 #      (previous version had a single flat 300s TTL for all query types)
 import hashlib
+from contextlib import nullcontext
 import os
 import re
 import time
@@ -186,7 +187,10 @@ def _record_query_source_event(
             or raw_boundary_text == "account_usage"
             or "account_usage" in marker_text,
             evidence_loader_marker_present="evidence" in marker_text,
-            cost_evidence_marker_present="cost" in marker_text,
+            cost_evidence_marker_present=(
+                boundary_text in {"evidence", "evidence_targeted", "compact_evidence", "cost_workbench"}
+                and "cost" in marker_text
+            ),
             query_search_broad_marker_present="query_search_broad" in marker_text or "deep_history" in marker_text,
             setup_live_validation_marker_present=boundary_text in {"admin_setup_health", "setup_admin", "live_validation", "explicit_connection_test"},
             raw_sql_included=False,
@@ -1481,7 +1485,8 @@ def _run_query_base(
     if not _check_query_budget(tier, ttl_key, query_text):
         meta.update(actual_query_executed=False, cache_layer="budget_blocked")
         return pd.DataFrame(), meta
-    with st.spinner(spinner_msg):
+    spinner_context = st.spinner(spinner_msg) if str(spinner_msg or "").strip() else nullcontext()
+    with spinner_context:
         try:
             query_tag = _build_overwatch_query_tag(section, ttl_key, tier)
             if use_cache:

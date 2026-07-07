@@ -12,7 +12,7 @@
       "top_signal_label": "Top executive decision",
       "top_signal_detail": "Review cost, operational, and security signals before loading the full snapshot.",
       "unavailable_headline": "Executive command brief needs the summary mart.",
-      "unavailable_summary": "Enable the executive observability mart to populate leadership status, cost movement, Cortex AI risk, and open actions automatically.",
+      "unavailable_summary": "Enable the executive observability mart to populate executive status, cost movement, Cortex AI risk, and open actions automatically.",
       "sources": [
         {
           "source_key": "executive_observability",

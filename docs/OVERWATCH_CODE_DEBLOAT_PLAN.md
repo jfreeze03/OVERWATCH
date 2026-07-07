@@ -253,7 +253,7 @@ These are candidates, not approved removals:
 |---|---|---|
 | Value-ledger proof widgets in primary flows | Daily operators need action and verified savings only when investigating. | Keep under advanced/admin evidence. |
 | Production readiness score in normal flow | Useful for release governance, noisy for daily triage. | Keep under Control Room Admin / Advanced. |
-| Full executive scorecard formulas | Leadership needs risk/action, not formula details. | Keep formulas in Executive Admin / Advanced. |
+| Full executive scorecard formulas | Executives need risk/action, not formula details. | Keep formulas in Executive Admin / Advanced. |
 | Closed-loop evidence grids | Required for audit, too heavy for first paint. | Load only behind explicit details. |
 | SPCS tracker | Useful only if SPCS is actively used. | Keep advanced until usage is confirmed. |
 

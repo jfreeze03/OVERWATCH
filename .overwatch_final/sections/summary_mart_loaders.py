@@ -15,6 +15,13 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from runtime_state import (
+    PENDING_AUTOLOAD_SECTION,
+    PENDING_AUTOLOAD_STARTED_AT,
+    get_state,
+    pop_state,
+    set_state,
+)
 from utils.company_filter import get_environment_db_patterns
 from utils.data_state import DataState, data_state_label
 from utils.performance import SUMMARY_AUTOLOAD_QUERY_BUDGET, query_budget_context
@@ -69,6 +76,29 @@ def _safe_summary_error(exc: BaseException | None) -> str:
     return "This summary query failed. Review Setup Health for safe details."
 
 
+class _SummaryAutoloadMarker:
+    def __init__(self, section: str) -> None:
+        self.section = section
+        self.previous_section: Any = None
+        self.previous_started_at: Any = None
+
+    def __enter__(self) -> None:
+        self.previous_section = get_state(PENDING_AUTOLOAD_SECTION)
+        self.previous_started_at = get_state(PENDING_AUTOLOAD_STARTED_AT)
+        set_state(PENDING_AUTOLOAD_SECTION, self.section)
+        set_state(PENDING_AUTOLOAD_STARTED_AT, datetime.now(UTC).isoformat(timespec="seconds"))
+
+    def __exit__(self, *_exc: object) -> None:
+        if self.previous_section is None:
+            pop_state(PENDING_AUTOLOAD_SECTION, None)
+        else:
+            set_state(PENDING_AUTOLOAD_SECTION, self.previous_section)
+        if self.previous_started_at is None:
+            pop_state(PENDING_AUTOLOAD_STARTED_AT, None)
+        else:
+            set_state(PENDING_AUTOLOAD_STARTED_AT, self.previous_started_at)
+
+
 def _state_from_exception(exc: BaseException) -> DataState:
     text = str(exc or "").lower()
     if "does not exist" in text or "not exist" in text or "invalid identifier" in text:
@@ -119,16 +149,17 @@ def _summary_result(
         budget=SUMMARY_AUTOLOAD_QUERY_BUDGET,
     ):
         try:
-            result = run_query(
-                sql,
-                ttl_key=ttl_key,
-                use_cache=True,
-                spinner_msg="Reading current summary...",
-                tier="section_summary",
-                section=section,
-                max_rows=max_rows,
-                query_boundary="section_summary_autoload",
-            )
+            with _SummaryAutoloadMarker(section):
+                result = run_query(
+                    sql,
+                    ttl_key=ttl_key,
+                    use_cache=True,
+                    spinner_msg="",
+                    tier="section_summary",
+                    section=section,
+                    max_rows=max_rows,
+                    query_boundary="section_summary_autoload",
+                )
             if isinstance(result, pd.DataFrame) and not result.empty:
                 frame = result.head(max_rows).copy()
                 return SummaryResult(

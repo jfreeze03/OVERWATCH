@@ -68,11 +68,11 @@ PATTERNS = {
     "old_decision_workspace": re.compile(r"card-wall|launchpad|watch-floor|command-deck|lane-board", re.IGNORECASE),
     "coco_layout": re.compile(r"ow-cc-|ow-kit-command-brief|command-center|COCO", re.IGNORECASE),
     "empty_unavailable": re.compile(r"Refresh required|Setup required|Unavailable|source unavailable", re.IGNORECASE),
-    "visible_leadership_monitor_call": re.compile(
-        r"render_cost_leadership_panels_for_current_scope\("
-        r"|render_security_leadership_panels\("
+    "visible_retired_monitor_call": re.compile(
+        r"render_cost_watchlist_panels_for_current_scope\("
+        r"|render_security_watchlist_panels\("
         r"|render_workload_query_error_panels\("
-        r"|render_coco_leadership_watchlist\(",
+        r"|render_coco_watchlist\(",
         re.IGNORECASE,
     ),
     "chart_table_pair": re.compile(r"st\.dataframe|render_.*panel|chart|sparkline", re.IGNORECASE),
@@ -98,7 +98,7 @@ class AuditRow:
     old_decision_workspace_layout: bool
     coco_style_layout: bool
     empty_unavailable_first_viewport_risk: bool
-    standalone_leadership_monitor: bool
+    standalone_retired_monitor: bool
     chart_table_pairing_present: bool
     action_buttons_inside_pane: bool
     inconsistent_with_executive: bool
@@ -151,8 +151,8 @@ def _route_state(section: str, workflow: str) -> dict[str, str]:
 
 def _recommendation(section: str, metrics: Mapping[str, bool]) -> str:
     fixes: list[str] = []
-    if metrics["standalone_leadership_monitor"]:
-        fixes.append("remove standalone leadership-monitor panel and fold metrics into owning section cards")
+    if metrics["standalone_retired_monitor"]:
+        fixes.append("remove standalone watchlist panel and fold metrics into owning section cards")
     if metrics["duplicate_recommended_actions"]:
         fixes.append("consolidate to one section-owned Recommended Action pane")
     if metrics["kanban_lane_default_risk"]:
@@ -175,20 +175,20 @@ def build_audit_rows(*, screenshot_status: str, screenshot_blocker: str) -> list
         source_text = "\n".join(_read_text(path) for path in files)
         entrypoint_text = "\n".join(_read_text(path) for path in _section_entrypoint_files(section))
         marker_count = len(PATTERNS["standalone_action_panel"].findall(entrypoint_text))
-        visible_leadership_call = bool(PATTERNS["visible_leadership_monitor_call"].search(entrypoint_text))
+        visible_retired_monitor_call = bool(PATTERNS["visible_retired_monitor_call"].search(entrypoint_text))
         metrics = {
             "duplicate_recommended_actions": marker_count > 1,
             "old_decision_workspace_layout": bool(PATTERNS["old_decision_workspace"].search(entrypoint_text)),
             "coco_style_layout": bool(PATTERNS["coco_layout"].search(source_text)),
             "empty_unavailable_first_viewport_risk": bool(PATTERNS["empty_unavailable"].search(source_text)),
-            "standalone_leadership_monitor": visible_leadership_call,
+            "standalone_retired_monitor": visible_retired_monitor_call,
             "chart_table_pairing_present": bool(PATTERNS["chart_table_pair"].search(source_text)),
             "action_buttons_inside_pane": bool(PATTERNS["action_pane"].search(source_text)),
             "kanban_lane_default_risk": bool(PATTERNS["kanban_lane"].search(source_text)),
         }
         inconsistent = bool(
             section != "Executive Landing"
-            and (metrics["old_decision_workspace_layout"] or metrics["standalone_leadership_monitor"])
+            and (metrics["old_decision_workspace_layout"] or metrics["standalone_retired_monitor"])
         )
         for workflow in SECTION_WORKFLOW_CONTRACT.get(section, ()):
             rows.append(
@@ -208,7 +208,7 @@ def build_audit_rows(*, screenshot_status: str, screenshot_blocker: str) -> list
                     old_decision_workspace_layout=bool(metrics["old_decision_workspace_layout"]),
                     coco_style_layout=bool(metrics["coco_style_layout"]),
                     empty_unavailable_first_viewport_risk=bool(metrics["empty_unavailable_first_viewport_risk"]),
-                    standalone_leadership_monitor=bool(metrics["standalone_leadership_monitor"]),
+                    standalone_retired_monitor=bool(metrics["standalone_retired_monitor"]),
                     chart_table_pairing_present=bool(metrics["chart_table_pairing_present"]),
                     action_buttons_inside_pane=bool(metrics["action_buttons_inside_pane"]),
                     inconsistent_with_executive=inconsistent,
@@ -234,7 +234,7 @@ def _write_csv(path: Path, rows: Iterable[AuditRow]) -> None:
 def _write_markdown(path: Path, rows: list[AuditRow], artifact_dir: Path) -> None:
     workflow_count = len(rows)
     section_count = len({row.section for row in rows})
-    leadership_sections = sorted({row.section for row in rows if row.standalone_leadership_monitor})
+    retired_monitor_sections = sorted({row.section for row in rows if row.standalone_retired_monitor})
     duplicate_action_sections = sorted({row.section for row in rows if row.duplicate_recommended_actions})
     old_layout_sections = sorted({row.section for row in rows if row.old_decision_workspace_layout})
     kanban_risk_sections = sorted({row.section for row in rows if row.kanban_lane_default_risk})
@@ -248,7 +248,7 @@ def _write_markdown(path: Path, rows: list[AuditRow], artifact_dir: Path) -> Non
         "",
         f"- Sections inventoried: {section_count}",
         f"- Workflows inventoried: {workflow_count}",
-        f"- Sections with standalone leadership monitor risk: {', '.join(leadership_sections) or 'None'}",
+        f"- Sections with standalone watchlist monitor risk: {', '.join(retired_monitor_sections) or 'None'}",
         f"- Sections with duplicate Recommended Action marker risk: {', '.join(duplicate_action_sections) or 'None'}",
         f"- Sections still using old Decision Workspace layout markers: {', '.join(old_layout_sections) or 'None'}",
         f"- Sections with Kanban/lane default risk: {', '.join(kanban_risk_sections) or 'None'}",
@@ -259,19 +259,19 @@ def _write_markdown(path: Path, rows: list[AuditRow], artifact_dir: Path) -> Non
         "",
         "## Workflow Inventory",
         "",
-        "| Section | Workflow | Route State | Duplicate Actions | Old Layout | COCO Layout | Leadership Monitor | First-Viewport Risk | Recommended Fix |",
+        "| Section | Workflow | Route State | Duplicate Actions | Old Layout | COCO Layout | Retired Monitor | First-Viewport Risk | Recommended Fix |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in rows:
         lines.append(
-            "| {section} | {workflow} | `{state}` | {dup} | {old} | {coco} | {leadership} | {empty} | {fix} |".format(
+            "| {section} | {workflow} | `{state}` | {dup} | {old} | {coco} | {retired} | {empty} | {fix} |".format(
                 section=html.escape(row.display_section),
                 workflow=html.escape(row.workflow),
                 state=html.escape(json.dumps(row.route_state, sort_keys=True)),
                 dup="yes" if row.duplicate_recommended_actions else "no",
                 old="yes" if row.old_decision_workspace_layout else "no",
                 coco="yes" if row.coco_style_layout else "no",
-                leadership="yes" if row.standalone_leadership_monitor else "no",
+                retired="yes" if row.standalone_retired_monitor else "no",
                 empty="yes" if row.empty_unavailable_first_viewport_risk else "no",
                 fix=html.escape(row.recommended_fix),
             )
@@ -281,7 +281,7 @@ def _write_markdown(path: Path, rows: list[AuditRow], artifact_dir: Path) -> Non
             "",
             "## Before / After Notes",
             "",
-            "This audit is route-registry driven and records every primary workflow. The latest run shows the visible standalone leadership-monitor calls removed from daily section entrypoints and duplicate Recommended Action pane risk cleared. Advanced Scope and Settings are now expected under the sidebar utility group rather than under Security.",
+            "This audit is route-registry driven and records every primary workflow. The latest run shows the visible standalone watchlist calls removed from daily section entrypoints and duplicate Recommended Action pane risk cleared. Advanced Scope and Settings are now expected under the sidebar utility group rather than under Security.",
             "",
             "Remaining layout issues are still tracked as follow-up work: Alert Center retains old/lane-style markers in source, and Alert Center, Cost Intelligence, and DBA Control Room still carry static lane/Kanban risk markers that need screenshot-led cleanup before they should be treated as visually complete.",
             "",

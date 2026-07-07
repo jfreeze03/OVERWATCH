@@ -26,7 +26,7 @@ def _brief(**overrides) -> SectionCommandBrief:
         "window_label": "7 days",
         "state": "Ready",
         "headline": "Account health is steady",
-        "summary": "Packet-backed leadership summary.",
+        "summary": "Packet-backed executive summary.",
         "source": "Packet",
         "freshness_label": "Current",
         "loaded_at": "2026-07-05T11:19:00",

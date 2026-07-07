@@ -2901,9 +2901,9 @@ class RuntimeValidationHarness:
             company="ALFA",
             environment="ALL",
             window_label="7 days",
-            state="Summary pending",
-            headline="Summary pending",
-            summary="Waiting for the current summary packet.",
+            state="Refresh required",
+            headline="Refresh required",
+            summary="Mart exists but has no current rows for this view.",
             source="offline" if raw_payload.get("offline") else "scheduled_mart",
             freshness_label="Pending",
             loaded_at="",
@@ -3289,9 +3289,9 @@ class RuntimeValidationHarness:
 
         fallback_states = (
             ("packet_available", "Packet-backed summary ready.", 1),
-            ("packet_missing", "Summary pending. Initialize summaries or open Setup Health.", 0),
-            ("snowflake_unavailable", "Summary pending. Snowflake telemetry is unavailable right now.", 0),
-            ("permission_denied", "Summary pending. Permission is needed to view this telemetry.", 0),
+            ("packet_missing", "Refresh required. Mart exists but has no current rows for this view.", 0),
+            ("snowflake_unavailable", "Connection unavailable. Snowflake connection is unavailable.", 0),
+            ("permission_denied", "Setup required. Required source access is missing or not configured.", 0),
         )
         rows: list[dict[str, Any]] = []
         for section in sections:
@@ -4262,7 +4262,7 @@ class RuntimeValidationHarness:
             "validated_admin_facets": [
                 "setup_health_refresh",
                 "bootstrap_deployment_checks",
-                "data_trust_source_status",
+                "source_status",
                 "optional_optimization_status",
                 "direct_session_allowlist_diagnostics",
                 "query_budget_diagnostics",

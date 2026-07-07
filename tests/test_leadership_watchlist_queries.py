@@ -56,7 +56,7 @@ class LeadershipWatchlistQueryTests(unittest.TestCase):
                 self.assertEqual(call["tier"], "section_summary")
                 self.assertLessEqual(int(call["max_rows"]), queries.DEFAULT_LIMIT)
 
-    def test_role_grant_defaults_scope_to_dev_roles_and_alfa_database(self) -> None:
+    def test_role_grant_defaults_do_not_embed_example_scope(self) -> None:
         captured: list[str] = []
 
         def fake_run_query(sql: str, **kwargs):
@@ -67,8 +67,9 @@ class LeadershipWatchlistQueryTests(unittest.TestCase):
             queries.get_role_grant_audit("ALFA", "ALL")
 
         sql = captured[0]
-        self.assertIn("ROLE_NAME ILIKE 'TF_O_DEV_%'", sql)
-        self.assertIn("OBJECT_DATABASE = 'ALFA_EDW_SAN'", sql)
+        self.assertNotIn("ROLE_NAME ILIKE 'TF_O_DEV_%'", sql)
+        self.assertNotIn("OBJECT_DATABASE = 'ALFA_EDW_SAN'", sql)
+        self.assertIn("FROM V_LEADERSHIP_ROLE_GRANT_AUDIT", sql)
 
     def test_repo_defines_leadership_secure_views(self) -> None:
         sql = (ROOT / "snowflake" / "mart_setup" / "04_mart_tables.sql").read_text(encoding="utf-8").upper()

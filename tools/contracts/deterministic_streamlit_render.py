@@ -213,11 +213,11 @@ def _fallback_text(surface: str, payloads: Mapping[str, Any]) -> tuple[str, bool
     if surface == "Settings/Admin Setup Health":
         return "Setup Health. Admin-gated diagnostics are available after opening setup health.", False
     if surface == "Packet Missing":
-        return "Summary pending. Waiting for the current summary packet. Open Setup Health.", False
+        return "Refresh required. Mart exists but has no current rows for this view. Open Setup Health.", False
     if surface == "Packet Closest Fallback":
-        return "Summary pending. Latest available: ALL / ALL / 7 days.", False
+        return "Stale. Showing latest available snapshot for ALL / ALL / 7 days.", False
     if surface == "Snowflake Unavailable":
-        return "Snowflake unavailable. Summary remains in a compact pending state.", False
+        return "Connection unavailable. Snowflake connection is unavailable.", False
     if surface == "Permission Denied":
         return "Permission needed. Ask an administrator to grant access or open Setup Health.", False
     if surface == "Targeted Evidence":

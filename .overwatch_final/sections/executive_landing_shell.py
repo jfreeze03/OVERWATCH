@@ -60,6 +60,7 @@ from sections.shell_helpers import render_content_header, render_primary_section
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import render_section_command_brief
 from sections.executive_command_center_view import render_executive_command_center_page
+from sections.summary_mart_loaders import load_warehouse_daily_credits
 from sections.decision_workspace_controls import make_decision_refresh_action
 from sections.decision_workspace_performance import with_section_first_paint_entry
 from sections.decision_workspace_scope import active_decision_window_days
@@ -226,12 +227,17 @@ def render() -> None:
                 environment,
                 int(days),
             )
+            try:
+                summary_frame = load_warehouse_daily_credits(company, environment, int(days))
+            except Exception:
+                summary_frame = None
             refresh_requested, snapshot_requested = render_executive_command_center_page(
                 executive_brief,
                 company=company,
                 environment=environment,
                 days=int(days),
                 snapshot_loaded=bool(has_loaded_snapshot),
+                summary_frame=summary_frame,
             )
             if refresh_requested:
                 _close_first_paint_for_command_center_action()

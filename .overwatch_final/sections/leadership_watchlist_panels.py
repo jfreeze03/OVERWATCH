@@ -1,4 +1,4 @@
-"""Leadership monitoring panels for stakeholder-run manual query themes."""
+"""Operational monitoring panels for stakeholder-run manual query themes."""
 
 from __future__ import annotations
 
@@ -208,7 +208,7 @@ def _credit_daily_panels(company: str, environment: str, start_date: object, end
         monthly["BUDGET_STATUS"] = "Track in Cost Intelligence"
     render_chart_table_panel(
         title="YTD Credit Trend",
-        description="Cumulative year-to-date credit posture for leadership review.",
+        description="Cumulative year-to-date credit posture for review.",
         frame=monthly,
         chart_html=_sparkline(_series(monthly, "CREDITS_USED"), tone="info"),
         table_columns=("MONTH", "CREDITS_USED", "ESTIMATED_COST_USD", "BUDGET_STATUS"),
@@ -228,7 +228,7 @@ def render_cost_leadership_panels(
     end_date: object,
     warehouse: str | None = None,
 ) -> None:
-    st.markdown("### Cost Intelligence leadership monitors")
+    st.markdown("### Cost Intelligence monitors")
     _credit_daily_panels(company, environment, start_date, end_date, warehouse)
 
     comparison = leadership_queries.get_credit_comparison_24h(company, environment, warehouse=warehouse)
@@ -284,7 +284,7 @@ def render_cost_leadership_panels_for_current_scope(company: str, environment: s
 
 def render_security_leadership_panels(company: str, environment: str, *, days: int = 7) -> None:
     start_date, end_date = _window(max(7, int(days or 7)))
-    st.markdown("### Security leadership monitors")
+    st.markdown("### Security monitors")
 
     failed_last_hour = leadership_queries.get_failed_logins_last_hour(company, environment)
     failed_total = safe_float(pd.to_numeric(failed_last_hour.get("FAILED_COUNT", pd.Series(dtype=float)), errors="coerce").sum(), default=float("nan"))
@@ -323,7 +323,7 @@ def render_security_leadership_panels(company: str, environment: str, *, days: i
     grants = leadership_queries.get_role_grant_audit(company, environment)
     render_chart_table_panel(
         title="Role / Grant Audit",
-        description="TF_O_DEV_* grant posture for ALFA_EDW_SAN plus recent change visibility.",
+        description="Privileged-role grant posture plus recent change visibility.",
         frame=grants,
         chart_html=_bar_chart(grants.get("ROLE_NAME", []), [1] * len(grants), tone="warning"),
         table_columns=("ROLE_NAME", "PRIVILEGE", "GRANTED_ON", "OBJECT_DATABASE", "OBJECT_NAME", "GRANTEE_NAME", "GRANTED_BY", "CREATED_ON", "DELETED_ON"),
@@ -336,7 +336,7 @@ def render_workload_query_error_panels(company: str, environment: str) -> None:
     start_date = _today() - timedelta(days=1)
     end_date = _today()
     errors = leadership_queries.get_query_errors(company, environment, start_date, end_date)
-    st.markdown("### Workload leadership monitors")
+    st.markdown("### Workload operations monitors")
     render_chart_table_panel(
         title="Query Error Frequency - Last 24h",
         description="Error-code frequency and latest safe query identifiers for failed statements.",
@@ -365,7 +365,7 @@ def leadership_alert_candidates() -> list[AlertCandidate]:
         AlertCandidate("Query Error Spike", ">5% failure rate or 2x same-hour baseline", "High", "Workload Operations", "DBA / Workload", "Query Error Frequency", "Suppress same error code after route"),
         AlertCandidate("Storage Growth Spike", "+10% day over day or +1 TB", "Medium", "Cost Intelligence", "Data reviewer", "Storage Growth", "Deduplicate by database"),
         AlertCandidate("Cortex Code Spend Spike", "Credits or tokens above prior 7-day average", "Medium", "Cost Intelligence", "AI cost attribution", "Cortex Code Usage", "Suppress known rollout windows"),
-        AlertCandidate("High-Risk Role Grant Change", "Elevated TF_O_DEV_* grant or unexpected grantee", "Critical", "Security Monitoring", "IAM / Security", "Role / Grant Audit", "Require owner acknowledgement"),
+        AlertCandidate("High-Risk Role Grant Change", "Elevated privileged-role grant or unexpected grantee", "Critical", "Security Monitoring", "IAM / Security", "Role / Grant Audit", "Open a verification task"),
     ]
 
 
@@ -373,8 +373,8 @@ def render_alert_candidate_panel() -> None:
     candidates = leadership_alert_candidates()
     frame = pd.DataFrame([candidate.__dict__ for candidate in candidates])
     render_chart_table_panel(
-        title="Leadership Alert Candidates",
-        description="Noise-controlled alert candidates mapped to the leadership monitoring panels.",
+        title="Operational Alert Candidates",
+        description="Noise-controlled alert candidates mapped to section monitoring panels.",
         frame=frame,
         chart_html=_bar_chart(frame["category"], [idx + 1 for idx in range(len(frame))], tone="info"),
         table_columns=("category", "threshold", "severity", "route", "owner", "source_panel", "suppression"),
@@ -394,7 +394,7 @@ def render_leadership_watchlist_strip(items: Iterable[dict[str, object]] | None 
             {"label": "Query errors", "value": "Workload", "detail": "24h error trend", "tone": "warning", "trend": (3, 4, 3, 5)},
             {"label": "Storage growth", "value": "Cost Intelligence", "detail": "Database growth", "tone": "info", "trend": (1, 1, 2, 2)},
             {"label": "Cortex Code", "value": "Cost Intelligence", "detail": "Token adoption", "tone": "healthy", "trend": (1, 2, 3, 4)},
-            {"label": "Role grants", "value": "Security", "detail": "TF_O_DEV audit", "tone": "warning", "trend": (2, 2, 3, 2)},
+            {"label": "Role grants", "value": "Security", "detail": "Grant audit", "tone": "warning", "trend": (2, 2, 3, 2)},
         ]
     cards = []
     for row in rows[:6]:
@@ -410,8 +410,8 @@ def render_leadership_watchlist_strip(items: Iterable[dict[str, object]] | None 
             )
         )
     st.html(
-        '<section class="ow-lw-watchlist" aria-label="Leadership Watchlist">'
-        '<header><h3>Leadership Watchlist</h3><span>Manual monitoring coverage</span></header>'
+        '<section class="ow-lw-watchlist" aria-label="Operations Watchlist">'
+        '<header><h3>Operations Watchlist</h3><span>Manual monitoring coverage</span></header>'
         '<div class="ow-lw-watch-grid">'
         + "".join(cards)
         + "</div></section>"

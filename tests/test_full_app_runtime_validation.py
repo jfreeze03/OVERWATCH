@@ -483,7 +483,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertTrue({
             "setup_health_refresh",
             "bootstrap_deployment_checks",
-            "data_trust_source_status",
+            "source_status",
             "optional_optimization_status",
             "direct_session_allowlist_diagnostics",
             "query_budget_diagnostics",

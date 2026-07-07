@@ -194,7 +194,7 @@ _SOURCE_LABEL_OVERRIDES: dict[str, str] = {
     "cortex_daily": "Cortex usage",
     "cost_daily": "Cost usage",
     "cost_signals": "Cost signals",
-    "data_trust": "Data trust",
+    "source_status": "Source status",
     "dba_control_room": "DBA control summary",
     "executive_forecast": "Executive forecast",
     "executive_observability": "Executive observability",

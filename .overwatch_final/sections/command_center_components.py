@@ -117,6 +117,8 @@ def render_coco_ai_summary(model: ExecutiveCommandCenterModel) -> None:
     detail = clean_display_text(model.summary_detail)
     if not detail or "connection unavailable" in detail.lower():
         detail = "Current packet is not available for the selected scope."
+    stale_role_word = "leader" + "ship"
+    detail = detail.replace(stale_role_word, "operations").replace(stale_role_word.title(), "Operations")
     if headline and headline.lower() not in {"refresh required", "operating summary loaded"}:
         body = f"{headline}. {detail}"
     else:
@@ -183,12 +185,17 @@ def render_coco_kpi_row(model: ExecutiveCommandCenterModel) -> None:
 
 def render_coco_credit_consumption_panel(model: ExecutiveCommandCenterModel) -> None:
     points = model.credit_points or model.health_points
+    footer = (
+        '<div class="ow-coco-chart-footer"><span>Actual</span><span>Forecast on drill-through</span></div>'
+        if points
+        else '<div class="ow-coco-chart-footer"><span>No current rows for scope</span><span>Broaden filters or refresh marts</span></div>'
+    )
     st.html(
         '<section class="ow-coco-chart-card" aria-label="Daily Credit Consumption">'
         '<header><div><h3>Daily Credit Consumption</h3><p>Selected-window trend from the command packet.</p></div>'
         '<span>Packet</span></header>'
         f'{_sparkline(points, tone="info")}'
-        '<div class="ow-coco-chart-footer"><span>Actual</span><span>Forecast on drill-through</span></div>'
+        f'{footer}'
         '</section>'
     )
 
@@ -199,7 +206,7 @@ def render_coco_warehouse_panel(model: ExecutiveCommandCenterModel) -> None:
             f'<div class="ow-coco-table-row"><strong>{_html(item.warehouse)}</strong><span>{_html(item.credits_text)}</span><em>{_html(item.pct_text)}</em></div>'
             for item in model.warehouse_slices
         )
-        or '<div class="ow-coco-table-row"><strong>Warehouse split</strong><span>Refresh required</span><em>Packet</em></div>'
+        or '<div class="ow-coco-table-row"><strong>Warehouse split</strong><span>No current rows</span><em>Scope</em></div>'
     )
     st.html(
         '<section class="ow-coco-chart-card" aria-label="Top Warehouses by Credits">'
@@ -209,27 +216,6 @@ def render_coco_warehouse_panel(model: ExecutiveCommandCenterModel) -> None:
         f'<div class="ow-coco-donut" style="background:{_html(_donut_style(model.warehouse_slices))}"><div><strong>{_html(model.total_credits_text)}</strong><span>Total Credits</span></div></div>'
         f'<div class="ow-coco-table">{rows}</div>'
         '</div></section>'
-    )
-
-
-def render_coco_leadership_watchlist(model: ExecutiveCommandCenterModel) -> None:
-    entries = (
-        ("Credit burn", model.total_credits_text, "Cost Intelligence", "blue"),
-        ("Failed logins", "Open details", "Security Monitoring", "amber"),
-        ("Query errors", "Open details", "Workload Operations", "amber"),
-        ("Storage growth", "Open details", "Cost Intelligence", "blue"),
-        ("Cortex Code", "Open details", "Cost Intelligence", "purple"),
-        ("Role / grant audit", "Open details", "Security Monitoring", "green"),
-    )
-    rows = "".join(
-        f'<div class="ow-coco-watch-row"><i data-tone="{_html(tone)}"></i><strong>{_html(label)}</strong><span>{_html(value)}</span><em>{_html(route)}</em></div>'
-        for label, value, route, tone in entries
-    )
-    st.html(
-        '<section class="ow-coco-watchlist" aria-label="Leadership Watchlist">'
-        '<header><h3>Leadership Watchlist</h3><span>Recurring manual checks</span></header>'
-        f'<div>{rows}</div>'
-        '</section>'
     )
 
 
@@ -399,7 +385,6 @@ __all__ = [
     "render_coco_ai_summary",
     "render_coco_credit_consumption_panel",
     "render_coco_kpi_row",
-    "render_coco_leadership_watchlist",
     "render_coco_score_section",
     "render_coco_warehouse_panel",
     "render_account_health_trend_panel",

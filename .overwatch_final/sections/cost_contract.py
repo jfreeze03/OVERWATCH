@@ -185,7 +185,6 @@ from sections.cost_contract_workflow import (
     set_cost_overview_renderer,
 )
 from sections.cost_contract_overview_floor import _render_cost_watch_floor
-from sections.leadership_watchlist_panels import render_cost_leadership_panels_for_current_scope
 from runtime_state import set_state
 get_active_environment = _lazy_util("get_active_environment")
 def get_active_company() -> str:
@@ -264,8 +263,6 @@ def render() -> None:
     evidence_requested = bool(st.session_state.get("cost_contract_command_brief_load_evidence"))
     if workflow != "Cost Overview" or evidence_requested:
         _render_cost_contract_workflow(workflow, company, environment)
-    else:
-        render_cost_leadership_panels_for_current_scope(company, environment, active_cost_days())
     advanced_open = bool(st.session_state.get(_ADVANCED_COST_TOOLS_VISIBLE_KEY))
     if advanced_open or should_render_daily_diagnostics("Cost & Contract", workflow, decision_state.decision_mode):
         with st.expander("Advanced cost tools and evidence", expanded=advanced_open):

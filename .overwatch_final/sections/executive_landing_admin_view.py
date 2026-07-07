@@ -76,7 +76,7 @@ def _render_executive_admin_advanced(
 ) -> bool:
     st.markdown("**Executive Admin / Advanced**")
     st.caption(
-        "Scorecard formulas, value ledger, telemetry trust detail, production readiness, "
+        "Scorecard formulas, value ledger, source-status detail, production readiness, "
         "telemetry grids, and advanced validation live here instead of the default front door."
     )
     load = False
@@ -98,19 +98,19 @@ def _render_executive_admin_advanced(
     return load
 
 def _render_enterprise_operating_model_summary(rollups: dict[str, pd.DataFrame]) -> None:
-    """Render first-paint-safe leadership trust/value rollups."""
-    trust = rollups.get("trust", pd.DataFrame())
+    """Render first-paint-safe executive source/value rollups."""
+    source_status = rollups.get("source_status", pd.DataFrame())
     ownership = rollups.get("ownership", pd.DataFrame())
     value = rollups.get("value", pd.DataFrame())
     app = rollups.get("app", pd.DataFrame())
 
-    trust_issues = 0
-    trust_confidence = "fallback"
-    if isinstance(trust, pd.DataFrame) and not trust.empty:
-        status = trust.get("STATUS", pd.Series(dtype=str)).fillna("").astype(str)
-        trust_issues = int((~status.eq("Ready")).sum())
-        confidence = trust.get("CONFIDENCE", pd.Series(dtype=str)).dropna().astype(str).str.lower()
-        trust_confidence = confidence.iloc[0] if not confidence.empty else "fallback"
+    source_issues = 0
+    source_confidence = "fallback"
+    if isinstance(source_status, pd.DataFrame) and not source_status.empty:
+        status = source_status.get("STATUS", pd.Series(dtype=str)).fillna("").astype(str)
+        source_issues = int((~status.eq("Ready")).sum())
+        confidence = source_status.get("CONFIDENCE", pd.Series(dtype=str)).dropna().astype(str).str.lower()
+        source_confidence = confidence.iloc[0] if not confidence.empty else "fallback"
 
     workflow_gaps = 0
     if isinstance(ownership, pd.DataFrame) and not ownership.empty and "GAP_ITEMS" in ownership.columns:
@@ -128,32 +128,32 @@ def _render_enterprise_operating_model_summary(rollups: dict[str, pd.DataFrame])
 
     if all(
         not isinstance(frame, pd.DataFrame) or frame.empty
-        for frame in (trust, ownership, value, app)
+        for frame in (source_status, ownership, value, app)
     ):
-        st.caption("Enterprise operating model rollups are pending. Run the mart refresh to populate trust, ownership, value, and app health summaries.")
+        st.caption("Enterprise operating model rollups are unavailable. Run the mart refresh to populate source status, workflow routing, value, and app health summaries.")
         return
 
     st.markdown("**Enterprise Operating Model**")
     render_shell_snapshot((
-        ("Trust Issues", f"{trust_issues:,}"),
-        ("Ownership Gaps", f"{workflow_gaps:,}"),
+        ("Source Issues", f"{source_issues:,}"),
+        ("Workflow Gaps", f"{workflow_gaps:,}"),
         ("Verified Value", f"${verified_savings:,.0f}"),
         ("App Review", f"{app_review:,}"),
     ))
     st.caption(
-        "Operating path: Finding -> Owner -> Trust Level -> Business Impact -> Action -> Value Verified. "
-        f"Trust confidence: {trust_confidence}; unverified savings stay separate (${unverified_estimate:,.0f})."
+        "Operating path: Finding -> Section workflow -> Status -> Business Impact -> Action -> Value Verified. "
+        f"Source confidence: {source_confidence}; unverified savings stay separate (${unverified_estimate:,.0f})."
     )
-    with st.expander("Enterprise operating model rollups", expanded=trust_issues > 0 or workflow_gaps > 0 or app_review > 0):
-        if isinstance(trust, pd.DataFrame) and not trust.empty:
-            trust_view = trust[[
+    with st.expander("Enterprise operating model rollups", expanded=source_issues > 0 or workflow_gaps > 0 or app_review > 0):
+        if isinstance(source_status, pd.DataFrame) and not source_status.empty:
+            source_status_view = source_status[[
                 column for column in [
                     "SOURCE_NAME", "STATUS", "CONFIDENCE", "FRESHNESS_MINUTES",
                     "SOURCE_OBJECT", "WORKFLOW_ROUTE", "BUSINESS_IMPACT", "NEXT_ACTION",
                 ]
-                if column in trust.columns
+                if column in source_status.columns
             ]].head(12)
-            st.dataframe(trust_view, width="stretch", hide_index=True)
+            st.dataframe(source_status_view, width="stretch", hide_index=True)
         if isinstance(ownership, pd.DataFrame) and not ownership.empty:
             ownership_view = ownership[[
                 column for column in [
@@ -225,9 +225,9 @@ def _render_production_readiness_dashboard(readiness: pd.DataFrame) -> None:
         st.dataframe(signal_rows, width="stretch", hide_index=True)
 
 def _render_executive_scorecard_summary(scorecard: pd.DataFrame) -> None:
-    """Render Phase 2B leadership scoring from the compact scorecard mart."""
+    """Render Phase 2B executive scoring from the compact scorecard mart."""
     if not isinstance(scorecard, pd.DataFrame) or scorecard.empty:
-        st.caption("Executive Scorecard is pending. Run the executive mart refresh to populate leadership health scores.")
+        st.caption("Executive Scorecard is pending. Run the executive mart refresh to populate executive health scores.")
         return
 
     work = scorecard.copy()
@@ -290,7 +290,7 @@ def _format_forecast_value(value: object, unit: object) -> str:
 def _render_executive_forecast_summary(forecasts: pd.DataFrame) -> None:
     """Render Phase 2C compact forecasting from the summary mart."""
     if not isinstance(forecasts, pd.DataFrame) or forecasts.empty:
-        st.caption("Executive Forecasting is pending. Run the executive mart refresh to populate leadership forecast rows.")
+        st.caption("Executive Forecasting is pending. Run the executive mart refresh to populate executive forecast rows.")
         return
 
     work = forecasts.copy()

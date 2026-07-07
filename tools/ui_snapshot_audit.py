@@ -67,7 +67,7 @@ PATTERNS = {
     "standalone_action_panel": re.compile(r"key\s*=\s*[\"'][^\"']*recommended_actions_panel"),
     "old_decision_workspace": re.compile(r"card-wall|launchpad|watch-floor|command-deck|lane-board", re.IGNORECASE),
     "coco_layout": re.compile(r"ow-cc-|ow-kit-command-brief|command-center|COCO", re.IGNORECASE),
-    "empty_unavailable": re.compile(r"Summary pending|Unavailable|On request|source unavailable", re.IGNORECASE),
+    "empty_unavailable": re.compile(r"Refresh required|Setup required|Unavailable|source unavailable", re.IGNORECASE),
     "visible_leadership_monitor_call": re.compile(
         r"render_cost_leadership_panels_for_current_scope\("
         r"|render_security_leadership_panels\("

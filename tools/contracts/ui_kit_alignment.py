@@ -42,7 +42,7 @@ REQUIRED_COMPONENTS = (
     "render_signal_panel",
     "render_action_row",
     "render_change_panel",
-    "render_data_trust_footer",
+    "render_source_status_footer",
     "render_workflow_context",
     "render_tabs",
     "render_ranked_bar_panel",
@@ -218,7 +218,7 @@ def _section_layout_rows(root: Path) -> list[dict[str, Any]]:
             and "ow-decision-actions-panel-label" in renderer_source
         )
         evidence_cta_present = "controls.evidence_action" in renderer_source and "_render_detail_action" in renderer_source
-        data_trust_present = "Data Trust" in html and "ow-kit-data-trust" in html
+        source_status_present = "Source Status" in html and "ow-kit-source-status" in html
         passed = all(
             (
                 command_brief_present,
@@ -229,7 +229,7 @@ def _section_layout_rows(root: Path) -> list[dict[str, Any]]:
                 changed_present,
                 action_present,
                 evidence_cta_present,
-                data_trust_present,
+                source_status_present,
                 raw_token_count == 0,
                 old_board_marker_count == 0,
                 unavailable_wall_count == 0,
@@ -250,7 +250,7 @@ def _section_layout_rows(root: Path) -> list[dict[str, Any]]:
                 "change_panel_present": changed_present,
                 "action_panel_present": action_present,
                 "evidence_cta_present": evidence_cta_present,
-                "data_trust_present": data_trust_present,
+                "source_status_present": source_status_present,
                 "old_board_marker_count": old_board_marker_count,
                 "raw_source_token_count": raw_token_count,
                 "unavailable_wall_count": unavailable_wall_count,
@@ -276,7 +276,7 @@ def _forbidden_count(text: str) -> int:
 
 def _source_safe_footer_rows(root: Path) -> list[dict[str, Any]]:
     _app_import_root(root)
-    from sections.decision_workspace_components import render_command_brief, render_data_trust_footer
+    from sections.decision_workspace_components import render_command_brief, render_source_status_footer
     from utils.display_safety import contains_raw_source_token, safe_source_label
 
     component_source = _read(root, ".overwatch_final/sections/decision_workspace_components.py")
@@ -286,7 +286,7 @@ def _source_safe_footer_rows(root: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for input_name, raw_label, expected_label in ATTACHED_UI_RAW_LABELS:
         mapped_label = safe_source_label(raw_label)
-        footer_html = render_data_trust_footer(source_labels=(raw_label,))
+        footer_html = render_source_status_footer(source_labels=(raw_label,))
         model = SimpleNamespace(
             section="Security Monitoring",
             workflow="Overview",

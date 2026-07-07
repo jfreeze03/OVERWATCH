@@ -33,7 +33,7 @@ class UiKitAlignmentTests(unittest.TestCase):
             self.assertTrue(row["change_panel_present"], row)
             self.assertTrue(row["action_panel_present"], row)
             self.assertTrue(row["evidence_cta_present"], row)
-            self.assertTrue(row["data_trust_present"], row)
+            self.assertTrue(row["source_status_present"], row)
             self.assertEqual(row["raw_source_token_count"], 0)
             self.assertEqual(row["old_board_marker_count"], 0)
 

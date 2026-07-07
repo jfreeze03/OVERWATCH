@@ -153,7 +153,7 @@ def _build_warehouse_capacity_markdown(
         (
             "Use this brief to decide whether warehouse pressure is capacity, memory, workload shape, "
             "or cost drift. It is intended to support DBA action and executive reporting without forcing "
-            "leadership through raw warehouse telemetry."
+            "stakeholders through raw warehouse telemetry."
         ),
         "",
         "## Top Warehouse Exceptions",

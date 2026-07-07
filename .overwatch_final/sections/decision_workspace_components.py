@@ -241,7 +241,7 @@ def render_change_panel(model: object, *, title: object = "What changed") -> str
     )
 
 
-def render_data_trust_footer(
+def render_source_status_footer(
     *,
     mode: object = "Packet",
     freshness: object = "Freshness unavailable",
@@ -250,12 +250,12 @@ def render_data_trust_footer(
     quality: object = "Data quality unavailable",
     source_labels: Iterable[object] = (),
 ) -> str:
-    """Return a source-safe Data Trust footer."""
+    """Return a source-safe footer for packet source status."""
 
     safe_sources = safe_source_footer_items(source_labels)
     return (
-        '<footer class="ow-kit-data-trust ow-decision-trust-footer">'
-        "<strong>Data Trust</strong>"
+        '<footer class="ow-kit-source-status ow-decision-trust-footer">'
+        "<strong>Source Status</strong>"
         f'<span>{_safe(mode)}</span>'
         f'<span>{_safe(freshness)}</span>'
         f'<span>{_safe(target)}</span>'
@@ -414,13 +414,13 @@ def render_command_brief(model: object, *, include_attention: bool = True) -> st
     metrics = render_metric_row(tuple(_value(model, "metric_cells", default=()) or ()))
     signals = render_signal_panel(tuple(_value(model, "findings", default=()) or ()))
     changes = render_change_panel(model)
-    trust = _value(model, "trust", default={})
-    footer = render_data_trust_footer(
-        mode=_value(trust, "mode_label", default="Packet"),
-        freshness=_value(trust, "freshness_label", default="Freshness unavailable"),
-        target=_value(trust, "target_label", default="Target freshness set"),
-        coverage=_value(trust, "coverage_label", default="Sources tracked"),
-        quality=_value(trust, "quality_label", default="Data quality unavailable"),
+    source_status = _value(model, "trust", default={})
+    footer = render_source_status_footer(
+        mode=_value(source_status, "mode_label", default="Packet"),
+        freshness=_value(source_status, "freshness_label", default="Freshness unavailable"),
+        target=_value(source_status, "target_label", default="Target freshness set"),
+        coverage=_value(source_status, "coverage_label", default="Sources tracked"),
+        quality=_value(source_status, "quality_label", default="Data quality unavailable"),
         source_labels=source_labels,
     )
     html = (
@@ -451,7 +451,7 @@ __all__ = [
     "render_change_panel",
     "render_command_brief",
     "render_compact_pending_state",
-    "render_data_trust_footer",
+    "render_source_status_footer",
     "render_evidence_empty_state",
     "render_metric_card",
     "render_metric_row",

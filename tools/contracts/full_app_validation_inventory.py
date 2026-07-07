@@ -353,7 +353,7 @@ def _settings_results() -> dict[str, Any]:
         "setup_health_render",
         "refresh_setup_health",
         "bootstrap_checks",
-        "data_trust_status",
+        "source_status",
         "optional_optimization_status",
         "direct_session_allowlist_diagnostics",
         "query_budget_diagnostics",

@@ -18,7 +18,7 @@ SCORE_KEYS = (
     "COST_EFFICIENCY",
     "SECURITY",
     "OPERATIONAL_RISK",
-    "DATA_TRUST",
+    "SOURCE_STATUS",
     "PRODUCTION_READINESS",
 )
 SCORE_STATUS_LABELS = ("Green", "Yellow", "Red", "Unknown")
@@ -30,7 +30,7 @@ def score_status_for_value(
     yellow_below: float = 85.0,
     red_below: float = 70.0,
 ) -> str:
-    """Return the leadership score status label for a numeric score."""
+    """Return the executive score status label for a numeric score."""
     try:
         value = float(score)
     except (TypeError, ValueError):
@@ -78,7 +78,7 @@ def load_executive_scorecard_summary(
     *,
     days: int = 35,
 ) -> pd.DataFrame:
-    """Load compact first-paint-safe leadership scorecard rows."""
+    """Load compact first-paint-safe executive scorecard rows."""
     table = mart_object_name("MART_EXECUTIVE_SCORECARD_SUMMARY")
     window_days = max(1, int(days or 35))
     scope = _scope_clause(company, environment)

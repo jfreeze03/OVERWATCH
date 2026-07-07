@@ -10,7 +10,7 @@ WITH expected_metrics AS (
     ('Executive Landing', 'operational_risk', FALSE, 'query_hourly', 'optional'),
     ('Executive Landing', 'security_risk', FALSE, 'security_operability', 'optional'),
     ('Executive Landing', 'production_readiness', FALSE, 'production_readiness', 'optional'),
-    ('Executive Landing', 'data_trust', FALSE, 'data_trust', 'optional'),
+    ('Executive Landing', 'source_status', FALSE, 'source_status', 'optional'),
     ('Executive Landing', 'verified_value', FALSE, 'value_ledger', 'optional'),
     ('Executive Landing', 'monitoring_overhead', FALSE, 'app_observability', 'optional'),
     ('DBA Control Room', 'failed_queries', TRUE, 'query_hourly', 'required'),

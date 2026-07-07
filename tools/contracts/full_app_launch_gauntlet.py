@@ -717,10 +717,10 @@ def build_packet_fallback_ui_results(payloads: Mapping[str, Any]) -> dict[str, A
     matrix_rows = [_as_mapping(row) for row in _as_list(packet_matrix.get("rows"))]
     checks = [
         {
-            "check_name": "summary_pending_copy",
+            "check_name": "refresh_required_copy",
             "passed": True,
-            "expected_text": "Summary pending",
-            "observed_behavior": "daily no-packet copy uses compact pending language",
+            "expected_text": "Refresh required",
+            "observed_behavior": "daily no-packet copy uses compact refresh-required language",
         },
         {
             "check_name": "window_normalization",

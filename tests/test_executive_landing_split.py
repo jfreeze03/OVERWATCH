@@ -64,7 +64,6 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
             "Scorecard Formulas": "Executive Admin / Advanced",
             "Value Ledger": "Executive Admin / Advanced",
             "Production Readiness": "Executive Admin / Advanced",
-            "Data Trust": "Executive Admin / Advanced",
             "Forecasting": "Cost Movement",
         }
         self.assertEqual(contracts.EXECUTIVE_LANDING_LEGACY_WORKFLOW_ALIASES, expected_aliases)
@@ -228,7 +227,7 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
                 "Scorecard formulas",
                 "value ledger",
                 "Production Readiness",
-                "telemetry trust detail",
+                "source-status detail",
                 "Correlated Investigations",
             ],
         }

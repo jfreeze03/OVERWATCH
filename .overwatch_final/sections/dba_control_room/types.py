@@ -196,9 +196,6 @@ load_command_center_finding_detail = _lazy_util("load_command_center_finding_det
 load_command_center_recommendation_detail = _lazy_util("load_command_center_recommendation_detail")
 
 
-load_data_trust_detail = _lazy_util("load_data_trust_detail")
-
-
 load_executive_scorecard_detail = _lazy_util("load_executive_scorecard_detail")
 
 

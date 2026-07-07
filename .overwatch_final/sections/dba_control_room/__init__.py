@@ -2,7 +2,7 @@
 
 This page is intentionally workflow-first. It summarizes exceptions that a DBA
 must triage, routes each signal to the right specialist tool, and creates
-report-ready notes for leadership without making executives use the app.
+report-ready notes without making executives use the app.
 
 The implementation is split across cohesive submodules (``types``, ``health``,
 ``queue``, ``incidents``, ``data``, ``handoff`` and ``render``). This package

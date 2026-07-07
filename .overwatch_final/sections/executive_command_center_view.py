@@ -9,7 +9,6 @@ from sections.command_center_components import (
     render_coco_ai_summary,
     render_coco_credit_consumption_panel,
     render_coco_kpi_row,
-    render_coco_leadership_watchlist,
     render_coco_score_section,
     render_coco_warehouse_panel,
     render_operational_context_panel,
@@ -68,6 +67,7 @@ def render_executive_command_center_page(
     environment: str,
     days: int,
     snapshot_loaded: bool = False,
+    summary_frame: object = None,
 ) -> tuple[bool, bool]:
     """Render the redesigned Executive Landing command center.
 
@@ -80,11 +80,11 @@ def render_executive_command_center_page(
         environment=environment,
         days=int(days),
         snapshot_loaded=bool(snapshot_loaded),
+        summary_frame=summary_frame,
     )
     st.html(
         '<main class="ow-cc-page ow-kit-command-brief" aria-label="Executive Landing command-center dashboard">'
         '<div class="ow-cc-page-marker ow-decision-workspace-marker" aria-hidden="true"></div>'
-        f'<div class="ow-cc-asof">As of&nbsp; <strong>{model.as_of_label}</strong><span>Auto-refresh: 30s</span></div>'
         "</main>"
     )
     render_coco_ai_summary(model)
@@ -108,7 +108,6 @@ def render_executive_command_center_page(
         render_recent_status_alerts_panel(model)
     with bottom_right:
         render_operational_context_panel(model)
-    render_coco_leadership_watchlist(model)
 
     return refresh_requested, snapshot_requested
 

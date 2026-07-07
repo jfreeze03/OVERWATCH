@@ -57,7 +57,7 @@ class DecisionWorkspaceComponentsTests(unittest.TestCase):
         self.assertIn("What changed", html)
         self.assertNotIn("ow-kit-action-panel", html)
         self.assertNotIn('data-action-like="false"', html)
-        self.assertIn("Data Trust", html)
+        self.assertIn("Source Status", html)
         self.assertIn("Evidence cache", html)
         self.assertNotIn("MART_COST_DAILY", html)
         self.assertNotIn("FACT_CORTEX_DAILY", html)

@@ -21,7 +21,6 @@ from sections.shell_helpers import (
 )
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import render_section_command_brief
-from sections.leadership_watchlist_panels import render_alert_candidate_panel
 from sections.decision_workspace_controls import (
     filter_evidence_rows_for_target,
     make_decision_refresh_action,
@@ -776,8 +775,6 @@ def render() -> None:
         target_minutes=60,
         delayed_note="Alert Center reads bounded alert/action sources after explicit actions; source-history inputs can lag.",
     )
-    if active_view != "Alert Settings / Admin":
-        render_alert_candidate_panel()
     if not isinstance(data, dict):
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
         _render_alert_center_first_paint_shell(

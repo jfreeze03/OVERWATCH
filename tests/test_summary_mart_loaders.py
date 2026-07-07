@@ -153,6 +153,29 @@ class SummaryMartLoaderTests(unittest.TestCase):
         self.assertIn("LIMIT 200", sql)
         self.assertNotIn("ACCOUNT_USAGE", sql)
 
+    def test_summary_loaders_expand_grouped_environment_scope(self) -> None:
+        captured: list[dict[str, object]] = []
+
+        def fake_summary_query(**kwargs):
+            captured.append(kwargs)
+            return pd.DataFrame([{"SECTION": kwargs["section"], "SOURCE_STATUS": "current"}])
+
+        with patch.object(loaders, "_summary_query", side_effect=fake_summary_query):
+            loaders.load_warehouse_daily_credits("ALFA", "ALL", 7)
+            loaders.load_cortex_daily_usage("ALFA", "ALFA_EDW_PRD", 7)
+            loaders.load_login_security_daily("TREXIS", "TRXS_EDW_PRD", 7)
+            loaders.load_task_status_daily("ALFA", "ALFA_EDW_PRD", 7)
+            loaders.load_security_posture_daily("ALFA", "ALFA_EDW_PRD", 7)
+            loaders.load_executive_packet_current("ALFA", "ALFA_EDW_PRD", 7)
+
+        all_sql = str(captured[0]["sql"])
+        self.assertNotIn("UPPER(COALESCE(ENVIRONMENT", all_sql)
+
+        for row in captured[1:]:
+            sql = str(row["sql"])
+            self.assertIn("UPPER(COALESCE(ENVIRONMENT", sql)
+            self.assertNotIn("ENVIRONMENT = '", sql)
+
 
 if __name__ == "__main__":
     unittest.main()

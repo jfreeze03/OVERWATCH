@@ -133,7 +133,6 @@ from .types import (
     load_command_center_evidence_detail,
     load_command_center_finding_detail,
     load_command_center_recommendation_detail,
-    load_data_trust_detail,
     load_executive_scorecard_detail,
     load_forecast_detail,
     load_latest_control_room_mart,
@@ -172,49 +171,13 @@ def _render_enterprise_diagnostics_gate(company: str, environment: str) -> None:
     """Expose enterprise trust/app detail only when the operator asks for it."""
     st.markdown("**Production Trust Diagnostics**")
     st.caption("Detail diagnostics read OVERWATCH marts and logs only. They stay unloaded until a DBA needs proof.")
-    c1, c2 = st.columns([1.2, 1.2])
-    with c1:
-        if st.button("Load Data Trust Diagnostics", key="dba_enterprise_load_data_trust", width="stretch"):
-            st.session_state["dba_enterprise_data_trust_detail"] = load_data_trust_detail(
-                company,
-                environment,
-                days=35,
-            )
-            st.session_state["dba_enterprise_data_trust_scope"] = (company, environment)
-    with c2:
-        if st.button("Load App Observability Detail", key="dba_enterprise_load_app_observability", width="stretch"):
-            st.session_state["dba_enterprise_app_observability_detail"] = load_app_observability_detail(
-                company,
-                environment,
-                days=7,
-            )
-            st.session_state["dba_enterprise_app_observability_scope"] = (company, environment)
-
-    trust = st.session_state.get("dba_enterprise_data_trust_detail")
-    if (
-        isinstance(trust, pd.DataFrame)
-        and st.session_state.get("dba_enterprise_data_trust_scope") == (company, environment)
-    ):
-        if trust.empty:
-            st.info("No data trust diagnostics are available for this scope yet.")
-        else:
-            render_shell_snapshot((
-                ("Sources", f"{len(trust):,}"),
-                ("Stale/Missing", f"{safe_int((~trust.get('STATUS', pd.Series(dtype=str)).fillna('').astype(str).eq('Ready')).sum()):,}"),
-                ("Confidence", str(trust.get("CONFIDENCE", pd.Series(["fallback"])).fillna("fallback").astype(str).iloc[0])),
-            ))
-            st.dataframe(
-                trust[[
-                    column for column in [
-                        "SOURCE_NAME", "SOURCE_OBJECT", "STATUS", "CONFIDENCE",
-                        "LATEST_SOURCE_TS", "AGE_MINUTES", "TARGET_FRESHNESS_MIN",
-                        "ROUTE", "BUSINESS_IMPACT", "NEXT_ACTION",
-                    ]
-                    if column in trust.columns
-                ]],
-                width="stretch",
-                hide_index=True,
-            )
+    if st.button("Load App Observability Detail", key="dba_enterprise_load_app_observability", width="stretch"):
+        st.session_state["dba_enterprise_app_observability_detail"] = load_app_observability_detail(
+            company,
+            environment,
+            days=7,
+        )
+        st.session_state["dba_enterprise_app_observability_scope"] = (company, environment)
 
     app_detail = st.session_state.get("dba_enterprise_app_observability_detail")
     if (

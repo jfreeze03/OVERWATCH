@@ -94,7 +94,6 @@ class RouteRegistryTests(unittest.TestCase):
             "Scorecard Formulas": "Executive Admin / Advanced",
             "Value Ledger": "Executive Admin / Advanced",
             "Production Readiness": "Executive Admin / Advanced",
-            "Data Trust": "Executive Admin / Advanced",
             "Forecasting": "Cost Movement",
         }
         for alias, workflow in expected.items():

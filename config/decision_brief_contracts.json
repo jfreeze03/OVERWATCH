@@ -55,7 +55,7 @@
           "confidence": "allocated"
         },
         {
-          "source_key": "data_trust",
+          "source_key": "source_status",
           "source_object": "MART_DATA_TRUST_SUMMARY",
           "required": false,
           "tier": "enrichment",
@@ -236,14 +236,14 @@
           "availability_policy": "optional"
         },
         {
-          "key": "data_trust",
+          "key": "source_status",
           "label": "Source Freshness",
           "primary": false,
           "primary_order": null,
           "format": "percentage",
           "unit": "percent",
           "directionality": "lower_is_worse",
-          "source_key": "data_trust",
+          "source_key": "source_status",
           "availability_policy": "optional"
         },
         {

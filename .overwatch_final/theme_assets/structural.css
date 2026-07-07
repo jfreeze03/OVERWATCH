@@ -750,6 +750,24 @@ code, pre, .stCodeBlock {
 [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] p {
     color: var(--accent) !important;
 }
+.ow-sidebar-utility-break {
+    height: 1.1rem;
+    margin-top: 0.8rem;
+    border-top: 1px solid rgba(var(--accent-rgb), 0.22);
+    background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.06), transparent);
+}
+.ow-sidebar-utility-heading {
+    margin: 0.5rem 0 0.35rem;
+    padding: 0.38rem 0.58rem;
+    border: 1px solid rgba(var(--accent-rgb), 0.20);
+    border-radius: 8px;
+    background: rgba(var(--accent-rgb), 0.055);
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    font-weight: 900;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+}
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-brand-row,
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-brand-row span:last-child {
     color: var(--text-primary) !important;

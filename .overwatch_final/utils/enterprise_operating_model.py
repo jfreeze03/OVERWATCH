@@ -46,15 +46,15 @@ def load_enterprise_operating_rollups(
     """Load compact first-paint-safe rollups for Executive Landing."""
     window_days = max(1, int(days or 35))
     scope = _scope_clause(company, environment)
-    trust_table = mart_object_name("MART_DATA_TRUST_SUMMARY")
+    source_status_table = mart_object_name("MART_DATA_TRUST_SUMMARY")
     ownership_table = mart_object_name("MART_OPERATIONAL_ROUTE_COVERAGE")
     value_table = mart_object_name("MART_EXECUTIVE_VALUE_LEDGER")
     app_table = mart_object_name("MART_APP_OBSERVABILITY_SUMMARY")
     return {
-        "trust": run_query(
+        "source_status": run_query(
             f"""
             SELECT *
-            FROM {trust_table}
+            FROM {source_status_table}
             WHERE SNAPSHOT_TS >= DATEADD('DAY', -{window_days}, CURRENT_TIMESTAMP())
               {scope}
             QUALIFY ROW_NUMBER() OVER (
@@ -66,7 +66,7 @@ def load_enterprise_operating_rollups(
               FRESHNESS_MINUTES DESC NULLS FIRST,
               SOURCE_NAME
             """,
-            ttl_key=f"enterprise_trust_rollup_{company}_{environment}",
+            ttl_key=f"enterprise_source_status_rollup_{company}_{environment}",
             tier="historical",
             section="Executive Landing",
             max_rows=100,
@@ -129,8 +129,8 @@ def load_enterprise_operating_rollups(
     }
 
 
-def load_data_trust_detail(company: str, environment: str, *, days: int = 35) -> pd.DataFrame:
-    """Load source-level trust diagnostics for DBA Control Room."""
+def load_source_status_detail(company: str, environment: str, *, days: int = 35) -> pd.DataFrame:
+    """Load source-level status diagnostics for DBA Control Room."""
     table = mart_object_name("OVERWATCH_DATA_TRUST_STATUS")
     scope = _scope_clause(company, environment)
     return run_query(
@@ -162,7 +162,7 @@ def load_data_trust_detail(company: str, environment: str, *, days: int = 35) ->
           AGE_MINUTES DESC NULLS FIRST,
           SOURCE_NAME
         """,
-        ttl_key=f"enterprise_data_trust_detail_{company}_{environment}",
+        ttl_key=f"enterprise_source_status_detail_{company}_{environment}",
         tier="historical",
         section="DBA Control Room",
         max_rows=200,

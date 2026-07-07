@@ -365,7 +365,7 @@ def _render_executive_observability_board(
     )
     loaded_advisor_count = safe_int(len(advisor_rows)) if isinstance(advisor_rows, pd.DataFrame) and not advisor_rows.empty else 0
     status_detail = (
-        "Run or check the OVERWATCH mart refresh before using this view for leadership numbers."
+        "Run or check the OVERWATCH mart refresh before using this view for executive numbers."
         if not has_fact_trends
         else (
             f"{int(days)}-day view: cost, Cortex, query runtime, queue pressure, spill, task health, and storage. "

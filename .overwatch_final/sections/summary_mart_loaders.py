@@ -15,6 +15,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from utils.company_filter import get_environment_db_patterns
 from utils.data_state import DataState, data_state_label
 from utils.performance import SUMMARY_AUTOLOAD_QUERY_BUDGET, query_budget_context
 from utils.query import run_query
@@ -190,6 +191,18 @@ def _safe_window_days(value: int) -> int:
     return max(1, min(parsed, 365))
 
 
+def _environment_summary_filter(column: str, environment: str, company: str) -> str:
+    env = str(environment or "").strip().upper()
+    if not env or env == "ALL":
+        return ""
+    patterns = tuple(str(value).upper() for value in get_environment_db_patterns(env, company))
+    literals = tuple(dict.fromkeys(value for value in (env, *patterns) if value))
+    if not literals:
+        return ""
+    values = ", ".join(_sql_literal(value) for value in literals)
+    return f"AND UPPER(COALESCE({column}, '')) IN ({values})"
+
+
 @st.cache_data(ttl=SUMMARY_TTL_SECONDS, show_spinner=False)
 def load_query_daily_summary(
     company: str,
@@ -199,6 +212,7 @@ def load_query_daily_summary(
     limit: int = DEFAULT_SUMMARY_LIMIT,
 ) -> pd.DataFrame:
     days = _safe_window_days(window_days)
+    env_filter = _environment_summary_filter("ENVIRONMENT", environment, company)
     sql = f"""
         SELECT
           COMPANY,
@@ -216,7 +230,7 @@ def load_query_daily_summary(
           UPDATED_AT
         FROM V_QUERY_DAILY_SUMMARY
         WHERE COMPANY = {_sql_literal(company)}
-          AND ENVIRONMENT = {_sql_literal(environment)}
+          {env_filter}
           AND WINDOW_END_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
         ORDER BY WINDOW_END_DATE DESC
         LIMIT {_limit(limit)}
@@ -239,6 +253,7 @@ def load_warehouse_daily_credits(
     limit: int = DEFAULT_SUMMARY_LIMIT,
 ) -> pd.DataFrame:
     days = _safe_window_days(window_days)
+    env_filter = _environment_summary_filter("ENVIRONMENT", environment, company)
     sql = f"""
         SELECT
           COMPANY,
@@ -253,7 +268,7 @@ def load_warehouse_daily_credits(
           UPDATED_AT
         FROM V_WAREHOUSE_DAILY_CREDITS
         WHERE COMPANY = {_sql_literal(company)}
-          AND ENVIRONMENT = {_sql_literal(environment)}
+          {env_filter}
           AND USAGE_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
         ORDER BY USAGE_DATE DESC, CREDITS_USED DESC, WAREHOUSE_NAME
         LIMIT {_limit(limit)}
@@ -276,6 +291,7 @@ def load_cortex_daily_usage(
     limit: int = DEFAULT_SUMMARY_LIMIT,
 ) -> pd.DataFrame:
     days = _safe_window_days(window_days)
+    env_filter = _environment_summary_filter("ENVIRONMENT", environment, company)
     sql = f"""
         SELECT
           COMPANY,
@@ -296,7 +312,7 @@ def load_cortex_daily_usage(
           UPDATED_AT
         FROM V_CORTEX_DAILY_USAGE
         WHERE COMPANY = {_sql_literal(company)}
-          AND ENVIRONMENT = {_sql_literal(environment)}
+          {env_filter}
           AND USAGE_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
         ORDER BY USAGE_DATE DESC, COST_USD DESC, USER_CHART_LABEL
         LIMIT {_limit(limit)}
@@ -343,6 +359,7 @@ def load_login_security_daily(
     limit: int = DEFAULT_SUMMARY_LIMIT,
 ) -> pd.DataFrame:
     days = _safe_window_days(window_days)
+    env_filter = _environment_summary_filter("ENVIRONMENT", environment, company)
     sql = f"""
         SELECT
           COMPANY,
@@ -356,7 +373,7 @@ def load_login_security_daily(
           UPDATED_AT
         FROM V_LOGIN_SECURITY_DAILY
         WHERE COMPANY = {_sql_literal(company)}
-          AND ENVIRONMENT = {_sql_literal(environment)}
+          {env_filter}
           AND EVENT_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
         ORDER BY EVENT_DATE DESC
         LIMIT {_limit(limit)}
@@ -379,6 +396,7 @@ def load_task_status_daily(
     limit: int = DEFAULT_SUMMARY_LIMIT,
 ) -> pd.DataFrame:
     days = _safe_window_days(window_days)
+    env_filter = _environment_summary_filter("ENVIRONMENT", environment, company)
     sql = f"""
         SELECT
           COMPANY,
@@ -392,7 +410,7 @@ def load_task_status_daily(
           UPDATED_AT
         FROM V_TASK_STATUS_DAILY
         WHERE COMPANY = {_sql_literal(company)}
-          AND ENVIRONMENT = {_sql_literal(environment)}
+          {env_filter}
           AND EVENT_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
         ORDER BY EVENT_DATE DESC
         LIMIT {_limit(limit)}
@@ -415,6 +433,7 @@ def load_security_posture_daily(
     limit: int = DEFAULT_SUMMARY_LIMIT,
 ) -> pd.DataFrame:
     days = _safe_window_days(window_days)
+    env_filter = _environment_summary_filter("ENVIRONMENT", environment, company)
     sql = f"""
         SELECT
           COMPANY,
@@ -429,7 +448,7 @@ def load_security_posture_daily(
           UPDATED_AT
         FROM V_SECURITY_POSTURE_DAILY
         WHERE COMPANY = {_sql_literal(company)}
-          AND ENVIRONMENT = {_sql_literal(environment)}
+          {env_filter}
           AND EVENT_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
         ORDER BY EVENT_DATE DESC
         LIMIT {_limit(limit)}
@@ -452,6 +471,7 @@ def load_executive_packet_current(
     limit: int = 20,
 ) -> pd.DataFrame:
     days = _safe_window_days(window_days)
+    env_filter = _environment_summary_filter("ENVIRONMENT", environment, company)
     sql = f"""
         SELECT
           COMPANY,
@@ -464,7 +484,7 @@ def load_executive_packet_current(
           UPDATED_AT
         FROM V_EXECUTIVE_PACKET_CURRENT
         WHERE COMPANY = {_sql_literal(company)}
-          AND ENVIRONMENT = {_sql_literal(environment)}
+          {env_filter}
           AND WINDOW_DAYS = {days}
         ORDER BY UPDATED_AT DESC, SECTION
         LIMIT {_limit(limit)}

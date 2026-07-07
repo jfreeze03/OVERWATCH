@@ -996,8 +996,8 @@ div[class*="_decision_workspace_shell"] div.stVerticalBlock:has(> div.stElementC
 .ow-kit-metric-card em,
 .ow-kit-signal-panel span,
 .ow-kit-signal-panel em,
-.ow-kit-data-trust span,
-.ow-kit-data-trust em,
+.ow-kit-source-status span,
+.ow-kit-source-status em,
 .ow-kit-action-row small,
 .ow-kit-ranked-panel p,
 .ow-kit-area-panel p,
@@ -1033,7 +1033,7 @@ div[class*="_decision_workspace_shell"] div.stVerticalBlock:has(> div.stElementC
 .ow-kit-metric-card strong,
 .ow-kit-signal-panel h4,
 .ow-kit-signal-panel strong,
-.ow-kit-data-trust strong,
+.ow-kit-source-status strong,
 .ow-kit-pending-state strong {
     color: var(--ow-text) !important;
 }
@@ -1064,7 +1064,7 @@ div[class*="_decision_workspace_shell"] div.stVerticalBlock:has(> div.stElementC
 .ow-kit-change-row {
     min-height: 4.7rem;
 }
-.ow-kit-data-trust {
+.ow-kit-source-status {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
     gap: .52rem;

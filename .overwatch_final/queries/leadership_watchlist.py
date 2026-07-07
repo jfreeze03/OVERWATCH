@@ -403,10 +403,10 @@ def get_cortex_code_usage(
 def get_role_grant_audit(
     company: str,
     environment: str,
-    role_pattern: str = "TF_O_DEV_%",
-    database: str = "ALFA_EDW_SAN",
+    role_pattern: str = "",
+    database: str = "",
 ) -> pd.DataFrame:
-    filters = _optional_like("ROLE_NAME", role_pattern, default="TF_O_DEV_%")
+    filters = _optional_like("ROLE_NAME", role_pattern)
     if database:
         filters += _optional_equals("OBJECT_DATABASE", database)
     sql = _leadership_sql(

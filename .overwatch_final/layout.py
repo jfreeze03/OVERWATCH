@@ -297,8 +297,12 @@ def render_sidebar_utilities(
 ) -> float:
     """Render app utility controls below primary navigation."""
 
+    st.markdown('<div class="ow-sidebar-utility-break" aria-hidden="true"></div>', unsafe_allow_html=True)
     st.divider()
-    st.caption("APP CONTROLS")
+    st.markdown(
+        '<div class="ow-sidebar-utility-heading">APP CONTROLS</div>',
+        unsafe_allow_html=True,
+    )
 
     if sidebar_panel_toggle("Advanced Scope", "advanced_scope"):
         render_advanced_scope_controls(active_company)

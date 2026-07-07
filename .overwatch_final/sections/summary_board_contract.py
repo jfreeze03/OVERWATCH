@@ -32,7 +32,7 @@ PRIMARY_SUMMARY_WORKFLOWS = {
 
 SUMMARY_BOARD_REGIONS = (
     "section_title_status",
-    "data_trust",
+    "source_status",
     "packet_metrics",
     "what_changed",
     "what_matters",

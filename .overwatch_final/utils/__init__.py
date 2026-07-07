@@ -356,7 +356,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "enterprise_operating_model": (
         "CONFIDENCE_LABELS",
         "load_enterprise_operating_rollups",
-        "load_data_trust_detail",
+        "load_source_status_detail",
         "load_app_observability_detail",
         "load_ownership_coverage_rollup",
         "load_value_ledger_rollup",

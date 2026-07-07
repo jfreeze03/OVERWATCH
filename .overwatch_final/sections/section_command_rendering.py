@@ -26,7 +26,7 @@ from sections.decision_workspace_controls import (
 )
 from sections.decision_workspace_components import (
     render_command_brief as _kit_command_brief,
-    render_data_trust_footer as _kit_data_trust_footer,
+    render_source_status_footer as _kit_source_status_footer,
     render_metric_row as _kit_metric_row,
     render_signal_panel as _kit_signal_panel,
 )
@@ -517,7 +517,7 @@ def _render_model_trend_band(model: DecisionWorkspaceViewModel) -> str:
 
 def _render_model_trust_footer(model: DecisionWorkspaceViewModel) -> str:
     source_labels = tuple(source.source_label or source.source_object or source.source_key for source in model.source_rows)
-    return _kit_data_trust_footer(
+    return _kit_source_status_footer(
         mode=model.trust.mode_label,
         freshness=model.trust.freshness_label,
         target=model.trust.target_label,
@@ -729,9 +729,6 @@ def render_decision_workspace(
             st.html(_render_model_attention_panel(model))
         with action_col:
             _render_workspace_actions(model, controls, key_prefix=key_prefix)
-        if model.has_sources:
-            with st.expander("Data Trust details", expanded=False):
-                st.html(f'<div class="ow-decision-source-drawer">{_trust_detail_html(model)}</div>')
         if getattr(model, "additional_metrics", ()):
             with st.expander("Additional brief metrics", expanded=False):
                 st.html(_extra_metrics_panel(tuple(model.additional_metrics)))
@@ -748,7 +745,7 @@ def render_section_command_brief(
     on_primary_action: Callable[[], None] | None = None,
     on_detail: Callable[[], None] | None = None,
 ) -> None:
-    """Render a concise Decision Workspace with safe actions and accurate data trust."""
+    """Render a concise Decision Workspace with safe actions and packet source status."""
     if detail_action is None and on_detail is not None and brief.detail_cta:
         detail_action = CommandBriefDetailAction(brief.detail_cta, "", on_detail)
     if primary_action is None and on_primary_action is not None:

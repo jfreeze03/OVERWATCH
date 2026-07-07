@@ -9,7 +9,7 @@ SELECT * FROM VALUES
     ('Executive Landing', 'executive_forecast', 'MART_EXECUTIVE_FORECAST_SUMMARY', TRUE, 60, 'estimated', TRUE),
     ('Executive Landing', 'closed_loop', 'MART_CLOSED_LOOP_OPERATIONS_SUMMARY', TRUE, 60, 'allocated', TRUE),
     ('Executive Landing', 'production_readiness', 'MART_PRODUCTION_READINESS_SUMMARY', TRUE, 60, 'allocated', TRUE),
-    ('Executive Landing', 'data_trust', 'MART_DATA_TRUST_SUMMARY', FALSE, 60, 'allocated', TRUE),
+    ('Executive Landing', 'source_status', 'MART_DATA_TRUST_SUMMARY', FALSE, 60, 'allocated', TRUE),
     ('Executive Landing', 'app_observability', 'MART_APP_OBSERVABILITY_SUMMARY', FALSE, 60, 'allocated', TRUE),
     ('Executive Landing', 'value_ledger', 'MART_EXECUTIVE_VALUE_LEDGER', FALSE, 60, 'allocated', TRUE),
     ('Executive Landing', 'cost_daily', 'FACT_COST_DAILY', TRUE, 60, 'allocated', TRUE),

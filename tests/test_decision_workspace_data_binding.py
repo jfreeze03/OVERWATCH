@@ -1866,7 +1866,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
 
     def test_renderer_uses_view_model_not_raw_brief_payload(self):
         renderer = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
-        self.assertNotIn("def _data_trust_summary", renderer)
+        self.assertNotIn("def _source_status_summary", renderer)
         self.assertNotIn("brief.freshness_minutes", renderer)
         self.assertNotIn("brief.sources", renderer)
         self.assertNotIn("brief.source_objects", renderer)
@@ -2469,7 +2469,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         markup = _render_markup(brief)
         self.assertIn("ow-decision-workspace", markup)
         self.assertIn("What needs attention", markup)
-        self.assertIn("Data Trust", markup)
+        self.assertIn("Source Status", markup)
         self.assertNotIn("available in the Decision Brief", markup)
         self.assertNotIn("Refresh Decision Brief", markup)
 
@@ -2510,7 +2510,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                 self.assertIn("ow-decision-workspace", markup)
                 self.assertIn("What needs attention", markup)
                 self.assertIn("Recommended Action", markup)
-                self.assertIn("Data Trust", markup)
+                self.assertIn("Source Status", markup)
                 for token in forbidden:
                     self.assertNotIn(token, markup)
 

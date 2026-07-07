@@ -47,7 +47,7 @@ class MetricSemantic:
     export_domain: str = ""
     freshness_policy: str = "packet freshness must be within section target"
     freshness_field: str = ""
-    latency_note: str = "source refresh latency is shown through Data Trust"
+    latency_note: str = "source refresh latency is shown through Source Status"
     source_status_field: str = ""
     source_confirmed_zero_field: str = ""
     higher_is_worse: bool = False
@@ -117,7 +117,7 @@ def _sem(
     export_domain: str = "",
     freshness_policy: str = "packet freshness must be within section target",
     freshness_field: str = "",
-    latency_note: str = "source refresh latency is shown through Data Trust",
+    latency_note: str = "source refresh latency is shown through Source Status",
     source_status_field: str = "",
     source_confirmed_zero_field: str = "",
     higher_is_worse: bool = False,
@@ -759,7 +759,7 @@ def _high_value_decision_metric_rows() -> tuple[MetricSemantic, ...]:
                         metric.get("freshness_field")
                         or f"{str(metric_family).upper()}_FRESHNESS_TS"
                     ),
-                    latency_note=f"{metric_family} source latency is summarized through Data Trust",
+                    latency_note=f"{metric_family} source latency is summarized through Source Status",
                     source_status_field=str(
                         metric.get("source_status_field")
                         or f"{str(metric_family).upper()}_SOURCE_STATUS"
@@ -2252,7 +2252,7 @@ def _section_decision_metric_rows() -> tuple[MetricSemantic, ...]:
                     export_domain=metric_family,
                     freshness_policy="source freshness must be present or the metric renders pending",
                     freshness_field=freshness_field,
-                    latency_note=f"{metric_family} source latency is summarized through Data Trust",
+                    latency_note=f"{metric_family} source latency is summarized through Source Status",
                     source_status_field=source_status_field,
                     source_confirmed_zero_field=source_confirmed_zero_field,
                     higher_is_worse=bool(metric.get("higher_is_worse", False)),

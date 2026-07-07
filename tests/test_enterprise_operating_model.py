@@ -86,7 +86,7 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
 
     def test_enterprise_first_paint_helpers_are_mart_only(self):
         helper = _read(APP_ROOT / "utils" / "enterprise_operating_model.py").upper()
-        rollup_source = helper.split("DEF LOAD_ENTERPRISE_OPERATING_ROLLUPS", 1)[1].split("DEF LOAD_DATA_TRUST_DETAIL", 1)[0]
+        rollup_source = helper.split("DEF LOAD_ENTERPRISE_OPERATING_ROLLUPS", 1)[1].split("DEF LOAD_SOURCE_STATUS_DETAIL", 1)[0]
         self.assertIn("MART_DATA_TRUST_SUMMARY", rollup_source)
         self.assertIn("MART_OPERATIONAL_ROUTE_COVERAGE", rollup_source)
         self.assertIn("MART_EXECUTIVE_VALUE_LEDGER", rollup_source)
@@ -103,7 +103,7 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
 
         self.assertIn("load_enterprise_operating_rollups", executive)
         self.assertIn("Enterprise Operating Model", executive)
-        self.assertIn("Load Data Trust Diagnostics", dba)
+        self.assertNotIn("Load Data Trust Diagnostics", dba)
         self.assertIn("Load App Observability Detail", dba)
         self.assertIn('surface="Alert Center"', alert)
         self.assertIn("Operational Ownership Coverage", alert)
@@ -117,7 +117,6 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
         cost = _cost_contract_surface()
 
         for button, loader in [
-            ("Load Data Trust Diagnostics", "load_data_trust_detail"),
             ("Load App Observability Detail", "load_app_observability_detail"),
         ]:
             with self.subTest(button=button):

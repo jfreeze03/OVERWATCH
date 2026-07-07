@@ -287,6 +287,26 @@
     box-shadow: inset 4px 0 0 #baf2ff, 0 8px 24px rgba(41,181,232,0.24) !important;
 }
 
+.ow-sidebar-utility-break {
+    height: 1.1rem;
+    margin-top: 0.85rem;
+    border-top: 1px solid rgba(126,220,255,0.24);
+    background: linear-gradient(180deg, rgba(126,220,255,0.06), transparent);
+}
+
+.ow-sidebar-utility-heading {
+    margin: 0.5rem 0 0.35rem;
+    padding: 0.38rem 0.58rem;
+    border: 1px solid rgba(126,220,255,0.22);
+    border-radius: 8px;
+    background: rgba(126,220,255,0.055);
+    color: rgba(171,207,219,0.95);
+    font-size: 0.66rem;
+    font-weight: 900;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+}
+
 .ow-global-command-bar {
     height: auto !important;
     margin: 0.1rem 0 0.35rem !important;
@@ -586,7 +606,7 @@ div[class*="st-key-"][class*="_decision_workspace_shell"],
 .ow-kit-signal-panel,
 .ow-kit-action-panel,
 .ow-kit-change-panel,
-.ow-kit-data-trust,
+.ow-kit-source-status,
 .ow-shell-snapshot-card,
 .ow-decision-evidence-panel,
 [data-testid="stMain"] [data-testid="stDataFrame"],
@@ -740,7 +760,7 @@ div[class*="st-key-"][class*="_decision_workspace_shell"],
     line-height: 1.16;
 }
 
-.ow-kit-data-trust {
+.ow-kit-source-status {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -750,7 +770,7 @@ div[class*="st-key-"][class*="_decision_workspace_shell"],
     font-size: 0.72rem;
 }
 
-.ow-kit-data-trust strong {
+.ow-kit-source-status strong {
     color: var(--ow-cyan-2) !important;
     font-weight: 950;
 }

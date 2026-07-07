@@ -107,7 +107,7 @@ class LeadershipWatchlistPanelTests(unittest.TestCase):
             [{"USER_NAME": "JANE", "CLIENT_IP": "10.0.0.1", "FAILED_COUNT": 11, "RISK_SCORE": 90}]
         )
         login = pd.DataFrame([{"EVENT_DATE": "2026-07-05", "FAILED_COUNT": 11, "LOGIN_COUNT": 20}])
-        grants = pd.DataFrame([{"ROLE_NAME": "TF_O_DEV_APP", "GRANTEE_NAME": "ANALYST", "CREATED_ON": "2026-07-05"}])
+        grants = pd.DataFrame([{"ROLE_NAME": "APP_PRIVILEGED_ROLE", "GRANTEE_NAME": "ANALYST", "CREATED_ON": "2026-07-05"}])
         html_patch, table_patch, markdown_patch = self._patch_streamlit()
         with (
             html_patch as html,
@@ -174,7 +174,8 @@ class LeadershipWatchlistPanelTests(unittest.TestCase):
         with patch.object(panels.st, "html") as html:
             panels.render_leadership_watchlist_strip()
         rendered = str(html.call_args.args[0])
-        self.assertIn("Leadership Watchlist", rendered)
+        self.assertIn("Operations Watchlist", rendered)
+        self.assertNotIn("TF_O_DEV", rendered)
         self.assertEqual(rendered.count("ow-lw-watch-card"), 6)
 
 

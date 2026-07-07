@@ -201,7 +201,6 @@ WORKFLOW_ALIASES_BY_SECTION = {
         "Scorecard Formulas": "Executive Admin / Advanced",
         "Value Ledger": "Executive Admin / Advanced",
         "Production Readiness": "Executive Admin / Advanced",
-        "Data Trust": "Executive Admin / Advanced",
         "Forecasting": "Cost Movement",
     },
     "Alert Center": {

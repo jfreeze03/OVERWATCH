@@ -473,6 +473,23 @@ def _summary_credit_total(summary_frame: object) -> float:
     return sum(max(0.0, safe_float(row.get("CREDITS_USED"), default=0.0)) for row in rows)
 
 
+def _summary_credit_points(summary_frame: object) -> tuple[float, ...]:
+    rows = _summary_frame_rows(summary_frame)
+    if not rows:
+        return ()
+    daily_totals: dict[str, float] = {}
+    for row in rows:
+        date_key = safe_str(row.get("USAGE_DATE") or row.get("WINDOW_END_DATE") or row.get("UPDATED_AT"))
+        if not date_key:
+            continue
+        date_key = date_key[:10]
+        daily_totals[date_key] = daily_totals.get(date_key, 0.0) + max(
+            0.0,
+            safe_float(row.get("CREDITS_USED"), default=0.0),
+        )
+    return tuple(value for _, value in sorted(daily_totals.items()) if value >= 0)[:30]
+
+
 def _summary_updated_label(summary_frame: object) -> str:
     rows = _summary_frame_rows(summary_frame)
     values = [safe_str(row.get("UPDATED_AT")) for row in rows]
@@ -535,7 +552,7 @@ def build_executive_command_center_model(
     total_credits = _metric_value(total_metric, "Refresh required")
     if total_credits in {"Refresh required", "Unavailable"} and summary_credit_total > 0:
         total_credits = f"{summary_credit_total:,.1f}"
-    credit_points = _metric_points(total_metric)
+    credit_points = _metric_points(total_metric) or _summary_credit_points(summary_frame)
     health_points = _metric_points(health_metric)
     if not health_points and health_value not in {"Refresh required", "Unavailable"}:
         score = safe_float(health_value.split()[0], default=0.0)
@@ -558,7 +575,7 @@ def build_executive_command_center_model(
             _compact_text(source_detail, default="Refresh freshness", limit=36),
             _status_tone(source_state),
             "database",
-            _metric_points(_find_metric(lookup, "source_status", "data_trust")),
+            _metric_points(_find_metric(lookup, "source_status")),
         ),
         CommandCenterKpi(
             "evidence_status",

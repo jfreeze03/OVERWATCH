@@ -296,7 +296,7 @@ def _default_platform_summary() -> dict:
             "SOURCE": "Executive observability summary",
             "STATE": "Limited",
             "EVIDENCE": "Executive summary rows are available after refresh for this scope.",
-            "NEXT_ACTION": "Refresh the executive summary when current leadership context is needed.",
+            "NEXT_ACTION": "Refresh the executive summary when current business context is needed.",
         },
         {
             "SOURCE": "Cost summary",
@@ -394,7 +394,7 @@ def _executive_action_brief(summary: dict | None) -> dict[str, str]:
     if not summary:
         return {
             "state": "Ready",
-            "headline": "Open an executive snapshot when leadership telemetry is needed.",
+            "headline": "Open an executive snapshot when current telemetry is needed.",
             "detail": "Risk, spend movement, closure work, and deployment trust stay behind one explicit load.",
         }
     advisor_high = safe_int(summary.get("advisor_high_findings"))
@@ -431,7 +431,7 @@ def _executive_action_brief(summary: dict | None) -> dict[str, str]:
     return {
         "state": str(summary["state"]),
         "headline": "No executive blocker is visible in the loaded window.",
-        "detail": "Use the decision rows to route any follow-up before sending the leadership brief.",
+        "detail": "Use the decision rows to route any follow-up before sending the executive brief.",
     }
 
 def _snapshot_matches_scope(snapshot: dict, company: str, environment: str, days: int) -> bool:
@@ -833,7 +833,7 @@ def _executive_priority_rows(
     days: int,
     advisor_rows: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Convert the loaded KPI board into the first decisions leadership cares about."""
+    """Convert the loaded KPI board into the first executive decisions."""
     if not isinstance(board, pd.DataFrame) or board.empty or not _has_observability_kpis(board):
         if isinstance(advisor_rows, pd.DataFrame) and not advisor_rows.empty:
             rows = []
@@ -875,7 +875,7 @@ def _executive_priority_rows(
             "LANE": "Open risk",
             "STATE": "Escalate" if critical_high else "Clear",
             "SIGNAL": f"{critical_high:,} Critical/High alert(s), {open_actions:,} open workflow action(s).",
-            "BUSINESS_IMPACT": "Security, reliability, or cost issue may already be visible to leadership.",
+            "BUSINESS_IMPACT": "Security, reliability, or cost issue may already be visible to stakeholders.",
             "NEXT_ACTION": "Open Alert Center and work route, SLA, and remediation status.",
             "ROUTE": "Alert Center",
         },
@@ -1013,7 +1013,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
             "STATE": "Rising" if spend_delta > 0 else "Flat / down",
             "VALUE": _money(spend_delta, signed=True) if _obs_metric_loaded(board, "Spend Delta") else "Details available when needed",
             "PRESSURE_SCORE": capped(max(spend_delta, 0.0), max(current_spend * 0.20, 500.0)),
-            "WHY_IT_MATTERS": "Leadership asks first why the bill moved and whether the increase has an owner.",
+            "WHY_IT_MATTERS": "The business asks first why the bill moved and whether the increase has a workflow.",
             "WORKFLOW_ROUTE": "Cost & Contract",
             "NEXT_ACTION": "Open Cost & Contract when this lane is above 40.",
         },
@@ -1112,7 +1112,7 @@ def _executive_pressure_unloaded_rows() -> pd.DataFrame:
                 "STATE": "Details available when needed",
                 "VALUE": "Details available when needed",
                 "PRESSURE_SCORE": 0.0,
-                "WHY_IT_MATTERS": "Spend movement is the first leadership question and must come from metering facts.",
+                "WHY_IT_MATTERS": "Spend movement is the first cost question and must come from metering facts.",
                 "WORKFLOW_ROUTE": "Cost & Contract",
                 "NEXT_ACTION": "Refresh the cost summary facts.",
             },
@@ -1188,7 +1188,7 @@ def _executive_summary_lanes(board: pd.DataFrame, *, days: int, credit_price: fl
                 "label": "P95 runtime / queue",
                 "value": "Details available when needed",
                 "state": "SLA",
-                "detail": "Queue and p95 runtime tell leadership whether users feel pain.",
+                "detail": "Queue and p95 runtime tell operators whether users feel pain.",
             },
             {
                 "label": "Remote spillage",

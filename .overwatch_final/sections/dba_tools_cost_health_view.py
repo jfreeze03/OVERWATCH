@@ -158,7 +158,7 @@ def render_cost_formula_audit_tool(session, company: str) -> None:
 
     st.subheader("Reconciliation Checks")
     st.caption(
-        "Use Snowflake billing, warehouse metering, and action-queue evidence when leadership asks why a number changed."
+        "Use Snowflake billing, warehouse metering, and action-queue evidence when a cost number changes."
     )
     render_shell_snapshot((
         ("Warehouse metering", "Billing-aligned"),

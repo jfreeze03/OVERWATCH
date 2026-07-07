@@ -78,7 +78,7 @@ class ExecutiveScorecardTests(unittest.TestCase):
                 "COST_EFFICIENCY",
                 "SECURITY",
                 "OPERATIONAL_RISK",
-                "DATA_TRUST",
+                "SOURCE_STATUS",
                 "PRODUCTION_READINESS",
             ),
         )
